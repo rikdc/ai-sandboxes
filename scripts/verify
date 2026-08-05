@@ -25,6 +25,7 @@ if command -v msb >/dev/null 2>&1; then
   msb run --pull never --no-tty --user node -e HOME=/home/node ai-sandboxes-codex:local -- codex --version
   msb volume remove verify-home 2>/dev/null || true
   msb volume create --kind disk --size 64M verify-home
+  # shellcheck disable=SC2016 # $HOME expands in the guest shell, not on the host.
   msb run --pull never --no-tty --user node --mount-named verify-home:/home/node:rw ai-sandboxes-codex:local -- bash -lc 'touch "$HOME/.survives"'
   msb run --pull never --no-tty --user node --mount-named verify-home:/home/node:rw ai-sandboxes-codex:local -- test -f /home/node/.survives
   msb volume remove verify-home
