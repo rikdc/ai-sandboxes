@@ -86,6 +86,8 @@ The configuration is not for private credentials: use public clone URLs, or arra
 
 Edit `versions.env` for CLI versions and the immutable `TEA_IMAGE` digest, and edit `config/marketplaces.json` for reviewed immutable content revisions; then rebuild, verify, and reload. The currently selected defaults are Claude Code 2.1.221, Codex 0.145.0, and Tea 0.14.2 (identified by its pinned official image digest).
 
+`scripts/build` exports `versions.env` into Bake. A direct Bake invocation must source that file first; a direct `docker build` of the base Dockerfile must explicitly provide `--build-arg GH_APT_KEY_FINGERPRINT=<reviewed-full-fingerprint>`. Both intentionally fail closed when the value is absent.
+
 Inspect or intentionally remove persistent state:
 
 ```console

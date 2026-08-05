@@ -40,5 +40,10 @@ jobs:
           done
       - name: Validate build and JSON configuration when present
         run: |
-          if test -f docker-bake.hcl; then docker buildx bake --print; fi
+          if test -f docker-bake.hcl; then
+            set -a
+            source versions.env
+            set +a
+            docker buildx bake --print
+          fi
           for file in config/*.json; do test -e "$file" || continue; jq -e . "$file" >/dev/null; done

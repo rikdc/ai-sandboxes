@@ -8,7 +8,7 @@ FROM ${TEA_IMAGE} AS tea
 # hadolint ignore=DL3006
 FROM ${NODE_IMAGE}
 ARG TARGETARCH
-ARG GH_APT_KEY_FINGERPRINT=2C6106201985B60E6C7AC87323F3D4EA75716059
+ARG GH_APT_KEY_FINGERPRINT
 RUN test "$TARGETARCH" = arm64
 # Versions resolve from signed repositories at build time.
 # hadolint ignore=DL3008

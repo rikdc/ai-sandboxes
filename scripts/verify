@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 for file in scripts/build scripts/load-msb scripts/verify images/codex/entrypoint.sh; do bash -n "$file"; done
-if command -v fish >/dev/null 2>&1; then fish --no-execute shell/fish/claude.fish shell/fish/codex.fish; fi
+if command -v fish >/dev/null 2>&1; then find shell/fish -type f -name '*.fish' -exec fish --no-execute {} +; fi
 if git grep -nEI '(api[_-]?key|access[_-]?token|secret)[[:space:]]*=[[:space:]]*[^[:space:]]+' -- ':!README.md' ':!scripts/verify'; then
   exit 1
 fi
