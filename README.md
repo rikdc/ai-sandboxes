@@ -30,7 +30,7 @@ The builds target `linux/arm64`. They do not require Docker Hub credentials or a
 ./scripts/load-msb
 ```
 
-The base uses `node:22-bookworm`, installs `gh` from GitHub's official Debian repository, and builds the pinned Tea release in a Go builder stage. Go is not in the final images. Claude Code and Codex are pinned npm packages; no curl-to-shell installer is used. The Claude package supports Linux ARM64; the base Dockerfile fails early if BuildKit's target architecture is not ARM64.
+The base uses `node:22-bookworm`, installs `gh` from GitHub's official Debian repository, and copies Tea from Gitea's official immutable release-image digest. Go is not in the final images. Claude Code and Codex are pinned npm packages; no curl-to-shell installer is used. The Claude package supports Linux ARM64; the base Dockerfile fails early if BuildKit's target architecture is not ARM64.
 
 `load-msb` removes only an existing Microsandbox image with the exact local tag, then uses the documented `docker save … | msb load --tag …` interface. It does not remove containers, volumes, repositories, or unrelated images.
 

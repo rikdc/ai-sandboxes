@@ -1,13 +1,8 @@
 # syntax=docker/dockerfile:1.7
 ARG NODE_IMAGE=node:22-bookworm
-ARG TEA_VERSION=0.14.2
+ARG TEA_IMAGE=gitea/tea@sha256:3492546d2267fd74386c108fa73672a5d78ca995b37b6cfd84f2d429fafc6612
 
-FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS tea-builder
-ARG TARGETOS
-ARG TARGETARCH
-ARG TEA_VERSION
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go install gitea.dev/tea@v${TEA_VERSION}
+FROM ${TEA_IMAGE} AS tea
 
 FROM ${NODE_IMAGE}
 ARG TARGETARCH
@@ -20,7 +15,7 @@ RUN apt-get update \
  && apt-get update \
  && apt-get install -y --no-install-recommends gh \
  && rm -rf /var/lib/apt/lists/*
-COPY --from=tea-builder /go/bin/tea /usr/local/bin/tea
+COPY --from=tea /usr/bin/tea /usr/local/bin/tea
 RUN install -d -o node -g node -m 0755 /workspace /home/node
 ENV HOME=/home/node SHELL=/bin/bash PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 WORKDIR /workspace

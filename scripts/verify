@@ -13,9 +13,11 @@ test "$(docker image inspect --format '{{.Architecture}}' ai-sandboxes-base:loca
 docker run --rm --user node -e HOME=/home/node ai-sandboxes-base:local bash -lc 'command -v bash curl git gh tea jq rg ssh; ! command -v go'
 docker run --rm --user node -e HOME=/home/node ai-sandboxes-claude:local claude --version
 docker run --rm --user node -e HOME=/home/node ai-sandboxes-codex:local codex --version
-if docker history --no-trunc ai-sandboxes-claude:local ai-sandboxes-codex:local | grep -Ei '(anthropic_api_key|openai_api_key|codex_access_token)'; then
-  exit 1
-fi
+for image in ai-sandboxes-claude:local ai-sandboxes-codex:local; do
+  if docker history --no-trunc "$image" | grep -Ei '(anthropic_api_key|openai_api_key|codex_access_token)'; then
+    exit 1
+  fi
+done
 
 if command -v msb >/dev/null 2>&1; then
   ./scripts/load-msb
