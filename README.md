@@ -6,7 +6,7 @@ ARM64 Linux execution images and Fish launchers for Claude Code and OpenAI Codex
 
 Each invocation is an unnamed Microsandbox VM with exactly one writable host bind: the current Git worktree, or the current directory when outside Git. It also gets one agent-specific persistent named volume (`claude-home` or `codex-home`). The launchers reject `/` and the complete host home directory. They use `--net public`, never `private` or `host` networking.
 
-This is containment, not a data-loss boundary: the mounted repository is writable and public networking permits source-code or credential exfiltration. Review agent approvals and do not mount sensitive directories. The 10G named-volume disk is a real quota. Microsandbox 0.6.8 exposes no documented per-host-bind quota, so the documented 20G root-disk limit is not a quota on the repository mount.
+This is containment, not a data-loss boundary: the mounted repository is writable and public networking permits source-code or credential exfiltration. Review agent approvals and do not mount sensitive directories. `HOME_VOLUME_QUOTA` in `versions.env` controls the persistent-home disk size; `WORKSPACE_QUOTA` controls the VM root disk. Microsandbox 0.6.8 exposes no documented per-host-bind quota, so the root-disk limit is not a quota on the repository mount. Changing `HOME_VOLUME_QUOTA` applies only when creating a new home volume; intentionally remove the existing volume to recreate it at the new size.
 
 ## Prerequisites
 

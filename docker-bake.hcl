@@ -2,12 +2,13 @@ variable "NODE_IMAGE" { default = "node:22-bookworm" }
 variable "CLAUDE_CODE_VERSION" { default = "2.1.221" }
 variable "CODEX_VERSION" { default = "0.145.0" }
 variable "TEA_IMAGE" { default = "gitea/tea@sha256:3492546d2267fd74386c108fa73672a5d78ca995b37b6cfd84f2d429fafc6612" }
+variable "GH_APT_KEY_FINGERPRINT" { default = "2C6106201985B60E6C7AC87323F3D4EA75716059" }
 
 group "default" { targets = ["claude", "codex"] }
 
 target "common" {
   platforms = ["linux/arm64"]
-  args = { NODE_IMAGE = NODE_IMAGE, TEA_IMAGE = TEA_IMAGE }
+  args = { NODE_IMAGE = NODE_IMAGE, TEA_IMAGE = TEA_IMAGE, GH_APT_KEY_FINGERPRINT = GH_APT_KEY_FINGERPRINT }
 }
 target "base" {
   inherits = ["common"]
