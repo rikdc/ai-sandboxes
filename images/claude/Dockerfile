@@ -1,4 +1,6 @@
 # syntax=docker/dockerfile:1.7
+# `base` is the Bake named build context, not an unpinned registry image.
+# hadolint ignore=DL3006
 FROM base AS build
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
@@ -17,6 +19,8 @@ RUN set -euo pipefail; \
       marketplace=$(jq -er '.name' "$manifest"); claude plugin marketplace add "$dir/$path"; \
       jq -er '.plugins[] | .name' "$manifest" | while IFS= read -r plugin; do claude plugin install "${plugin}@${marketplace}" --scope user; done; \
     done
+# `base` is the Bake named build context, not an unpinned registry image.
+# hadolint ignore=DL3006
 FROM base
 USER root
 COPY --from=build /usr/local /usr/local
