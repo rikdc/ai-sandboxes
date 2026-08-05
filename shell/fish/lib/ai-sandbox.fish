@@ -42,6 +42,6 @@ function __ai_sandbox_launch --argument-names launcher_file agent image home_vol
     command msb run --tty --pull never --user node --net public --root-disk "$workspace_quota" \
         --mount-dir "$workspace:$guest_workspace:rw" \
         --mount-named "$home_volume:/home/node:rw" \
-        --workdir "$guest_workspace" "$image" -- "$agent" $argv
+        --workdir "$guest_workspace" "$image" -- "$agent" "$argv"
     return $status
 end
