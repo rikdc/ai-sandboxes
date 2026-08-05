@@ -1,0 +1,44 @@
+name: Lint
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Install host linters
+        run: sudo apt-get update && sudo apt-get install --yes fish jq shellcheck
+      - name: Lint GitHub Actions workflows
+        run: >-
+          docker run --rm -v "$PWD:/work" -w /work
+          rhysd/actionlint:1.7.10
+      - name: Lint shell and Fish files when present
+        run: |
+          mapfile -d '' bash_files < <(find scripts images -type f \( -name '*.sh' -o -path 'scripts/*' \) -print0 2>/dev/null || true)
+          if ((${#bash_files[@]})); then shellcheck "${bash_files[@]}"; fi
+          mapfile -d '' fish_files < <(find shell/fish -type f -name '*.fish' -print0 2>/dev/null || true)
+          if ((${#fish_files[@]})); then fish --no-execute "${fish_files[@]}"; fi
+      - name: Lint Dockerfiles when present
+        run: |
+          mapfile -d '' dockerfiles < <(find . -name Dockerfile -type f -print0)
+          for dockerfile in "${dockerfiles[@]}"; do
+            docker run --rm -v "$PWD:/work:ro" hadolint/hadolint:v2.12.0 hadolint "/work/${dockerfile#./}"
+          done
+      - name: Validate build and JSON configuration when present
+        run: |
+          if test -f docker-bake.hcl; then docker buildx bake --print; fi
+          for file in config/*.json; do test -e "$file" || continue; jq -e . "$file" >/dev/null; done
