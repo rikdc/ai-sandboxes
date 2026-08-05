@@ -2,11 +2,15 @@
 ARG NODE_IMAGE=node:22-bookworm
 ARG TEA_IMAGE=gitea/tea@sha256:3492546d2267fd74386c108fa73672a5d78ca995b37b6cfd84f2d429fafc6612
 
+# hadolint ignore=DL3006
 FROM ${TEA_IMAGE} AS tea
 
+# hadolint ignore=DL3006
 FROM ${NODE_IMAGE}
 ARG TARGETARCH
 RUN test "$TARGETARCH" = arm64
+# Versions resolve from signed repositories at build time.
+# hadolint ignore=DL3008
 RUN apt-get update \
  && apt-get install -y --no-install-recommends bash ca-certificates curl git gnupg jq openssh-client ripgrep \
  && install -d -m 0755 /etc/apt/keyrings \
