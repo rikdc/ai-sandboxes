@@ -1,20 +1,14 @@
+source (dirname (realpath (status filename)))/lib/ai-sandbox.fish
+
 function claude --description 'Run Claude Code in an ephemeral Microsandbox VM'
     if not type -q msb
         echo 'claude: msb is not installed or not on PATH' >&2
         return 127
     end
 
-    set -l versions_file (dirname (dirname (dirname (realpath (status filename)))))/versions.env
-    if not test -r "$versions_file"
-        echo "claude: cannot read $versions_file" >&2
-        return 2
-    end
-    set -l home_quota (command awk -F= '$1 == "HOME_VOLUME_QUOTA" { print $2; exit }' "$versions_file")
-    set -l workspace_quota (command awk -F= '$1 == "WORKSPACE_QUOTA" { print $2; exit }' "$versions_file")
-    if not string match -rq '^[1-9][0-9]*[KMGT]$' -- "$home_quota"; or not string match -rq '^[1-9][0-9]*[KMGT]$' -- "$workspace_quota"
-        echo 'claude: HOME_VOLUME_QUOTA and WORKSPACE_QUOTA must be positive K, M, G, or T sizes' >&2
-        return 2
-    end
+    set -l quotas (__ai_sandbox_quotas (status filename) claude); or return $status
+    set -l home_quota $quotas[1]
+    set -l workspace_quota $quotas[2]
 
     set -l workspace (command git rev-parse --show-toplevel 2>/dev/null)
     if test -z "$workspace"

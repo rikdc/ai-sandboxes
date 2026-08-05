@@ -42,6 +42,8 @@ ln -sf /absolute/path/to/ai-sandboxes/shell/fish/claude.fish ~/.config/fish/func
 ln -sf /absolute/path/to/ai-sandboxes/shell/fish/codex.fish ~/.config/fish/functions/codex.fish
 ```
 
+Keep `shell/fish/lib/ai-sandbox.fish` alongside the launcher files; each launcher resolves that helper through its real path.
+
 Open a new Fish shell, `cd` into a repository, then run normally:
 
 ```fish
