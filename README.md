@@ -1,28 +1,12 @@
 # ai-sandboxes
 
-ARM64 Linux execution images and Fish launchers for Claude Code and OpenAI Codex on an Apple Silicon Mac. It builds runtimes, seeds explicitly configured agent content, loads images into Microsandbox, and launches them; canonical skills remain in their own repositories.
+ARM64 Microsandbox images and Fish launchers for Claude Code and Codex. Skills and marketplaces stay in their own repositories; this repository builds and runs the agent environments.
 
-## Security boundary
+## Quick start
 
-Each invocation is an unnamed Microsandbox VM with exactly one writable host bind: the current Git worktree, or the current directory when outside Git. It also gets one agent-specific persistent named volume (`claude-home` or `codex-home`). The launchers reject `/` and the complete host home directory. They use `--net public`, never `private` or `host` networking.
+Prerequisites: Apple Silicon, Docker Desktop, Git, Fish, and Microsandbox (`msb`). Confirm Docker is running with `docker version`.
 
-This is containment, not a data-loss boundary: the mounted repository is writable and public networking permits source-code or credential exfiltration. Review agent approvals and do not mount sensitive directories. `HOME_VOLUME_QUOTA` in `versions.env` controls the persistent-home disk size; `WORKSPACE_QUOTA` controls the VM root disk. Microsandbox 0.6.8 exposes no documented per-host-bind quota, so the root-disk limit is not a quota on the repository mount. Changing `HOME_VOLUME_QUOTA` applies only when creating a new home volume; intentionally remove the existing volume to recreate it at the new size.
-
-## Prerequisites
-
-Install Docker Desktop for Apple Silicon, Git, Fish, and Microsandbox (`msb`) and make sure Docker Desktop is running. The Docker daemon must be usable by your login user:
-
-```console
-docker version
-msb doctor
-fish --version
-```
-
-The builds target `linux/arm64`. They do not require Docker Hub credentials or an image registry. Builds need public DNS/network access to Debian, GitHub CLI, npm, and any sources you configure.
-
-## Build, verify, and load
-
-`versions.env` centralizes CLI versions. Marketplace and Codex-skill sources are configured separately in `config/marketplaces.json`.
+Configure any optional Claude marketplaces or Codex skills in `config/marketplaces.json` (start with `config/marketplaces.example.json`). Use public URLs and reviewed commit SHAs—never credentials in URLs or configuration.
 
 ```console
 ./scripts/build
@@ -30,11 +14,7 @@ The builds target `linux/arm64`. They do not require Docker Hub credentials or a
 ./scripts/load-msb
 ```
 
-The base uses `node:22-bookworm`, installs `gh` from GitHub's official Debian repository, and copies Tea from Gitea's official immutable release-image digest. Go is not in the final images. Claude Code and Codex are pinned npm packages; no curl-to-shell installer is used. The Claude package supports Linux ARM64; the base Dockerfile fails early if BuildKit's target architecture is not ARM64.
-
-`load-msb` removes only an existing Microsandbox image with the exact local tag, then uses the documented `docker save … | msb load --tag …` interface. It does not remove containers, volumes, repositories, or unrelated images.
-
-## Install the Fish functions
+Install the Fish launchers:
 
 ```fish
 mkdir -p ~/.config/fish/functions
@@ -42,67 +22,33 @@ ln -sf /absolute/path/to/ai-sandboxes/shell/fish/claude.fish ~/.config/fish/func
 ln -sf /absolute/path/to/ai-sandboxes/shell/fish/codex.fish ~/.config/fish/functions/codex.fish
 ```
 
-Keep `shell/fish/lib/ai-sandbox.fish` alongside the launcher files; each launcher resolves that helper through its real path.
-
-Open a new Fish shell, `cd` into a repository, then run normally:
+Then, from a repository:
 
 ```fish
 claude
 codex
-claude --help
-codex --help
 ```
 
-All arguments after the function name are forwarded once to the selected agent. The guest path is `/workspace/<sanitized-basename>-<12-character-path-hash>`, so same-named repositories do not collide. The VM itself is unnamed and exits with the agent's status.
+The functions mount only the current Git worktree (or current directory outside Git), refuse `/` and the complete home directory, and forward arguments once. Each agent has its own persistent home volume, so first-run authentication and `gh`/`tea` login persist.
 
-On its first launch, each agent authenticates interactively and stores state in its own named home volume. `gh auth login` and `tea login` run inside the relevant agent VM and likewise persist there; nothing is baked into an image.
+## Configuration and updates
 
-## Configure marketplaces and Codex skills
+`versions.env` holds agent versions, the pinned Tea image, the verified GitHub CLI key fingerprint, and volume sizes. `HOME_VOLUME_QUOTA` applies when a home volume is first created; remove that volume intentionally to recreate it at a new size. `WORKSPACE_QUOTA` limits the VM root disk, not the host repository bind.
 
-`config/marketplaces.json` is intentionally empty and tracked. Copy the shape in `config/marketplaces.example.json`, then add as many sources as needed. Every `ref` must be a reviewed full commit SHA. This keeps an image definition inspectable and avoids baking a particular person's marketplace into the repository.
+After changing versions or configured content, run the three quick-start commands again. `scripts/build` is the supported build entry point; it supplies `versions.env` to Bake. Direct builds must provide the GitHub CLI fingerprint explicitly and fail closed when it is absent.
 
-```json
-{
-  "claude": [{
-    "url": "https://github.com/OWNER/claude-marketplace.git",
-    "ref": "FULL_COMMIT_SHA",
-    "path": "."
-  }],
-  "codex": [{
-    "url": "https://github.com/OWNER/codex-skills.git",
-    "ref": "FULL_COMMIT_SHA",
-    "skills_path": ".codex/skills"
-  }]
-}
-```
+Claude sources must contain `.claude-plugin/marketplace.json`; all declared plugins are seeded as `node`. Codex sources must expose native `SKILL.md` directories at the configured `skills_path`. Claude-only commands, hooks, agents, and MCP settings are not translated for Codex.
 
-Each Claude source must contain `<path>/.claude-plugin/marketplace.json`. The build reads its real marketplace and plugin names, installs every declared plugin as `node`, and seeds them with `CLAUDE_CODE_PLUGIN_CACHE_DIR` and `CLAUDE_CODE_PLUGIN_SEED_DIR` under immutable `/opt` paths. Authentication, sessions, and preferences stay in the persistent home volume.
+## Security and recovery
 
-Each Codex source must expose a directory of native Codex `SKILL.md` directories at `skills_path` (for example, a repository's `.codex/skills`). The build copies only those declared directories into the image seed. It does not translate Claude agents, commands, hooks, MCP configuration, or marketplace metadata. At first execution, the entrypoint copies missing seeds into `$HOME/.codex/skills`, without overwriting user changes. Duplicate Codex skill names across configured sources fail the build rather than silently choose one.
+Each invocation is an unnamed VM with public networking and a writable repository mount. This is not a data-loss boundary: public networking permits exfiltration and the mounted repository remains writable.
 
-The configuration is not for private credentials: use public clone URLs, or arrange a non-secret build-time Git transport separately. Do not put access tokens in this file or in Git URLs.
-
-## Update and recovery
-
-Edit `versions.env` for CLI versions and the immutable `TEA_IMAGE` digest, and edit `config/marketplaces.json` for reviewed immutable content revisions; then rebuild, verify, and reload. The currently selected defaults are Claude Code 2.1.221, Codex 0.145.0, and Tea 0.14.2 (identified by its pinned official image digest).
-
-`scripts/build` exports `versions.env` into Bake. A direct Bake invocation must source that file first; a direct `docker build` of the base Dockerfile must explicitly provide `--build-arg GH_APT_KEY_FINGERPRINT=<reviewed-full-fingerprint>`. Both intentionally fail closed when the value is absent.
-
-Inspect or intentionally remove persistent state:
+To inspect or reset persistent state:
 
 ```console
 msb volume list
-msb run --pull never --tty --mount-named claude-home:/home/node:rw ai-sandboxes-claude:local -- bash
 msb volume remove claude-home
 msb volume remove codex-home
 ```
 
-Removing either volume is irreversible and forces fresh agent, `gh`, and Tea authentication on the next launch. To recover from a broken image import, rerun `./scripts/load-msb`; to recover from a wrong architecture, rebuild with `./scripts/build` on Docker Desktop for Apple Silicon and verify the architecture check.
-
-## Troubleshooting
-
-- `permission denied … docker.sock`: start Docker Desktop and ensure your user can run `docker version`.
-- DNS or package download failure: restore public DNS/networking, then rebuild; no offline dependency cache is included.
-- `command not found` in a VM: run `./scripts/verify` after rebuilding to identify which image failed.
-- Marketplace or plugin failure: confirm each configured ref contains the declared `.claude-plugin/marketplace.json` or Codex `skills_path`, then rebuild. The build intentionally installs all marketplace entries, not guessed names.
-- Microsandbox image replacement failure: stop sandboxes using that exact image, then rerun `./scripts/load-msb`. The script only replaces the two `ai-sandboxes-*:local` references.
+Removing a volume is irreversible and requires re-authentication. If an image import fails, rerun `./scripts/load-msb`; if a command is missing, rebuild and run `./scripts/verify`.
