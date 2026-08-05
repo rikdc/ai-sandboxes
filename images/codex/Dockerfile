@@ -7,7 +7,7 @@ USER root
 ARG CODEX_VERSION
 RUN npm install --global --omit=dev "@openai/codex@${CODEX_VERSION}" \
  && install -d -o node -g node -m 0755 /opt/codex-skills /opt/codex-sources
-COPY config/marketplaces.json /opt/marketplaces.json
+COPY --chown=node:node config/marketplaces.json /opt/marketplaces.json
 USER node
 RUN set -euo pipefail; \
     jq -e '(.codex | type == "array") and all(.codex[]; (.url | type == "string") and (.ref | type == "string") and (.skills_path | type == "string"))' /opt/marketplaces.json >/dev/null; \

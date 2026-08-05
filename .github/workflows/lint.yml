@@ -28,9 +28,17 @@ jobs:
           rhysd/actionlint:1.7.10
       - name: Lint shell and Fish files when present
         run: |
-          mapfile -d '' bash_files < <(find scripts images -type f \( -name '*.sh' -o -path 'scripts/*' \) -print0 2>/dev/null || true)
+          files=$(mktemp)
+          trap 'rm -f "$files"' EXIT
+          for directory in scripts images; do
+            test -d "$directory" || continue
+            find "$directory" -type f \( -name '*.sh' -o -path 'scripts/*' \) -print0 >> "$files"
+          done
+          mapfile -d '' bash_files < "$files"
           if ((${#bash_files[@]})); then shellcheck "${bash_files[@]}"; fi
-          mapfile -d '' fish_files < <(find shell/fish -type f -name '*.fish' -print0 2>/dev/null || true)
+          : > "$files"
+          if test -d shell/fish; then find shell/fish -type f -name '*.fish' -print0 > "$files"; fi
+          mapfile -d '' fish_files < "$files"
           if ((${#fish_files[@]})); then fish --no-execute "${fish_files[@]}"; fi
       - name: Lint Dockerfiles when present
         run: |

@@ -2,4 +2,3 @@
 *.tar
 *.tgz
 .env
-config/marketplaces.local.json
