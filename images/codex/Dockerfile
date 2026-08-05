@@ -6,8 +6,9 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
 ARG CODEX_VERSION
 RUN npm install --global --omit=dev "@openai/codex@${CODEX_VERSION}" \
- && install -d -m 0755 /opt/codex-skills /opt/codex-sources
+ && install -d -o node -g node -m 0755 /opt/codex-skills /opt/codex-sources
 COPY config/marketplaces.json /opt/marketplaces.json
+USER node
 RUN set -euo pipefail; \
     jq -e '(.codex | type == "array") and all(.codex[]; (.url | type == "string") and (.ref | type == "string") and (.skills_path | type == "string"))' /opt/marketplaces.json >/dev/null; \
     index=0; \
@@ -16,8 +17,6 @@ RUN set -euo pipefail; \
       git clone "$url" "$dir"; git -C "$dir" checkout --detach "$ref"; skills="$dir/$path"; test -d "$skills"; \
       find -L "$skills" -mindepth 1 -maxdepth 1 -type d | while IFS= read -r skill; do target="/opt/codex-skills/$(basename "$skill")"; test ! -e "$target"; cp -RL "$skill" "$target"; done; \
     done
-# The final image also runs as node; retain that invariant for this build stage.
-USER node
 # `base` is the Bake named build context, not an unpinned registry image.
 # hadolint ignore=DL3006
 FROM base

@@ -82,7 +82,7 @@ The configuration is not for private credentials: use public clone URLs, or arra
 
 ## Update and recovery
 
-Edit `versions.env` for CLI versions and `config/marketplaces.json` for reviewed immutable content revisions, then rebuild, verify, and reload. The currently selected default versions are Claude Code 2.1.221, Codex 0.145.0, and Tea 0.14.2.
+Edit `versions.env` for CLI versions and the immutable `TEA_IMAGE` digest, and edit `config/marketplaces.json` for reviewed immutable content revisions; then rebuild, verify, and reload. The currently selected defaults are Claude Code 2.1.221, Codex 0.145.0, and Tea 0.14.2 (identified by its pinned official image digest).
 
 Inspect or intentionally remove persistent state:
 
