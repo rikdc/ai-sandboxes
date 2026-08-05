@@ -1,0 +1,35 @@
+#!/bin/bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+for file in scripts/build scripts/load-msb scripts/verify images/codex/entrypoint.sh; do bash -n "$file"; done
+if command -v fish >/dev/null 2>&1; then find shell/fish -type f -name '*.fish' -exec fish --no-execute {} +; fi
+if git grep -nEi '(api[_-]?key|access[_-]?token|secret)[[:space:]]*=[[:space:]]*[^[:space:]]+' -- ':!README.md' ':!scripts/verify'; then
+  exit 1
+fi
+
+for image in ai-sandboxes-base:local ai-sandboxes-claude:local ai-sandboxes-codex:local; do docker image inspect "$image" >/dev/null; done
+test "$(docker image inspect --format '{{.Architecture}}' ai-sandboxes-base:local)" = arm64
+docker run --rm --user node -e HOME=/home/node ai-sandboxes-base:local bash -lc '
+  for tool in bash curl git gh tea jq rg ssh; do command -v "$tool" >/dev/null; done
+  ! command -v go
+'
+docker run --rm --user node -e HOME=/home/node ai-sandboxes-claude:local claude --version
+docker run --rm --user node -e HOME=/home/node ai-sandboxes-codex:local codex --version
+for image in ai-sandboxes-claude:local ai-sandboxes-codex:local; do
+  if docker history --no-trunc "$image" | grep -Ei '(anthropic_api_key|openai_api_key|codex_access_token)'; then
+    exit 1
+  fi
+done
+
+if command -v msb >/dev/null 2>&1; then
+  ./scripts/load-msb
+  msb run --pull never --no-tty --user node -e HOME=/home/node ai-sandboxes-claude:local -- claude --version
+  msb run --pull never --no-tty --user node -e HOME=/home/node ai-sandboxes-codex:local -- codex --version
+  msb volume remove verify-home 2>/dev/null || true
+  msb volume create verify-home
+  # shellcheck disable=SC2016 # $HOME expands in the guest shell, not on the host.
+  msb run --pull never --no-tty --user node --mount-named verify-home:/home/node:rw ai-sandboxes-codex:local -- bash -lc 'touch "$HOME/.survives"'
+  msb run --pull never --no-tty --user node --mount-named verify-home:/home/node:rw ai-sandboxes-codex:local -- test -f /home/node/.survives
+  msb volume remove verify-home
+fi

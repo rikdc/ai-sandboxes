@@ -1,0 +1,8 @@
+#!/bin/bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+set -a
+# shellcheck disable=SC1091 # Resolved after cd to the repository root.
+source ./versions.env
+set +a
+docker buildx bake --load base claude codex

@@ -1,0 +1,16 @@
+{
+  "claude": [
+    {
+      "url": "https://github.com/OWNER/claude-marketplace.git",
+      "ref": "FULL_COMMIT_SHA",
+      "path": "."
+    }
+  ],
+  "codex": [
+    {
+      "url": "https://github.com/OWNER/codex-skills.git",
+      "ref": "FULL_COMMIT_SHA",
+      "skills_path": ".codex/skills"
+    }
+  ]
+}
