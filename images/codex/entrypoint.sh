@@ -10,6 +10,7 @@ if [ -d /opt/codex-skills ]; then
     name=$(basename "$skill")
     if [ ! -e "$HOME/.codex/skills/$name" ]; then
       cp -R "$skill" "$HOME/.codex/skills/$name"
+      chmod -R u+w "$HOME/.codex/skills/$name"
     fi
   done
 fi

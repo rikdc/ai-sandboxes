@@ -33,7 +33,7 @@ The functions mount only the current Git worktree (or current directory outside 
 
 ## Configuration and updates
 
-`versions.env` holds agent versions, the pinned Tea image, the verified GitHub CLI key fingerprint, and volume sizes. `HOME_VOLUME_QUOTA` applies when a home volume is first created; remove that volume intentionally to recreate it at a new size. `WORKSPACE_QUOTA` limits the VM root disk, not the host repository bind.
+`versions.env` is the sole build configuration: pinned Node and Tea image digests, agent versions, the verified GitHub CLI key fingerprint, and `WORKSPACE_QUOTA` for the VM root disk. Microsandbox directory volumes are used for agent homes because they are writable by `node`; the current documented CLI provides no compatible quota-backed home mount for that user. The root-disk quota does not limit the host repository bind.
 
 After changing versions or configured content, run the three quick-start commands again. `scripts/build` is the supported build entry point; it supplies `versions.env` to Bake. Direct builds must provide the GitHub CLI fingerprint explicitly and fail closed when it is absent.
 

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
-ARG NODE_IMAGE=node:22-bookworm
-ARG TEA_IMAGE=gitea/tea@sha256:3492546d2267fd74386c108fa73672a5d78ca995b37b6cfd84f2d429fafc6612
+ARG NODE_IMAGE
+ARG TEA_IMAGE
 
 # hadolint ignore=DL3006
 FROM ${TEA_IMAGE} AS tea

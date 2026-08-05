@@ -6,9 +6,7 @@ function claude --description 'Run Claude Code in an ephemeral Microsandbox VM'
         return 127
     end
 
-    set -l quotas (__ai_sandbox_quotas (status filename) claude); or return $status
-    set -l home_quota $quotas[1]
-    set -l workspace_quota $quotas[2]
+    set -l workspace_quota (__ai_sandbox_workspace_quota (status filename) claude); or return $status
 
     set -l workspace (command git rev-parse --show-toplevel 2>/dev/null)
     if test -z "$workspace"
@@ -25,10 +23,10 @@ function claude --description 'Run Claude Code in an ephemeral Microsandbox VM'
     set -l short_hash (printf '%s' "$workspace" | shasum -a 256 | string split ' ' | head -n 1 | string sub -l 12)
     set -l guest_workspace "/workspace/$slug-$short_hash"
     if not msb volume list --quiet | string match -qx claude-home
-        msb volume create --kind disk --size "$home_quota" claude-home; or return $status
+        msb volume create claude-home; or return $status
     end
 
-    # The named home has home_quota; Microsandbox has no per-host-bind quota.
+    # Microsandbox directory volumes are writable by node; only the root disk is quota-backed.
     command msb run --tty --pull never --user node --net public --root-disk "$workspace_quota" \
         --mount-dir "$workspace:$guest_workspace:rw" \
         --mount-named claude-home:/home/node:rw \
