@@ -1,0 +1,7 @@
+.git
+.DS_Store
+README.md
+shell
+scripts
+*.tar
+*.tgz

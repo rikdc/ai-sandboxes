@@ -1,0 +1,5 @@
+.DS_Store
+*.tar
+*.tgz
+.env
+config/marketplaces.local.json
