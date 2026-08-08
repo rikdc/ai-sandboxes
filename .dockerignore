@@ -3,5 +3,10 @@
 README.md
 shell
 scripts
+!scripts/
+scripts/*
+!scripts/tools/
+scripts/tools/*
+!scripts/tools/*.sh
 *.tar
 *.tgz

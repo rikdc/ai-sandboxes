@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "tools": [
+    {
+      "id": "icm",
+      "adapter": "github-release-tar",
+      "repository": "rtk-ai/icm",
+      "asset": "icm-aarch64-unknown-linux-gnu.tar.gz",
+      "archive_member": "icm",
+      "binary": "icm",
+      "state_wrapper": {
+        "directory": "icm",
+        "environment": "ICM_DB_PATH",
+        "database": "memories.db"
+      }
+    },
+    {
+      "id": "rtk",
+      "adapter": "github-release-tar",
+      "repository": "rtk-ai/rtk",
+      "asset": "rtk-aarch64-unknown-linux-gnu.tar.gz",
+      "archive_member": "rtk",
+      "binary": "rtk"
+    }
+  ]
+}

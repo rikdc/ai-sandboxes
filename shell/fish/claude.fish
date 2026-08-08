@@ -1,3 +1,5 @@
+source (dirname (realpath (status filename)))/lib/ai-sandbox.fish
+
 function claude --description 'Run Claude Code in a hardened Microsandbox VM'
     set -l image 'ai-sandboxes-claude:local'
     set -l profile_volume 'claude-home-hardened'
@@ -40,6 +42,8 @@ function claude --description 'Run Claude Code in a hardened Microsandbox VM'
         end < "$egress_file"
     end
 
+    set -l shared_state_args (__ai_sandbox_prepare_shared_state claude "$image"); or return $status
+
     set -l host_workspace (command git rev-parse --show-toplevel 2>/dev/null)
     if test $status -ne 0
         set host_workspace (pwd -P)
@@ -67,6 +71,7 @@ function claude --description 'Run Claude Code in a hardened Microsandbox VM'
         $network_args \
         --mount-dir "$host_workspace:$guest_workspace:rw,quota=$workspace_quota" \
         --mount-named "$profile_volume:/home/node:kind=dir,quota=4G" \
+        $shared_state_args \
         --workdir "$guest_workspace" \
         "$image" \
         -- env \
