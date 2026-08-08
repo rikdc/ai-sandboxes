@@ -58,6 +58,7 @@ function claude --description 'Run Claude Code in a hardened Microsandbox VM'
         --no-net \
         --dns-nameserver 1.1.1.1 \
         --dns-query-timeout-ms 5000 \
+        --trust-host-cas \
         $net_rules \
         --mount-dir "$host_workspace:$guest_workspace:rw,quota=$workspace_quota" \
         --mount-named "$profile_volume:/home/node:kind=dir,quota=4G" \

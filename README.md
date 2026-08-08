@@ -53,7 +53,7 @@ Claude sources must contain `.claude-plugin/marketplace.json`; all declared plug
 
 The Claude launcher uses Microsandbox's `restricted` profile, runs as `node`, and starts in deny-by-default network mode. It permits gateway DNS only, then derives HTTPS rules from `~/.config/microvms/claude-egress`. The example enables the core Claude endpoints and GitHub. Add only routine services you need (for example, `registry.npmjs.org` for npm); arbitrary WebFetch and package registries are otherwise blocked.
 
-The launcher pins DNS to `1.1.1.1` because this is the reliable configuration for the supported `msb 0.6.8` on macOS. Change or remove that setting only when your required resolver behavior is understood—for example, when local or split-horizon DNS is required.
+The launcher pins DNS to `1.1.1.1` because this is the reliable configuration for the supported `msb 0.6.8` on macOS. Change or remove that setting only when your required resolver behavior is understood—for example, when local or split-horizon DNS is required. It also uses `--trust-host-cas` so Claude's native HTTPS client can validate certificates issued by a root trusted by macOS, such as a managed-network inspection root. This does not add egress destinations, but it does extend the guest's TLS trust store to the host's trusted roots.
 
 Claude's repository mount remains read/write, so it can read, modify, and delete every file in the mounted workspace, including ignored files. Keep secrets out of the repository, commit or stash work before autonomous sessions, and review the resulting diff. The policy limits destinations, not what Claude can do with credentials authenticated inside its persistent home. Use dedicated, narrowly scoped credentials where practical.
 
