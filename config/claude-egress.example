@@ -1,0 +1,13 @@
+# One HTTPS hostname per line. This file is a starting policy, not a complete
+# list of every Claude Code feature or development service.
+
+# Claude Code
+api.anthropic.com
+claude.ai
+claude.com
+platform.claude.com
+
+# GitHub
+github.com
+api.github.com
+*.githubusercontent.com
