@@ -3,7 +3,11 @@ function claude --description 'Run Claude Code in a hardened Microsandbox VM'
     set -l profile_volume 'claude-home-hardened'
     set -l egress_file "$HOME/.config/microvms/claude-egress"
     set -l workspace_quota '10G'
-    set -l network_args --net public
+    # Keep gateway DNS independent from resolver changes made by VPN clients.
+    set -l network_args \
+        --net public \
+        --dns-nameserver 1.1.1.1 \
+        --dns-query-timeout-ms 5000
 
     if not type -q msb
         echo 'claude: msb is not installed or is not on PATH' >&2
