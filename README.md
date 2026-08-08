@@ -22,9 +22,9 @@ ln -sf /absolute/path/to/ai-sandboxes/shell/fish/claude.fish ~/.config/fish/func
 ln -sf /absolute/path/to/ai-sandboxes/shell/fish/codex.fish ~/.config/fish/functions/codex.fish
 ```
 
-Before using the hardened Claude launcher, create its host-owned egress policy
-from the reviewed example. It contains no credentials and is intentionally
-outside both this repository and the guest.
+The strict egress allowlist is opt-in. If you choose to enable it, create the
+host-owned policy from the reviewed example. It contains no credentials and is
+intentionally outside both this repository and the guest.
 
 ```fish
 mkdir -p ~/.config/microvms
@@ -51,15 +51,15 @@ Claude sources must contain `.claude-plugin/marketplace.json`; all declared plug
 
 ## Claude hardening, egress, and recovery
 
-The Claude launcher uses Microsandbox's `restricted` profile, runs as `node`, and starts in deny-by-default network mode. It permits gateway DNS only, then derives HTTPS rules from `~/.config/microvms/claude-egress`. The example enables the core Claude endpoints and GitHub. Add only routine services you need (for example, `registry.npmjs.org` for npm); arbitrary WebFetch and package registries are otherwise blocked.
+The Claude launcher uses Microsandbox's `restricted` profile, runs as `node`, and keeps a separate, quota-backed home volume. Its default `public` network profile permits public Internet access while Microsandbox continues to deny the host, private networks, link-local addresses, and cloud metadata. This is the compatible default for the current Claude native client.
 
-The launcher pins DNS to `1.1.1.1` because this is the reliable configuration for the supported `msb 0.6.8` on macOS. Change or remove that setting only when your required resolver behavior is understood—for example, when local or split-horizon DNS is required. It also uses `--trust-host-cas` so Claude's native HTTPS client can validate certificates issued by a root trusted by macOS, such as a managed-network inspection root. This does not add egress destinations, but it does extend the guest's TLS trust store to the host's trusted roots.
+Set `CLAUDE_MSB_STRICT_EGRESS=1` to try the deny-by-default policy from the tutorial. In that mode the launcher permits gateway DNS only, then derives HTTPS rules from `~/.config/microvms/claude-egress`. The example enables the core Claude endpoints and GitHub. Add only routine services you need (for example, `registry.npmjs.org` for npm); arbitrary WebFetch and package registries are otherwise blocked. The current Microsandbox allowlist path is retained as an experimental boundary because Claude's native client has shown intermittent connection failures despite the complete documented core host set. The strict mode pins DNS to `1.1.1.1` for the tested `msb 0.6.8` macOS configuration.
 
 Claude's repository mount remains read/write, so it can read, modify, and delete every file in the mounted workspace, including ignored files. Keep secrets out of the repository, commit or stash work before autonomous sessions, and review the resulting diff. The policy limits destinations, not what Claude can do with credentials authenticated inside its persistent home. Use dedicated, narrowly scoped credentials where practical.
 
 For an inspection-only task, replace `rw` in the Claude launcher's `--mount-dir` option with `ro`. This is intentionally a manual, per-task choice rather than the development default.
 
-`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` and `ENABLE_CLAUDEAI_MCP_SERVERS=false` keep optional Claude traffic out of this profile. If you enable claude.ai MCP connectors, add `mcp-proxy.anthropic.com` to the egress file. Native updater, plugin, documentation, and other optional features may need their documented hosts added deliberately.
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` and `ENABLE_CLAUDEAI_MCP_SERVERS=false` keep optional Claude traffic out of this profile. In strict mode, if you enable claude.ai MCP connectors, add `mcp-proxy.anthropic.com` to the egress file. Native updater, plugin, documentation, and other optional features may need their documented hosts added deliberately.
 
 Host-side secret injection is intentionally not enabled by default: authenticate normally in the new Claude home first, then decide whether its extra complexity is worthwhile. For a host-exported, scoped GitHub token, the optional Microsandbox form is `--secret 'GH_TOKEN@api.github.com,github.com'`. It keeps the reusable value host-side but does not reduce the token's authority when hostile guest code can use it against GitHub; scope that credential accordingly.
 
@@ -75,7 +75,7 @@ curl -sSI --connect-timeout 5 https://api.github.com/
 curl -sSI --connect-timeout 5 https://example.com/
 ```
 
-Expect `node`, `NoNewPrivs: 1`, no mounted macOS `/Users` tree, successful transport to the allowed hosts, and failure for `example.com`. Also test a known LAN address with a short timeout; it should remain unreachable.
+Expect `node`, `NoNewPrivs: 1`, no mounted macOS `/Users` tree, successful transport to the allowed hosts, and failure for `example.com` when strict egress is enabled. Also test a known LAN address with a short timeout; it should remain unreachable in either network mode.
 
 The VM root filesystem is disposable, but the named home and repository are not. If persistent Claude state may have been modified, replace its home volume and authenticate again. If the repository may have changed, recover it with Git. Revoke or rotate any credential that was exposed to the guest; deleting a VM cannot make a copied credential secret again.
 
