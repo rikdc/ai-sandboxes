@@ -6,7 +6,7 @@ ARM64 Microsandbox images and Fish launchers for Claude Code and Codex. Skills a
 
 Prerequisites: Apple Silicon, Docker Desktop, Git, Fish, and Microsandbox (`msb`). Confirm Docker is running with `docker version`.
 
-Configure any optional Claude marketplaces or Codex skills in `config/marketplaces.json` (start with `config/marketplaces.example.json`). Use public URLs and reviewed commit SHAs—never credentials in URLs or configuration.
+Configure any optional Claude marketplaces or Codex skills in `config/marketplaces.json` (start with `config/marketplaces.example.json`). Claude marketplaces currently support canonical public GitHub repository URLs and reviewed commit SHAs; never place credentials in URLs or configuration.
 
 ```console
 ./scripts/build

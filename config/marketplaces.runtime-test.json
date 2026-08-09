@@ -1,0 +1,17 @@
+{
+  "claude": [
+    {
+      "url": "https://github.com/anthropics/claude-plugins-official.git",
+      "ref": "ffbd6d5a9514c3e05363596161d98cb0f8798f5b",
+      "path": ".",
+      "plugins": ["gopls-lsp"]
+    },
+    {
+      "url": "https://github.com/rikdc/ai-skills.git",
+      "ref": "d66daa0504ff859a9d51c86b9175eb9fe768cd25",
+      "path": ".",
+      "plugins": ["dev-skills"]
+    }
+  ],
+  "codex": []
+}

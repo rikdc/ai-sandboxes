@@ -22,7 +22,7 @@ jq -e '
   def selected_plugins: (.plugins? // []);
   (.claude | type == "array") and
   all(.claude[];
-    (.url | type == "string" and test("^https://[^/@]+/.+$")) and
+    (.url | type == "string" and test("^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\\.git$") and (contains("..") | not)) and
     (.ref | type == "string" and test("^[0-9a-f]{40}$")) and
     (.path | type == "string" and (. == "." or (test("^[A-Za-z0-9][A-Za-z0-9._/-]*$") and (contains("..") | not)))) and
     (selected_plugins | type == "array") and
@@ -43,10 +43,12 @@ while IFS= read -r spec; do
   url=$(jq -er '.url' <<<"$spec")
   ref=$(jq -er '.ref' <<<"$spec")
   path=$(jq -er '.path' <<<"$spec")
+  repository=${url#https://github.com/}
+  repository=${repository%.git}
   source_dir="/opt/claude-marketplaces/$index"
   index=$((index + 1))
 
-  git clone -- "$url" "$source_dir"
+  git clone --no-checkout --no-single-branch -- "$url" "$source_dir"
   git -C "$source_dir" checkout --detach "$ref"
   manifest="$source_dir/$path/.claude-plugin/marketplace.json"
   test -f "$manifest"
@@ -55,27 +57,18 @@ while IFS= read -r spec; do
   mapfile -t selected_plugins < <(jq -r '(.plugins? // [])[]' <<<"$spec")
   validate_selected_plugins "$manifest" "${selected_plugins[@]}"
 
-  if test "$marketplace" = claude-plugins-official; then
-    if test "$url" != https://github.com/anthropics/claude-plugins-official.git; then
-      printf '%s\n' "claude-plugins-official must use https://github.com/anthropics/claude-plugins-official.git" >&2
-      exit 1
-    fi
-
-    # Claude reserves this name for its GitHub source. Registering a local
-    # pinned checkout is rejected, so establish the trusted source identity,
-    # then replace Claude's cache with the profile-pinned revision before any
-    # plugin is installed from it.
-    claude plugin marketplace add anthropics/claude-plugins-official
-    cache_dir="$CLAUDE_CODE_PLUGIN_CACHE_DIR/marketplaces/$marketplace"
-    git -C "$cache_dir" fetch --depth=1 origin "$ref"
-    git -C "$cache_dir" checkout --detach "$ref"
-    test "$(git -C "$cache_dir" rev-parse HEAD)" = "$ref"
-    manifest="$cache_dir/$path/.claude-plugin/marketplace.json"
-    test -f "$manifest"
-    validate_selected_plugins "$manifest" "${selected_plugins[@]}"
-  else
-    claude plugin marketplace add "$source_dir/$path"
-  fi
+  # Register by GitHub identity rather than the build-stage checkout. Claude
+  # can then reload this marketplace from its persisted cache at runtime.
+  claude plugin marketplace add "$repository"
+  cache_dir="$CLAUDE_CODE_PLUGIN_CACHE_DIR/marketplaces/$marketplace"
+  test -d "$cache_dir" || die "Claude did not create marketplace cache: $marketplace"
+  git -C "$cache_dir" fetch --depth=1 origin "$ref"
+  git -C "$cache_dir" checkout --detach "$ref"
+  test "$(git -C "$cache_dir" rev-parse HEAD)" = "$ref" || die "marketplace cache is not pinned: $marketplace"
+  manifest="$cache_dir/$path/.claude-plugin/marketplace.json"
+  test -f "$manifest" || die "marketplace manifest is missing from pinned cache: $marketplace"
+  test "$(jq -er '.name' "$manifest")" = "$marketplace" || die "marketplace name changed after cache pinning: $marketplace"
+  validate_selected_plugins "$manifest" "${selected_plugins[@]}"
 
   for plugin in "${selected_plugins[@]}"; do
     claude plugin install "${plugin}@${marketplace}" --scope user

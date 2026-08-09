@@ -2,6 +2,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+marketplace_test_image=ai-sandboxes-claude-marketplace-test:local
+cleanup_marketplace_test_image() {
+  docker image rm -f "$marketplace_test_image" >/dev/null 2>&1 || true
+}
+trap cleanup_marketplace_test_image EXIT
+
 for file in scripts/build scripts/lint-dockerfiles scripts/load-msb scripts/verify images/codex/entrypoint.sh scripts/marketplaces/*.sh scripts/tools/*.sh; do bash -n "$file"; done
 if command -v fish >/dev/null 2>&1; then find shell/fish -type f -name '*.fish' -exec fish --no-execute {} +; fi
 if git grep -nEi '(api[_-]?key|access[_-]?token|secret)[[:space:]]*=[[:space:]]*[^[:space:]]+' -- ':!README.md' ':!scripts/verify'; then
@@ -29,6 +35,23 @@ while IFS= read -r tool; do
 done < <(jq -r --slurpfile selection config/tools.json '.tools[] | select(.id as $id | $selection[0].tools[].id == $id) | .binary' config/tool-catalog.json)
 docker run --rm --user node -e HOME=/home/node ai-sandboxes-claude:local claude --version
 docker run --rm --user node -e HOME=/home/node ai-sandboxes-codex:local codex --version
+set -a
+# shellcheck disable=SC1091 # Resolved from the repository root above.
+source ./versions.env
+set +a
+docker buildx bake --load \
+  --set "tools.args.SHARED_STATE_ID=$expected_state_id" \
+  --set "tools.args.SHARED_STATE_QUOTA=$expected_state_quota" \
+  --set claude.args.MARKETPLACES_CONFIG=config/marketplaces.runtime-test.json \
+  --set "claude.tags=$marketplace_test_image" \
+  claude
+marketplace_output=$(docker run --rm --user node -e HOME=/tmp/claude-runtime-test "$marketplace_test_image" claude plugin marketplace list 2>&1)
+printf '%s\n' "$marketplace_output" | grep -Fq 'Source: GitHub (anthropics/claude-plugins-official)'
+printf '%s\n' "$marketplace_output" | grep -Fq 'Source: GitHub (rikdc/ai-skills)'
+if printf '%s\n' "$marketplace_output" | grep -Fq 'Failed to load marketplace'; then
+  echo 'Claude could not load the runtime-test marketplace' >&2
+  exit 1
+fi
 for image in ai-sandboxes-claude:local ai-sandboxes-codex:local; do
   if docker history --no-trunc "$image" | grep -Ei '(anthropic_api_key|openai_api_key|codex_access_token)'; then
     exit 1
