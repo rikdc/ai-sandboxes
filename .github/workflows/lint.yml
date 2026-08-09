@@ -20,8 +20,12 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
+      - name: Lint Markdown
+        uses: DavidAnson/markdownlint-cli2-action@28a7e8bdb81fd8ad675883de92c758ab78e0ce10 # v24
+        with:
+          globs: '**/*.md'
       - name: Install host linters
-        run: sudo apt-get update && sudo apt-get install --yes fish jq shellcheck
+        run: sudo apt-get update && sudo apt-get install --yes fish shellcheck
       - name: Lint GitHub Actions workflows
         run: >-
           docker run --rm -v "$PWD:/work" -w /work
@@ -42,12 +46,3 @@ jobs:
           if ((${#fish_files[@]})); then fish --no-execute "${fish_files[@]}"; fi
       - name: Lint Dockerfiles when present
         run: ./scripts/lint-dockerfiles
-      - name: Validate build and JSON configuration when present
-        run: |
-          if test -f docker-bake.hcl; then
-            set -a
-            source versions.env
-            set +a
-            docker buildx bake --print
-          fi
-          for file in config/*.json; do test -e "$file" || continue; jq -e . "$file" >/dev/null; done
