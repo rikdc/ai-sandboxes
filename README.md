@@ -65,6 +65,15 @@ The launcher permits gateway DNS only, then derives HTTPS rules from `~/.config/
 
 If a session needs the broader compatibility mode, use `CLAUDE_MSB_PUBLIC_EGRESS=1 claude`. This permits public Internet access while Microsandbox continues to deny the host, private networks, link-local addresses, and cloud metadata. Treat it as an explicit, per-session exception: public egress permits exfiltration to arbitrary public destinations.
 
+To reach a service on your LAN or VPN for one session, prefix either launcher with `MSB_LOCAL_NETWORK=1`:
+
+```console
+MSB_LOCAL_NETWORK=1 claude
+MSB_LOCAL_NETWORK=1 codex
+```
+
+This adds Microsandbox's `private` network profile without enabling its separate `host` profile. It can reach private-network services, so use it only for sessions that need that access; omit the variable to return to the normal boundary. It composes with Claude's allowlist and, when necessary, `CLAUDE_MSB_PUBLIC_EGRESS=1`.
+
 Claude's repository mount remains read/write, so it can read, modify, and delete every file in the mounted workspace, including ignored files. Keep secrets out of the repository, commit or stash work before autonomous sessions, and review the resulting diff. The policy limits destinations, not what Claude can do with credentials authenticated inside its persistent home. Use dedicated, narrowly scoped credentials where practical.
 
 For an inspection-only task, replace `rw` in the Claude launcher's `--mount-dir` option with `ro`. This is intentionally a manual, per-task choice rather than the development default.

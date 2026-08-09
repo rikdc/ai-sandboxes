@@ -42,6 +42,13 @@ function claude --description 'Run Claude Code in a hardened Microsandbox VM'
         end < "$egress_file"
     end
 
+    # A deliberate, per-session exception for services on a LAN or VPN. This
+    # composes with either the default allowlist or public-egress mode, while
+    # leaving Microsandbox's separate host network profile disabled.
+    if set -q MSB_LOCAL_NETWORK; and test "$MSB_LOCAL_NETWORK" = 1
+        set -a network_args --net private
+    end
+
     set -l shared_state_args (__ai_sandbox_prepare_shared_state claude "$image"); or return $status
 
     set -l host_workspace (command git rev-parse --show-toplevel 2>/dev/null)

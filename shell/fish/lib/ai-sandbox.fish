@@ -130,7 +130,13 @@ function __ai_sandbox_launch --argument-names launcher_file agent image home_vol
     if not contains -- "$home_volume" $existing_volumes
         msb volume create "$home_volume"; or return $status
     end
-    command msb run --tty --pull never --user node --net public --root-disk "$workspace_quota" \
+    set -l network_args --net public
+    # Opt in only for this invocation to reach services on a LAN or VPN. The
+    # Microsandbox host profile remains intentionally unavailable here.
+    if set -q MSB_LOCAL_NETWORK; and test "$MSB_LOCAL_NETWORK" = 1
+        set -a network_args --net private
+    end
+    command msb run --tty --pull never --user node $network_args --root-disk "$workspace_quota" \
         --mount-dir "$workspace:$guest_workspace:rw" \
         --mount-named "$home_volume:/home/node:rw" \
         $shared_state_args \
