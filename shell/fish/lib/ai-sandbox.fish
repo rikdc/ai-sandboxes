@@ -40,6 +40,18 @@ function __ai_sandbox_shared_state_mount_args --argument-names agent image
     end
     set -l state_id $state_ids[1]
     set -l state_quota $state_quotas[1]
+    if test -z "$state_id"; and test -z "$state_quota"
+        # Images built without an opted-in shared-state capability still carry
+        # the label keys (set from empty ARGs), just with empty values. That is
+        # equivalent to the labels being absent entirely.
+        set -ga __ai_sandbox_shared_state_images "$image"
+        set -ga __ai_sandbox_shared_state_values ''
+        return 0
+    end
+    if test -z "$state_id"; or test -z "$state_quota"
+        echo "$agent: image has inconsistent shared-state labels" >&2
+        return 2
+    end
     if not string match -rq '^[a-z0-9][a-z0-9-]{0,62}$' -- "$state_id"
         echo "$agent: image has an invalid shared-state id" >&2
         return 2
@@ -57,7 +69,9 @@ end
 function __ai_sandbox_prepare_shared_state --argument-names agent image
     set -l mount_args (__ai_sandbox_shared_state_mount_args "$agent" "$image"); or return $status
     __ai_sandbox_initialize_shared_state "$agent" "$image" $mount_args; or return $status
-    printf '%s\n' $mount_args
+    if test (count $mount_args) -gt 0
+        printf '%s\n' $mount_args
+    end
 end
 
 function __ai_sandbox_initialize_shared_state --argument-names agent image
