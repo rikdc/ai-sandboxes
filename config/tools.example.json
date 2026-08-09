@@ -1,0 +1,14 @@
+{
+  "tools": [
+    {
+      "id": "icm",
+      "version": "icm-vX.Y.Z",
+      "sha256": "LOWERCASE_64_CHARACTER_SHA256"
+    },
+    {
+      "id": "rtk",
+      "version": "vX.Y.Z",
+      "sha256": "LOWERCASE_64_CHARACTER_SHA256"
+    }
+  ]
+}

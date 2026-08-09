@@ -43,11 +43,17 @@ The functions mount only the current Git worktree (or current directory outside 
 
 ## Configuration and updates
 
-`versions.env` is the sole build configuration: pinned Node and Tea image digests, agent versions, the verified GitHub CLI key fingerprint, and `WORKSPACE_QUOTA` for the Codex VM root disk. Claude's hardened launcher uses 10 GiB caps for its writable root and workspace mount, plus a 4 GiB directory-backed home volume. The root-disk quota does not limit a host repository bind.
+`versions.env` is the sole build configuration for the neutral runtime: pinned Node (Debian 13/Trixie) and Tea image digests, agent versions, the verified GitHub CLI key fingerprint, and VM quotas. Claude's hardened launcher uses 10 GiB caps for its writable root and workspace mount, plus a 4 GiB directory-backed home volume. The root-disk quota does not limit a host repository bind.
 
 After changing versions or configured content, run the three quick-start commands again. `scripts/build` is the supported build entry point; it supplies `versions.env` to Bake. Direct builds must provide the GitHub CLI fingerprint explicitly and fail closed when it is absent.
 
 Claude sources must contain `.claude-plugin/marketplace.json`; all declared plugins are seeded as `node`. Codex sources must expose native `SKILL.md` directories at the configured `skills_path`. Claude-only commands, hooks, agents, and MCP settings are not translated for Codex.
+
+## Profile-selected agent tools
+
+The base image is intentionally neutral. Profiles may opt into audited tool recipes through `config/tools.json`; the checked-in manifest selects none. A profile supplies only the selected tool IDs and their release, commit, or checksum pins. The public `config/tool-catalog.json` is the reviewed allowlist: it fixes each tool's upstream repository, installation adapter, executable, and any state wrapper. Generic adapters under `scripts/tools/` implement the supported installation methods, so profiles cannot introduce arbitrary installer commands or URLs. `images/tools/Dockerfile` is the profile layer between `base` and the agent images.
+
+Profiles can declare a `shared_state` capability in `config/runtime.json`. The built image records only a validated, non-secret profile ID and quota; the launcher then mounts the fixed, quota-backed path `/var/lib/agent-state` from `agent-state-<profile-id>-v1`. A capability does not add host filesystem or network access, but it intentionally lets all opted-in images for that profile read and write persistent shared state. Treat that state as untrusted input, keep credentials out of it, and remove the named volume to reset it.
 
 ## Claude hardening, egress, and recovery
 

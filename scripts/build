@@ -5,4 +5,13 @@ set -a
 # shellcheck disable=SC1091 # Resolved after cd to the repository root.
 source ./versions.env
 set +a
-docker buildx bake --load base claude codex
+./scripts/tools/validate-selection.sh config/tool-catalog.json config/tools.json config/runtime.json
+runtime_values=$(./scripts/tools/runtime-values.sh config/runtime.json)
+if test -z "$runtime_values"; then
+  SHARED_STATE_ID=''
+  SHARED_STATE_QUOTA=''
+else
+  IFS=$'\t' read -r SHARED_STATE_ID SHARED_STATE_QUOTA <<<"$runtime_values"
+fi
+export SHARED_STATE_ID SHARED_STATE_QUOTA
+docker buildx bake --load base tools claude codex

@@ -2,18 +2,31 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-for file in scripts/build scripts/load-msb scripts/verify images/codex/entrypoint.sh; do bash -n "$file"; done
+for file in scripts/build scripts/load-msb scripts/verify images/codex/entrypoint.sh scripts/tools/*.sh; do bash -n "$file"; done
 if command -v fish >/dev/null 2>&1; then find shell/fish -type f -name '*.fish' -exec fish --no-execute {} +; fi
 if git grep -nEi '(api[_-]?key|access[_-]?token|secret)[[:space:]]*=[[:space:]]*[^[:space:]]+' -- ':!README.md' ':!scripts/verify'; then
   exit 1
 fi
 
-for image in ai-sandboxes-base:local ai-sandboxes-claude:local ai-sandboxes-codex:local; do docker image inspect "$image" >/dev/null; done
+for image in ai-sandboxes-base:local ai-sandboxes-tools:local ai-sandboxes-claude:local ai-sandboxes-codex:local; do docker image inspect "$image" >/dev/null; done
 test "$(docker image inspect --format '{{.Architecture}}' ai-sandboxes-base:local)" = arm64
+expected_state_id=''
+expected_state_quota=''
+runtime_values=$(./scripts/tools/runtime-values.sh config/runtime.json)
+if test -n "$runtime_values"; then
+  IFS=$'\t' read -r expected_state_id expected_state_quota <<<"$runtime_values"
+fi
+for image in ai-sandboxes-tools:local ai-sandboxes-claude:local ai-sandboxes-codex:local; do
+  test "$(docker image inspect --format '{{ with index .Config.Labels "io.ai-sandboxes.shared-state.id" }}{{ . }}{{ end }}' "$image")" = "$expected_state_id"
+  test "$(docker image inspect --format '{{ with index .Config.Labels "io.ai-sandboxes.shared-state.quota" }}{{ . }}{{ end }}' "$image")" = "$expected_state_quota"
+done
 docker run --rm --user node -e HOME=/home/node ai-sandboxes-base:local bash -lc '
   for tool in bash curl git gh tea jq rg ssh; do command -v "$tool" >/dev/null; done
   ! command -v go
 '
+while IFS= read -r tool; do
+  docker run --rm --user node -e HOME=/home/node ai-sandboxes-tools:local "$tool" --version
+done < <(jq -r --slurpfile selection config/tools.json '.tools[] | select(.id as $id | $selection[0].tools[].id == $id) | .binary' config/tool-catalog.json)
 docker run --rm --user node -e HOME=/home/node ai-sandboxes-claude:local claude --version
 docker run --rm --user node -e HOME=/home/node ai-sandboxes-codex:local codex --version
 for image in ai-sandboxes-claude:local ai-sandboxes-codex:local; do
