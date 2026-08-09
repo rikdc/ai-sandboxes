@@ -40,6 +40,8 @@ set -a
 source ./versions.env
 set +a
 docker buildx bake --load \
+  --set "tools.args.SHARED_STATE_ID=$expected_state_id" \
+  --set "tools.args.SHARED_STATE_QUOTA=$expected_state_quota" \
   --set claude.args.MARKETPLACES_CONFIG=config/marketplaces.runtime-test.json \
   --set "claude.tags=$marketplace_test_image" \
   claude
