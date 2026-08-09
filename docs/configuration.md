@@ -8,6 +8,9 @@ Configuration lives in `config/`. Rebuild, verify, and reload Microsandbox after
 ./scripts/load-msb
 ```
 
+For a reproducible personal or team configuration that remains separate from
+the public runtime, see [private profiles](private-profiles.md).
+
 ## Marketplaces and skills
 
 Start with `config/marketplaces.example.json` and copy its entries into `config/marketplaces.json`.

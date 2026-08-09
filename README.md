@@ -35,6 +35,7 @@ From a project directory, run `claude` or `codex`.
 - Copy and edit `config/marketplaces.example.json` to add reviewed Claude marketplaces or Codex skills.
 - Choose optional tools in `config/tools.json`; their allowed sources are in `config/tool-catalog.json`.
 - Configure optional shared state in `config/runtime.json` (see `config/runtime.example.json`).
+- Keep personal or team configuration in a separate repository by following the [private profiles guide](docs/private-profiles.md).
 - After changing configuration or versions, run the build commands again.
 
 See [configuration details](docs/configuration.md) and [Claude security and recovery](docs/claude-security.md) for the operational reference.
