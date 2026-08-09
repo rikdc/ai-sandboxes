@@ -3,7 +3,8 @@
     {
       "url": "https://github.com/OWNER/claude-marketplace.git",
       "ref": "FULL_COMMIT_SHA",
-      "path": "."
+      "path": ".",
+      "plugins": ["reviewed-plugin"]
     }
   ],
   "codex": [

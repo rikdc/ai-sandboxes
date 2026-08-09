@@ -8,5 +8,8 @@ scripts/*
 !scripts/tools/
 scripts/tools/*
 !scripts/tools/*.sh
+!scripts/marketplaces/
+scripts/marketplaces/*
+!scripts/marketplaces/*.sh
 *.tar
 *.tgz
