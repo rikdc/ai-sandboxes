@@ -29,14 +29,15 @@ jobs:
       - name: Lint GitHub Actions workflows
         run: >-
           docker run --rm -v "$PWD:/work" -w /work
-          rhysd/actionlint:1.7.10
+          rhysd/actionlint:1.7.10 .github/workflows/*.yml
+          examples/agent-profile/.github/workflows/*.yml
       - name: Lint shell and Fish files when present
         run: |
           files=$(mktemp)
           trap 'rm -f "$files"' EXIT
-          for directory in scripts images; do
+          for directory in scripts images examples; do
             test -d "$directory" || continue
-            find "$directory" -type f \( -name '*.sh' -o -path 'scripts/*' \) -print0 >> "$files"
+            find "$directory" -type f \( -name '*.sh' -o -path 'scripts/*' -o -path 'examples/*/scripts/*' \) -print0 >> "$files"
           done
           mapfile -d '' bash_files < "$files"
           if ((${#bash_files[@]})); then shellcheck "${bash_files[@]}"; fi

@@ -30,4 +30,4 @@ jobs:
             set +a
             docker buildx bake --print
           fi
-          for file in config/*.json; do test -e "$file" || continue; jq -e . "$file" >/dev/null; done
+          for file in config/*.json examples/agent-profile/config/*.json; do test -e "$file" || continue; jq -e . "$file" >/dev/null; done

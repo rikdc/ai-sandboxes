@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+# Source this file and call profile_prepare_upstream from a caller that owns cleanup.
+
+set -euo pipefail
+
+profile_script_dir="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROFILE_REPO_ROOT="$(CDPATH='' cd -- "$profile_script_dir/.." && pwd)"
+PROFILE_UPSTREAM_WORKSPACE=""
+
+profile_die() {
+  printf '%s\n' "error: $*" >&2
+  return 1
+}
+
+profile_require_command() {
+  command -v "$1" >/dev/null 2>&1 || profile_die "required command not found: $1"
+}
+
+profile_validate_manifest() {
+  local manifest="$PROFILE_REPO_ROOT/config/marketplaces.json"
+  [ -f "$manifest" ] || profile_die "marketplaces manifest is missing: $manifest"
+  if command -v jq >/dev/null 2>&1; then
+    jq -e '
+      type == "object" and
+      (.claude | type == "array") and
+      (.codex | type == "array") and
+      ([.. | strings | select(test("^[A-Za-z][A-Za-z0-9+.-]*://[^/]*@"))] | length == 0) and
+      ([.. | strings | select(test("^[A-Za-z][A-Za-z0-9+.-]*://")) | select(startswith("https://github.com/") | not)] | length == 0)
+    ' "$manifest" >/dev/null || profile_die "invalid marketplaces manifest: require claude/codex arrays, canonical public GitHub URLs only, and no credentials in URLs"
+  else
+    printf '%s\n' "warning: jq is unavailable; JSON and marketplace policy validation is deferred to upstream verification" >&2
+  fi
+}
+
+profile_read_upstream_lock() {
+  local lock="$PROFILE_REPO_ROOT/upstream.lock"
+  [ -f "$lock" ] || profile_die "upstream lock is missing: $lock"
+  # The lock is deliberately parsed, not sourced: it must contain only these two literal assignments.
+  UPSTREAM_REPOSITORY="$(sed -n 's/^UPSTREAM_REPOSITORY=//p' "$lock")"
+  UPSTREAM_REF="$(sed -n 's/^UPSTREAM_REF=//p' "$lock")"
+  [ -n "$UPSTREAM_REPOSITORY" ] || profile_die "upstream.lock is missing UPSTREAM_REPOSITORY"
+  [ -n "$UPSTREAM_REF" ] || profile_die "upstream.lock is missing UPSTREAM_REF"
+  [ "$(printf '%s\n' "$UPSTREAM_REPOSITORY" | wc -l | tr -d ' ')" = "1" ] || profile_die "upstream.lock must contain exactly one UPSTREAM_REPOSITORY entry"
+  [ "$(printf '%s\n' "$UPSTREAM_REF" | wc -l | tr -d ' ')" = "1" ] || profile_die "upstream.lock must contain exactly one UPSTREAM_REF entry"
+  [ "$UPSTREAM_REPOSITORY" = "https://github.com/rikdc/ai-sandboxes.git" ] || profile_die "UPSTREAM_REPOSITORY must be https://github.com/rikdc/ai-sandboxes.git"
+  if [ "$UPSTREAM_REF" = "REPLACE_WITH_FULL_UPSTREAM_COMMIT_SHA" ]; then
+    profile_die "UPSTREAM_REF is still the placeholder; replace it with a full 40-character upstream commit SHA"
+  fi
+  [[ "$UPSTREAM_REF" =~ ^[0-9a-f]{40}$ ]] || profile_die "UPSTREAM_REF must be a lowercase, full 40-character commit SHA"
+}
+
+profile_cleanup_upstream() {
+  if [ -n "${PROFILE_UPSTREAM_WORKSPACE:-}" ] && [ -d "$PROFILE_UPSTREAM_WORKSPACE" ]; then
+    rm -rf -- "$PROFILE_UPSTREAM_WORKSPACE"
+  fi
+  PROFILE_UPSTREAM_WORKSPACE=""
+}
+
+profile_prepare_upstream() {
+  profile_require_command git
+  profile_require_command mktemp
+  profile_validate_manifest
+  profile_read_upstream_lock
+  PROFILE_UPSTREAM_WORKSPACE="$(mktemp -d "${TMPDIR:-/tmp}/profile-upstream.XXXXXX")"
+  git clone --no-checkout --no-single-branch "$UPSTREAM_REPOSITORY" "$PROFILE_UPSTREAM_WORKSPACE"
+  git -C "$PROFILE_UPSTREAM_WORKSPACE" checkout --detach "$UPSTREAM_REF"
+  [ "$(git -C "$PROFILE_UPSTREAM_WORKSPACE" rev-parse HEAD)" = "$UPSTREAM_REF" ] || profile_die "checked-out upstream revision does not match UPSTREAM_REF"
+  [ -f "$PROFILE_UPSTREAM_WORKSPACE/config/marketplaces.json" ] || profile_die "locked upstream does not contain config/marketplaces.json"
+  [ -f "$PROFILE_UPSTREAM_WORKSPACE/config/tools.json" ] || profile_die "locked upstream does not contain config/tools.json"
+  [ -f "$PROFILE_UPSTREAM_WORKSPACE/config/runtime.json" ] || profile_die "locked upstream does not contain config/runtime.json"
+  cp "$PROFILE_REPO_ROOT/config/marketplaces.json" "$PROFILE_UPSTREAM_WORKSPACE/config/marketplaces.json"
+  cp "$PROFILE_REPO_ROOT/config/tools.json" "$PROFILE_UPSTREAM_WORKSPACE/config/tools.json"
+  cp "$PROFILE_REPO_ROOT/config/runtime.json" "$PROFILE_UPSTREAM_WORKSPACE/config/runtime.json"
+  export PROFILE_UPSTREAM_WORKSPACE
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  if [ "${1:-}" != "--run" ] || [ "$#" -lt 2 ]; then
+    printf '%s\n' "usage: $0 --run COMMAND [ARG ...]" >&2
+    printf '%s\n' "Runs COMMAND from a prepared temporary upstream workspace and cleans it on exit." >&2
+    exit 64
+  fi
+  shift
+  trap profile_cleanup_upstream EXIT INT TERM
+  profile_prepare_upstream
+  (cd "$PROFILE_UPSTREAM_WORKSPACE" && "$@")
+fi

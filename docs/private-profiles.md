@@ -5,6 +5,9 @@ policy separate from this public runtime. A profile selects reviewed
 marketplaces, optional tools, and shared-state settings; it is not a fork and
 does not copy or modify the upstream source.
 
+For a copyable starting point, see the sanitized
+[agent profile example](../examples/agent-profile/).
+
 The profile pins one exact upstream commit, overlays its three configuration
 files onto a temporary checkout of that commit, and builds the resulting
 images. The pin makes the profile's configuration schema and build behavior

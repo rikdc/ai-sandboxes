@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  printf '%s\n' "usage: $0 sha-<40-character-profile-commit>" >&2
+  exit 64
+}
+
+[ "$#" = 1 ] || usage
+image_tag="$1"
+[[ "$image_tag" =~ ^sha-[0-9a-f]{40}$ ]] \
+  || { printf '%s\n' "error: image tag must be sha- followed by a lowercase 40-character commit SHA" >&2; exit 64; }
+
+namespace="${GHCR_NAMESPACE:-${GITHUB_REPOSITORY_OWNER:-}}"
+[ -n "$namespace" ] || { printf '%s\n' "error: set GHCR_NAMESPACE (or run in GitHub Actions)" >&2; exit 64; }
+case "$namespace" in *[!A-Za-z0-9_.-]*|'') printf '%s\n' "error: GHCR_NAMESPACE contains unsupported characters" >&2; exit 64;; esac
+
+script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+"$script_dir/build-profile"
+
+command -v docker >/dev/null 2>&1 || { printf '%s\n' "error: required command not found: docker" >&2; exit 1; }
+claude_image="ghcr.io/$namespace/agent-profile-claude:$image_tag"
+codex_image="ghcr.io/$namespace/agent-profile-codex:$image_tag"
+docker image inspect ai-sandboxes-claude:local >/dev/null
+docker image inspect ai-sandboxes-codex:local >/dev/null
+docker tag ai-sandboxes-claude:local "$claude_image"
+docker tag ai-sandboxes-codex:local "$codex_image"
+docker push "$claude_image"
+docker push "$codex_image"
+printf '%s\n%s\n' "$claude_image" "$codex_image"
