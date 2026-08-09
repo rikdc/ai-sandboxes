@@ -36,6 +36,28 @@ Shared state is visible to every image that opts into the same profile. It does 
 
 `versions.env` pins the runtime and agent versions, image digests, and VM quotas. Use `./scripts/build` rather than invoking Docker Bake directly: the script loads this file and validates the selected configuration.
 
+### Agent-version release markers
+
+After ARM64 image verification succeeds on `main`, a change to `CODEX_VERSION`
+or `CLAUDE_CODE_VERSION` creates an immutable GitHub Release. Its tag is
+`agent-versions-codex-<CODEX_VERSION>-claude-<CLAUDE_CODE_VERSION>` and it
+points to the verified upstream commit. The release includes a `release.json`
+asset with this schema:
+
+```json
+{
+  "schema_version": 1,
+  "upstream_commit": "40-character lowercase Git commit SHA",
+  "codex_version": "exact CODEX_VERSION value",
+  "claude_code_version": "exact CLAUDE_CODE_VERSION value",
+  "created_at": "RFC 3339 UTC timestamp"
+}
+```
+
+The tag and marker are immutable. A workflow rerun reuses an existing release
+only when its downloaded marker exactly matches the commit and both versions;
+otherwise it fails instead of changing a release or tag.
+
 ### Claude Code distribution
 
 `CLAUDE_CODE_VERSION` is an exact Claude Code release pin for the fixed `linux/arm64` image target. The Claude image downloads that version's `manifest.json` and detached signature from Anthropic, imports Anthropic's release key, and requires it to match the `CLAUDE_RELEASE_KEY_FINGERPRINT` pin before verifying the signature. It then downloads only the manifest's `linux-arm64` `claude` binary and verifies its SHA-256 checksum before installing it at `/usr/local/bin/claude`.

@@ -46,6 +46,29 @@ Review the selected upstream commit before changing the pin. Do not use a
 branch, tag, or abbreviated SHA: a profile is compatible only with the exact
 upstream revision it declares.
 
+## Discover an agent runtime update
+
+When a Codex or Claude Code version changes, upstream publishes a verified
+GitHub Release with a tag beginning `agent-versions-codex-` and a
+machine-readable `release.json` asset. To update a profile deterministically:
+
+1. Enumerate upstream releases with that tag prefix and download each
+   `release.json` asset.
+2. Accept only schema version 1 markers whose `upstream_commit` is a lowercase,
+   40-character SHA and whose tag agrees with the marker's Codex and Claude
+   Code versions.
+3. Select the newest valid marker by `created_at`; if timestamps tie, use the
+   lexicographically greatest `upstream_commit` as the deterministic tie-break.
+4. Review that exact upstream commit and put it in `UPSTREAM_REF` in
+   `upstream.lock`; retain the normal repository URL.
+5. Commit the updated lock, then run the profile's existing build-and-publish
+   process. The profile images remain identified by the profile commit, not by
+   a moving upstream tag.
+
+Do not use GitHub's generic "latest release" endpoint: it can include a future
+unrelated release. Treat a missing, malformed, or mismatched marker as an
+error rather than falling back to a branch or tag.
+
 ## Build and verify
 
 The profile's build script should perform these steps:

@@ -1,0 +1,79 @@
+#!/bin/bash
+set -euo pipefail
+
+usage() {
+  printf '%s\n' 'usage:' >&2
+  printf '%s\n' '  release-marker changed OLD_VERSIONS_ENV NEW_VERSIONS_ENV' >&2
+  printf '%s\n' '  release-marker create OUTPUT COMMIT CODEX_VERSION CLAUDE_CODE_VERSION CREATED_AT' >&2
+  printf '%s\n' '  release-marker validate FILE COMMIT CODEX_VERSION CLAUDE_CODE_VERSION' >&2
+  exit 64
+}
+
+read_version() {
+  local file=$1 key=$2 value
+  value=$(sed -n "s/^${key}=//p" "$file")
+  test "$(printf '%s\n' "$value" | wc -l | tr -d ' ')" = 1 || {
+    printf '%s\n' "error: $file must contain exactly one $key assignment" >&2
+    return 2
+  }
+  [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && [[ "$value" != *..* ]] || {
+    printf '%s\n' "error: invalid $key value in $file" >&2
+    return 2
+  }
+  printf '%s\n' "$value"
+}
+
+validate_inputs() {
+  local commit=$1 codex_version=$2 claude_version=$3
+  [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || {
+    printf '%s\n' 'error: commit must be a lowercase, 40-character SHA' >&2
+    return 1
+  }
+  for version in "$codex_version" "$claude_version"; do
+    [[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && [[ "$version" != *..* ]] || {
+      printf '%s\n' 'error: version contains unsupported tag characters' >&2
+      return 1
+    }
+  done
+}
+
+case "${1:-}" in
+  changed)
+    test "$#" = 3 || usage
+    old_codex=$(read_version "$2" CODEX_VERSION)
+    old_claude=$(read_version "$2" CLAUDE_CODE_VERSION)
+    new_codex=$(read_version "$3" CODEX_VERSION)
+    new_claude=$(read_version "$3" CLAUDE_CODE_VERSION)
+    if test "$old_codex" != "$new_codex" || test "$old_claude" != "$new_claude"; then
+      exit 0
+    fi
+    exit 1
+    ;;
+  create)
+    test "$#" = 6 || usage
+    output=$2
+    validate_inputs "$3" "$4" "$5"
+    [[ "$6" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || {
+      printf '%s\n' 'error: created_at must be an RFC 3339 UTC timestamp' >&2
+      exit 1
+    }
+    jq -n --arg commit "$3" --arg codex "$4" --arg claude "$5" --arg created_at "$6" \
+      '{schema_version: 1, upstream_commit: $commit, codex_version: $codex, claude_code_version: $claude, created_at: $created_at}' >"$output"
+    ;;
+  validate)
+    test "$#" = 5 || usage
+    validate_inputs "$3" "$4" "$5"
+    jq -e \
+      --arg commit "$3" \
+      --arg codex "$4" \
+      --arg claude "$5" \
+      'type == "object" and
+       (keys | sort) == ["claude_code_version", "codex_version", "created_at", "schema_version", "upstream_commit"] and
+       .schema_version == 1 and
+       .upstream_commit == $commit and
+       .codex_version == $codex and
+       .claude_code_version == $claude and
+       (.created_at | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))' "$2" >/dev/null
+    ;;
+  *) usage ;;
+esac
