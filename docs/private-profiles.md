@@ -38,7 +38,7 @@ upstream already supports:
 Keep the upstream choice in `upstream.lock` as two literal values:
 
 ```text
-UPSTREAM_REPOSITORY=https://github.com/OWNER/ai-sandboxes.git
+UPSTREAM_REPOSITORY=https://github.com/rikdc/ai-sandboxes.git
 UPSTREAM_REF=FULL_40_CHARACTER_COMMIT_SHA
 ```
 
