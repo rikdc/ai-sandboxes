@@ -5,6 +5,13 @@ marketplaces=${1:?usage: install-claude.sh MARKETPLACES_JSON}
 
 jq -e '(.claude | type == "array") and all(.claude[]; (.url | type == "string") and (.ref | type == "string") and (.path | type == "string"))' "$marketplaces" >/dev/null
 
+# Marketplace entries may identify public GitHub sources without choosing a
+# transport. Claude currently resolves those entries through SSH. Keep strict
+# host verification intact by using HTTPS (and its normal CA validation)
+# instead of seeding a mutable SSH known_hosts entry into the image.
+git config --global url."https://github.com/".insteadOf git@github.com:
+git config --global --add url."https://github.com/".insteadOf ssh://git@github.com/
+
 index=0
 while IFS= read -r spec; do
   url=$(jq -er '.url' <<<"$spec")
