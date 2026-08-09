@@ -1,5 +1,9 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
+
+version_pattern='^[A-Za-z0-9][A-Za-z0-9._-]*$'
+commit_pattern='^[0-9a-f]{40}$'
+timestamp_pattern='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
 
 usage() {
   printf '%s\n' 'usage:' >&2
@@ -9,14 +13,24 @@ usage() {
   exit 64
 }
 
+valid_version() {
+  [[ "$1" =~ $version_pattern ]] && [[ "$1" != *..* ]]
+}
+
 read_version() {
-  local file=$1 key=$2 value
-  value=$(sed -n "s/^${key}=//p" "$file")
-  test "$(printf '%s\n' "$value" | wc -l | tr -d ' ')" = 1 || {
+  local file=$1 key=$2
+  local line value='' matches=0 prefix="${key}="
+  while IFS= read -r line || test -n "$line"; do
+    if [[ "$line" == "$prefix"* ]]; then
+      value=${line#"$prefix"}
+      ((matches += 1))
+    fi
+  done <"$file"
+  test "$matches" = 1 || {
     printf '%s\n' "error: $file must contain exactly one $key assignment" >&2
     return 2
   }
-  [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && [[ "$value" != *..* ]] || {
+  valid_version "$value" || {
     printf '%s\n' "error: invalid $key value in $file" >&2
     return 2
   }
@@ -25,12 +39,12 @@ read_version() {
 
 validate_inputs() {
   local commit=$1 codex_version=$2 claude_version=$3
-  [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || {
+  [[ "$commit" =~ $commit_pattern ]] || {
     printf '%s\n' 'error: commit must be a lowercase, 40-character SHA' >&2
     return 1
   }
   for version in "$codex_version" "$claude_version"; do
-    [[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && [[ "$version" != *..* ]] || {
+    valid_version "$version" || {
       printf '%s\n' 'error: version contains unsupported tag characters' >&2
       return 1
     }
@@ -53,17 +67,17 @@ case "${1:-}" in
     test "$#" = 6 || usage
     output=$2
     validate_inputs "$3" "$4" "$5"
-    [[ "$6" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || {
+    [[ "$6" =~ $timestamp_pattern ]] || {
       printf '%s\n' 'error: created_at must be an RFC 3339 UTC timestamp' >&2
       exit 1
     }
-    jq -n --arg commit "$3" --arg codex "$4" --arg claude "$5" --arg created_at "$6" \
+    jq --null-input --arg commit "$3" --arg codex "$4" --arg claude "$5" --arg created_at "$6" \
       '{schema_version: 1, upstream_commit: $commit, codex_version: $codex, claude_code_version: $claude, created_at: $created_at}' >"$output"
     ;;
   validate)
     test "$#" = 5 || usage
     validate_inputs "$3" "$4" "$5"
-    jq -e \
+    jq --exit-status \
       --arg commit "$3" \
       --arg codex "$4" \
       --arg claude "$5" \
