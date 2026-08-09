@@ -1,0 +1,33 @@
+name: Quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Install JSON validator
+        run: sudo apt-get update && sudo apt-get install --yes jq
+      - name: Validate build and JSON configuration when present
+        run: |
+          if test -f docker-bake.hcl; then
+            set -a
+            source versions.env
+            set +a
+            docker buildx bake --print
+          fi
+          for file in config/*.json; do test -e "$file" || continue; jq -e . "$file" >/dev/null; done
