@@ -14,6 +14,7 @@ ENV HOME=/opt/claude-build-home CLAUDE_CODE_PLUGIN_CACHE_DIR=/opt/claude-plugin-
 RUN /usr/local/lib/ai-sandboxes/install-claude-marketplaces.sh /opt/marketplaces.json
 USER root
 RUN chmod -R a-w /opt/claude-plugin-cache /opt/claude-plugin-seed
+USER node
 # `base` is the Bake named build context, not an unpinned registry image.
 # hadolint ignore=DL3006
 FROM base
