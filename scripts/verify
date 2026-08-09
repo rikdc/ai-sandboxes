@@ -8,7 +8,7 @@ cleanup_marketplace_test_image() {
 }
 trap cleanup_marketplace_test_image EXIT
 
-for file in scripts/build scripts/lint-dockerfiles scripts/load-msb scripts/verify images/codex/entrypoint.sh scripts/marketplaces/*.sh scripts/tools/*.sh; do bash -n "$file"; done
+for file in scripts/build scripts/lint-dockerfiles scripts/load-msb scripts/verify images/claude/entrypoint.sh images/codex/entrypoint.sh scripts/marketplaces/*.sh scripts/tools/*.sh; do bash -n "$file"; done
 if command -v fish >/dev/null 2>&1; then find shell/fish -type f -name '*.fish' -exec fish --no-execute {} +; fi
 if git grep -nEi '(api[_-]?key|access[_-]?token|secret)[[:space:]]*=[[:space:]]*[^[:space:]]+' -- ':!README.md' ':!scripts/verify'; then
   exit 1
@@ -52,6 +52,12 @@ if printf '%s\n' "$marketplace_output" | grep -Fq 'Failed to load marketplace'; 
   echo 'Claude could not load the runtime-test marketplace' >&2
   exit 1
 fi
+plugin_output=$(docker run --rm --user node -e HOME=/tmp/claude-runtime-test "$marketplace_test_image" claude plugin list 2>&1)
+printf '%s\n' "$plugin_output" | awk '
+  /dev-skills@ai-skills/ { found = 1; next }
+  found && /Status: ✔ enabled/ { enabled = 1; exit }
+  END { exit !(found && enabled) }
+'
 for image in ai-sandboxes-claude:local ai-sandboxes-codex:local; do
   if docker history --no-trunc "$image" | grep -Ei '(anthropic_api_key|openai_api_key|codex_access_token)'; then
     exit 1

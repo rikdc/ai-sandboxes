@@ -14,7 +14,8 @@ USER node
 ENV HOME=/opt/claude-build-home CLAUDE_CODE_PLUGIN_CACHE_DIR=/opt/claude-plugin-cache CLAUDE_CODE_PLUGIN_SEED_DIR=/opt/claude-plugin-seed
 RUN /usr/local/lib/ai-sandboxes/install-claude-marketplaces.sh /opt/marketplaces.json
 USER root
-RUN chmod -R a-w /opt/claude-plugin-cache /opt/claude-plugin-seed
+RUN install -D -o node -g node -m 0644 /opt/claude-build-home/.claude/settings.json /opt/claude-plugin-seed/settings.json \
+ && chmod -R a-w /opt/claude-plugin-cache /opt/claude-plugin-seed
 USER node
 # `base` is the Bake named build context, not an unpinned registry image.
 # hadolint ignore=DL3006
@@ -23,7 +24,10 @@ USER root
 COPY --from=build /usr/local /usr/local
 COPY --from=build --chown=root:root /opt/claude-plugin-cache /opt/claude-plugin-cache
 COPY --from=build --chown=root:root /opt/claude-plugin-seed /opt/claude-plugin-seed
+COPY images/claude/entrypoint.sh /usr/local/bin/claude-entrypoint
 ENV CLAUDE_CODE_PLUGIN_CACHE_DIR=/opt/claude-plugin-cache CLAUDE_CODE_PLUGIN_SEED_DIR=/opt/claude-plugin-seed DISABLE_AUTOUPDATER=1
+RUN chmod 0755 /usr/local/bin/claude-entrypoint
 USER node
 WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/claude-entrypoint"]
 CMD ["claude"]
