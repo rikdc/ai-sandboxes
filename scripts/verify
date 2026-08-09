@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-for file in scripts/build scripts/load-msb scripts/verify images/codex/entrypoint.sh scripts/marketplaces/*.sh scripts/tools/*.sh; do bash -n "$file"; done
+for file in scripts/build scripts/lint-dockerfiles scripts/load-msb scripts/verify images/codex/entrypoint.sh scripts/marketplaces/*.sh scripts/tools/*.sh; do bash -n "$file"; done
 if command -v fish >/dev/null 2>&1; then find shell/fish -type f -name '*.fish' -exec fish --no-execute {} +; fi
 if git grep -nEi '(api[_-]?key|access[_-]?token|secret)[[:space:]]*=[[:space:]]*[^[:space:]]+' -- ':!README.md' ':!scripts/verify'; then
   exit 1
