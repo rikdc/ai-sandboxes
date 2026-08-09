@@ -47,7 +47,7 @@ The functions mount only the current Git worktree (or current directory outside 
 
 After changing versions or configured content, run the three quick-start commands again. `scripts/build` is the supported build entry point; it supplies `versions.env` to Bake. Direct builds must provide the GitHub CLI fingerprint explicitly and fail closed when it is absent.
 
-Claude sources must contain `.claude-plugin/marketplace.json`; all declared plugins are seeded as `node`. Codex sources must expose native `SKILL.md` directories at the configured `skills_path`. Claude-only commands, hooks, agents, and MCP settings are not translated for Codex.
+Claude sources must contain `.claude-plugin/marketplace.json`. A Claude marketplace's optional `plugins` array is an allowlist: only those names are seeded as `node`; omit it or use `[]` to register the marketplace without installing plugins. Codex sources must expose native `SKILL.md` directories at the configured `skills_path`. Claude-only commands, hooks, agents, and MCP settings are not translated for Codex.
 
 ## Profile-selected agent tools
 

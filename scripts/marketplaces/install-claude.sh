@@ -3,7 +3,33 @@ set -euo pipefail
 
 marketplaces=${1:?usage: install-claude.sh MARKETPLACES_JSON}
 
-jq -e '(.claude | type == "array") and all(.claude[]; (.url | type == "string") and (.ref | type == "string") and (.path | type == "string"))' "$marketplaces" >/dev/null
+die() {
+  printf '%s\n' "error: $*" >&2
+  exit 1
+}
+
+validate_selected_plugins() {
+  local manifest=$1
+  shift
+  local plugin
+  for plugin in "$@"; do
+    jq -e --arg plugin "$plugin" 'any(.plugins[]?; .name == $plugin)' "$manifest" >/dev/null \
+      || die "plugin $plugin is not declared by $manifest"
+  done
+}
+
+jq -e '
+  def selected_plugins: (.plugins? // []);
+  (.claude | type == "array") and
+  all(.claude[];
+    (.url | type == "string") and
+    (.ref | type == "string") and
+    (.path | type == "string") and
+    (selected_plugins | type == "array") and
+    (selected_plugins | all(.[]; type == "string" and test("^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$"))) and
+    ((selected_plugins | length) == (selected_plugins | unique | length))
+  )
+' "$marketplaces" >/dev/null || die "invalid Claude marketplace selection"
 
 # Marketplace entries may identify public GitHub sources without choosing a
 # transport. Claude currently resolves those entries through SSH. Keep strict
@@ -25,6 +51,8 @@ while IFS= read -r spec; do
   manifest="$source_dir/$path/.claude-plugin/marketplace.json"
   test -f "$manifest"
   marketplace=$(jq -er '.name' "$manifest")
+  mapfile -t selected_plugins < <(jq -r '(.plugins? // [])[]' <<<"$spec")
+  validate_selected_plugins "$manifest" "${selected_plugins[@]}"
 
   if test "$marketplace" = claude-plugins-official; then
     if test "$url" != https://github.com/anthropics/claude-plugins-official.git; then
@@ -43,11 +71,12 @@ while IFS= read -r spec; do
     test "$(git -C "$cache_dir" rev-parse HEAD)" = "$ref"
     manifest="$cache_dir/$path/.claude-plugin/marketplace.json"
     test -f "$manifest"
+    validate_selected_plugins "$manifest" "${selected_plugins[@]}"
   else
     claude plugin marketplace add "$source_dir/$path"
   fi
 
-  jq -er '.plugins[] | .name' "$manifest" | while IFS= read -r plugin; do
+  for plugin in "${selected_plugins[@]}"; do
     claude plugin install "${plugin}@${marketplace}" --scope user
   done
 done < <(jq -c '.claude[]' "$marketplaces")
