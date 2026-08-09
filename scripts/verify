@@ -33,12 +33,13 @@ docker run --rm --user node -e HOME=/home/node ai-sandboxes-base:local bash -lc 
 while IFS= read -r tool; do
   docker run --rm --user node -e HOME=/home/node ai-sandboxes-tools:local "$tool" --version
 done < <(jq -r --slurpfile selection config/tools.json '.tools[] | select(.id as $id | $selection[0].tools[].id == $id) | .binary' config/tool-catalog.json)
-docker run --rm --user node -e HOME=/home/node ai-sandboxes-claude:local claude --version
-docker run --rm --user node -e HOME=/home/node ai-sandboxes-codex:local codex --version
 set -a
 # shellcheck disable=SC1091 # Resolved from the repository root above.
 source ./versions.env
 set +a
+claude_version=$(docker run --rm --user node -e HOME=/home/node ai-sandboxes-claude:local bash -lc 'test "$DISABLE_UPDATES" = 1; claude --version')
+test "${claude_version%% *}" = "$CLAUDE_CODE_VERSION"
+docker run --rm --user node -e HOME=/home/node ai-sandboxes-codex:local codex --version
 docker buildx bake --load \
   --set "tools.args.SHARED_STATE_ID=$expected_state_id" \
   --set "tools.args.SHARED_STATE_QUOTA=$expected_state_quota" \
