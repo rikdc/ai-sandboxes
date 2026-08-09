@@ -5,6 +5,7 @@ variable "TEA_IMAGE" {}
 variable "GH_APT_KEY_FINGERPRINT" {}
 variable "SHARED_STATE_ID" { default = "" }
 variable "SHARED_STATE_QUOTA" { default = "" }
+variable "MARKETPLACES_CONFIG" { default = "config/marketplaces.json" }
 
 group "default" { targets = ["claude", "codex"] }
 
@@ -35,7 +36,7 @@ target "claude" {
   context = "."
   dockerfile = "images/claude/Dockerfile"
   contexts = { base = "target:tools" }
-  args = { CLAUDE_CODE_VERSION = CLAUDE_CODE_VERSION }
+  args = { CLAUDE_CODE_VERSION = CLAUDE_CODE_VERSION, MARKETPLACES_CONFIG = MARKETPLACES_CONFIG }
   tags = ["ai-sandboxes-claude:local"]
 }
 target "codex" {

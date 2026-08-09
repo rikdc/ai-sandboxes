@@ -1,0 +1,11 @@
+{
+  "claude": [
+    {
+      "url": "https://github.com/rikdc/ai-skills.git",
+      "ref": "d66daa0504ff859a9d51c86b9175eb9fe768cd25",
+      "path": ".",
+      "plugins": ["dev-skills"]
+    }
+  ],
+  "codex": []
+}
