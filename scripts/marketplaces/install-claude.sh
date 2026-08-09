@@ -22,9 +22,9 @@ jq -e '
   def selected_plugins: (.plugins? // []);
   (.claude | type == "array") and
   all(.claude[];
-    (.url | type == "string") and
-    (.ref | type == "string") and
-    (.path | type == "string") and
+    (.url | type == "string" and test("^https://[^/@]+/.+$")) and
+    (.ref | type == "string" and test("^[0-9a-f]{40}$")) and
+    (.path | type == "string" and (. == "." or (test("^[A-Za-z0-9][A-Za-z0-9._/-]*$") and (contains("..") | not)))) and
     (selected_plugins | type == "array") and
     (selected_plugins | all(.[]; type == "string" and test("^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$"))) and
     ((selected_plugins | length) == (selected_plugins | unique | length))
@@ -46,11 +46,12 @@ while IFS= read -r spec; do
   source_dir="/opt/claude-marketplaces/$index"
   index=$((index + 1))
 
-  git clone "$url" "$source_dir"
+  git clone -- "$url" "$source_dir"
   git -C "$source_dir" checkout --detach "$ref"
   manifest="$source_dir/$path/.claude-plugin/marketplace.json"
   test -f "$manifest"
   marketplace=$(jq -er '.name' "$manifest")
+  [[ "$marketplace" =~ ^[a-z][a-z0-9-]*$ ]] || die "invalid marketplace name: $marketplace"
   mapfile -t selected_plugins < <(jq -r '(.plugins? // [])[]' <<<"$spec")
   validate_selected_plugins "$manifest" "${selected_plugins[@]}"
 
