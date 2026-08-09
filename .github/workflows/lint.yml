@@ -41,11 +41,7 @@ jobs:
           mapfile -d '' fish_files < "$files"
           if ((${#fish_files[@]})); then fish --no-execute "${fish_files[@]}"; fi
       - name: Lint Dockerfiles when present
-        run: |
-          mapfile -d '' dockerfiles < <(find . -name Dockerfile -type f -print0)
-          for dockerfile in "${dockerfiles[@]}"; do
-            docker run --rm -v "$PWD:/work:ro" hadolint/hadolint:v2.12.0 hadolint "/work/${dockerfile#./}"
-          done
+        run: ./scripts/lint-dockerfiles
       - name: Validate build and JSON configuration when present
         run: |
           if test -f docker-bake.hcl; then

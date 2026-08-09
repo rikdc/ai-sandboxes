@@ -1,0 +1,5 @@
+# Separate validation and installation steps in images/tools/Dockerfile make
+# profile build failures easier to diagnose; consolidating them has no image
+# size benefit because both steps are required in the final build stage.
+ignored:
+  - DL3059
