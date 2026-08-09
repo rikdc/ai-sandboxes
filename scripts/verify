@@ -44,6 +44,7 @@ docker buildx bake --load \
   --set "claude.tags=$marketplace_test_image" \
   claude
 marketplace_output=$(docker run --rm --user node -e HOME=/tmp/claude-runtime-test "$marketplace_test_image" claude plugin marketplace list 2>&1)
+printf '%s\n' "$marketplace_output" | grep -Fq 'Source: GitHub (anthropics/claude-plugins-official)'
 printf '%s\n' "$marketplace_output" | grep -Fq 'Source: GitHub (rikdc/ai-skills)'
 if printf '%s\n' "$marketplace_output" | grep -Fq 'Failed to load marketplace'; then
   echo 'Claude could not load the runtime-test marketplace' >&2
