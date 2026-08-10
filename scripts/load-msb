@@ -1,13 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+source scripts/lib/msb-image.sh
 
 load_image() {
   local docker_ref=$1 msb_ref=$2
-  if msb image list --quiet | grep -Fxq "$msb_ref"; then
+  if msb_image_present "$msb_ref"; then
     msb image remove "$msb_ref"
   fi
-  docker save "$docker_ref" | msb load --tag "$msb_ref"
+  msb_load_image "$docker_ref" "$msb_ref"
 }
 
 load_image ai-sandboxes-claude:local ai-sandboxes-claude:local
