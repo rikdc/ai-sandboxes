@@ -168,9 +168,11 @@ one.
 
 Otherwise, the resolver creates a temporary build context that contains only
 generated files and trusted installer scripts; it must never use the project
-checkout as Docker context. The generated Dockerfile's `FROM` pins to
-`ai-sandboxes-claude:local@<digest>` using the exact base image ID captured
-for the cache key, not the mutable `ai-sandboxes-claude:local` tag alone, so a
+checkout as Docker context. Before building, the resolver also creates a
+private `ai-sandboxes-claude-session-base:<hash>` tag pointing at the base
+image's current content and verifies it still matches the digest the cache
+key was computed from; the generated Dockerfile's `FROM` uses that private
+pin, not the mutable `ai-sandboxes-claude:local` tag directly, so a
 concurrent `./scripts/build` cannot
 change what the build actually uses without also changing the cache key.
 

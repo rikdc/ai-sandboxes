@@ -9,14 +9,15 @@ test -f "$context_dir/resolved.json" || {
   exit 1
 }
 
-# Pin FROM to name@digest using the exact base image ID the caller already
-# resolved and hashed into the cache key, rather than the mutable
-# ai-sandboxes-claude:local tag: a concurrent `./scripts/build` could
-# otherwise retag the base between when the digest was captured and when
-# BuildKit resolves this Dockerfile, silently building from different content
-# than the cache key claims. A bare digest (without the name@ prefix) is not
-# enough: BuildKit parses it as a repository named "sha256" and tries to pull
-# it from a registry instead of resolving it against the local image store.
+# FROM references the caller's private, pre-verified pin of the base image's
+# exact content (see resolve-image.sh), not the mutable ai-sandboxes-claude:local
+# tag directly: a concurrent `./scripts/build` could otherwise retag the base
+# between when its digest was captured and when BuildKit resolves this
+# Dockerfile, silently building from different content than the cache key
+# claims. This must be a plain local tag, not a name@digest reference: for a
+# purely local (never pushed) image, BuildKit resolves name@digest as a
+# registry manifest lookup and fails, rather than matching it against the
+# local image store.
 cat >"$context_dir/Dockerfile" <<EOF
 # syntax=docker/dockerfile:1.7
 FROM $base_image_ref

@@ -69,7 +69,23 @@ test "${CLAUDE_MSB_BUILD_EGRESS:-}" = 1 \
   || die 'cache miss requires CLAUDE_MSB_BUILD_EGRESS=1 to build (see docs/session-images.md)'
 
 context_dir=$(mktemp -d)
-trap 'rmdir "$lock_dir" 2>/dev/null || true; rm -rf "$context_dir"' EXIT
+
+# A registry-style name@digest reference isn't enough to pin FROM to this
+# exact local image: BuildKit resolves it via manifest-digest lookup, which
+# for a purely local (never pushed) image means a doomed registry pull rather
+# than a local-store match, as CI confirmed. Instead, create a private tag
+# that points at the base image's current content right now, verify it still
+# matches the digest the cache key was computed from (closing, though not
+# fully eliminating, the window for a concurrent `./scripts/build` to retag
+# the base first), and build FROM that private tag. A private tag name is
+# resolved purely against the local store, regardless of buildx driver.
+pinned_base="ai-sandboxes-claude-session-base:$cache_key"
+docker tag "$base_image" "$pinned_base" \
+  || die "failed to pin base image $base_image for build"
+test "$(docker image inspect --format '{{.Id}}' "$pinned_base" 2>/dev/null)" = "$base_digest" \
+  || die "base image $base_image changed while resolving; retry"
+
+trap 'rmdir "$lock_dir" 2>/dev/null || true; rm -rf "$context_dir"; docker image rm "$pinned_base" >/dev/null 2>&1 || true' EXIT
 
 built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 jq -n \
@@ -99,7 +115,7 @@ jq -n \
   }' >"$context_dir/resolved.json" \
   || die "failed to generate resolved.json metadata"
 
-scripts/session/render-dockerfile.sh "$context_dir" "$base_image@$base_digest" \
+scripts/session/render-dockerfile.sh "$context_dir" "$pinned_base" \
   || die "failed to render Dockerfile for context $context_dir"
 
 # The active buildx builder (e.g. CI's docker/setup-buildx-action instance) may
