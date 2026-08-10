@@ -14,7 +14,10 @@ USER node
 ENV HOME=/opt/claude-build-home CLAUDE_CODE_PLUGIN_CACHE_DIR=/opt/claude-plugin-cache CLAUDE_CODE_PLUGIN_SEED_DIR=/opt/claude-plugin-seed
 RUN /usr/local/lib/ai-sandboxes/install-claude-marketplaces.sh /opt/marketplaces.json
 USER root
-RUN chmod -R a-w /opt/claude-plugin-cache /opt/claude-plugin-seed
+RUN if test -f /opt/claude-build-home/.claude/settings.json; then \
+      install -D -o node -g node -m 0644 /opt/claude-build-home/.claude/settings.json /opt/claude-plugin-seed/settings.json; \
+    fi \
+ && chmod -R a-w /opt/claude-plugin-cache /opt/claude-plugin-seed
 USER node
 # `base` is the Bake named build context, not an unpinned registry image.
 # hadolint ignore=DL3006
@@ -23,7 +26,13 @@ USER root
 COPY --from=build /usr/local /usr/local
 COPY --from=build --chown=root:root /opt/claude-plugin-cache /opt/claude-plugin-cache
 COPY --from=build --chown=root:root /opt/claude-plugin-seed /opt/claude-plugin-seed
+COPY images/claude/entrypoint.sh /usr/local/bin/claude-entrypoint
 ENV CLAUDE_CODE_PLUGIN_CACHE_DIR=/opt/claude-plugin-cache CLAUDE_CODE_PLUGIN_SEED_DIR=/opt/claude-plugin-seed DISABLE_AUTOUPDATER=1
+# Claude Code stores plugin runtime state here. Keep the downloaded cache
+# immutable while allowing the unprivileged runtime user to create that state.
+RUN chmod 0755 /usr/local/bin/claude-entrypoint \
+ && install -d -o node -g node -m 0755 /opt/claude-plugin-cache/data
 USER node
 WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/claude-entrypoint"]
 CMD ["claude"]
