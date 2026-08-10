@@ -139,6 +139,7 @@ function __ai_sandbox_launch --argument-names launcher_file agent image home_vol
 end
 
 function __ai_sandbox_run_claude --argument-names image
+    set -l claude_argv $argv[2..-1]
     set -l profile_volume 'claude-home-hardened'
     set -l egress_file "$HOME/.config/microvms/claude-egress"
     set -l workspace_quota '10G'
@@ -214,5 +215,5 @@ function __ai_sandbox_run_claude --argument-names image
         -- env \
             CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
             ENABLE_CLAUDEAI_MCP_SERVERS=false \
-            claude $argv
+            claude $claude_argv
 end

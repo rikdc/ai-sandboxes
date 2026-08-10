@@ -36,7 +36,7 @@ jobs:
           trap 'rm -f "$files"' EXIT
           for directory in scripts images; do
             test -d "$directory" || continue
-            find "$directory" -type f \( -name '*.sh' -o -path 'scripts/*' \) -print0 >> "$files"
+            find "$directory" -type f \( -name '*.sh' -o -path 'scripts/*' \) -not -path 'scripts/session/fixtures/*' -print0 >> "$files"
           done
           mapfile -d '' bash_files < "$files"
           if ((${#bash_files[@]})); then shellcheck "${bash_files[@]}"; fi

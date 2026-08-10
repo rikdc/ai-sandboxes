@@ -14,7 +14,8 @@ preserving the runtime boundary: the Claude process still runs as `node` in the
 system toolchain at runtime.
 
 This design replaces the private-profile repository mechanism previously
-documented in `docs/private-profiles.md` (removed). Personal and team
+documented in `docs/private-profiles.md` (scheduled for removal once this
+mechanism lands; see Implementation task 12). Personal and team
 customization moves entirely to session profiles: a small, publicly validated
 JSON file that can itself be kept in a private repository, rather than a full
 repository overlay that rebuilds the base image from a pinned upstream commit.

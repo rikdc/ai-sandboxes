@@ -8,7 +8,9 @@ if ! docker image inspect ai-sandboxes-claude:local >/dev/null 2>&1; then
 fi
 
 cleanup() {
-  test -n "${tag_empty:-}" && docker image rm -f "$tag_empty" >/dev/null 2>&1 || true
+  if test -n "${tag_empty:-}"; then
+    docker image rm -f "$tag_empty" >/dev/null 2>&1 || true
+  fi
 }
 trap cleanup EXIT
 

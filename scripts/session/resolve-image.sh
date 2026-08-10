@@ -20,7 +20,9 @@ canonical=$(scripts/session/validate-profile.sh "$profile_path") || exit 1
 base_digest=$(docker image inspect --format '{{.Id}}' "$base_image" 2>/dev/null) \
   || die "base image not found: $base_image (run ./scripts/build first)"
 
-cache_key=$(printf '%s\n%s\n%s\n%s\n%s\n' "$base_digest" "$canonical" "$platform" "$schema_version" "$launcher_version" \
+renderer_hash=$(shasum -a 256 scripts/session/render-dockerfile.sh | awk '{print $1}')
+
+cache_key=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$base_digest" "$canonical" "$platform" "$schema_version" "$launcher_version" "$renderer_hash" \
   | shasum -a 256 | awk '{print $1}')
 tag="ai-sandboxes-claude-session:sha-$cache_key"
 
@@ -82,7 +84,7 @@ jq -n \
 scripts/session/render-dockerfile.sh "$context_dir" \
   || die "failed to render Dockerfile for context $context_dir"
 
-docker build \
+docker buildx build --load \
   --platform "$platform" \
   --tag "$tag" \
   --label io.ai-sandboxes.session-image=1 \

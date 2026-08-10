@@ -45,11 +45,13 @@
   "schema_version": 1
 }
 ```
+
 Save as `config/session-profile.example.json`.
 
 - [ ] **Step 2: Create the valid fixtures**
 
 `scripts/session/fixtures/valid/empty.json` (identical to the example above):
+
 ```json
 {
   "schema_version": 1
@@ -57,6 +59,7 @@ Save as `config/session-profile.example.json`.
 ```
 
 `scripts/session/fixtures/valid/full.json` (one entry of every kind, all within the limits Task 2 will enforce):
+
 ```json
 {
   "schema_version": 1,
@@ -87,6 +90,7 @@ Save as `config/session-profile.example.json`.
 - [ ] **Step 3: Create the invalid fixtures, one violation each**
 
 `scripts/session/fixtures/invalid/unknown-field.json`:
+
 ```json
 {
   "schema_version": 1,
@@ -95,6 +99,7 @@ Save as `config/session-profile.example.json`.
 ```
 
 `scripts/session/fixtures/invalid/bad-marketplace-ref.json` (ref is a branch name, not a full 40-hex SHA):
+
 ```json
 {
   "schema_version": 1,
@@ -105,6 +110,7 @@ Save as `config/session-profile.example.json`.
 ```
 
 `scripts/session/fixtures/invalid/credential-in-npm-version.json` (version field is not a plain version string):
+
 ```json
 {
   "schema_version": 1,
@@ -115,6 +121,7 @@ Save as `config/session-profile.example.json`.
 ```
 
 `scripts/session/fixtures/invalid/shell-metacharacter-package-name.json`:
+
 ```json
 {
   "schema_version": 1,
@@ -125,6 +132,7 @@ Save as `config/session-profile.example.json`.
 ```
 
 `scripts/session/fixtures/invalid/missing-npm-version.json` (npm version is mandatory):
+
 ```json
 {
   "schema_version": 1,
@@ -293,10 +301,13 @@ Expected: `ok` printed, exit 0. If any fixture fails, read the printed `FAIL` li
 - [ ] **Step 5: Add the new scripts to `scripts/verify`'s syntax-check loop**
 
 In `scripts/verify`, change:
+
 ```bash
 for file in scripts/build scripts/lint-dockerfiles scripts/load-msb scripts/verify images/claude/entrypoint.sh images/codex/entrypoint.sh scripts/claude/*.sh scripts/marketplaces/*.sh scripts/tools/*.sh; do bash -n "$file"; done
 ```
+
 to:
+
 ```bash
 for file in scripts/build scripts/lint-dockerfiles scripts/load-msb scripts/verify images/claude/entrypoint.sh images/codex/entrypoint.sh scripts/claude/*.sh scripts/marketplaces/*.sh scripts/tools/*.sh scripts/session/*.sh scripts/session/tests/*.sh; do bash -n "$file"; done
 ```
@@ -717,6 +728,7 @@ If `msb` is installed, also run: `./scripts/load-msb` — expected: exits 0, `ms
 - [ ] **Step 6: Add `scripts/lib/*.sh` to `scripts/verify`'s syntax-check loop**
 
 In `scripts/verify`, extend the same loop again:
+
 ```bash
 for file in scripts/build scripts/lint-dockerfiles scripts/load-msb scripts/verify images/claude/entrypoint.sh images/codex/entrypoint.sh scripts/claude/*.sh scripts/marketplaces/*.sh scripts/tools/*.sh scripts/session/*.sh scripts/session/tests/*.sh scripts/lib/*.sh; do bash -n "$file"; done
 ```
@@ -1012,5 +1024,18 @@ claude-session --profile config/session-profile.example.json --version
 ```
 
 run from a Git checkout prints the Claude Code version, using a distinct `ai-sandboxes-claude-session:sha-<hash>` msb image tag that leaves `ai-sandboxes-claude:local` untouched.
+
+**Verification status as of this branch:** no docker build, msb load, or fish
+execution path has actually been run. Only `bash -n` syntax checks and the
+pure-bash/jq tests covering Tasks 1–3's logic (profile validation and
+Dockerfile rendering) have been verified in the environment this branch was
+developed in, which has no Docker, `msb`, or `fish` available. Before this
+slice is trusted, `./scripts/build && ./scripts/verify` must be run to
+completion on a host with Docker Desktop and `msb` installed, and a real
+`claude` and `claude-session` launch must be exercised on that host —
+checking that arguments actually reach the guest `claude` command correctly
+(e.g. a multi-word prompt or flag combination), not just a bare `--version`
+call, since argument passing through the Fish layer is exactly the kind of
+thing that can look right in review and still be wrong at runtime.
 
 Follow-on plans (not in this slice): apt/npm layers (spec task 8), Python layer (task 9), Claude marketplace/plugin overlay with dual-seed merge (task 10), image GC (task 11), and retiring `docs/private-profiles.md` plus README/configuration doc updates (task 12).
