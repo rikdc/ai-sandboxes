@@ -10,13 +10,14 @@ function claude-session --description 'Run Claude Code in a session image built 
     set -l profile_value $argv[2]
     set -l claude_args $argv[3..-1]
 
-    set -l profile_path $profile_value
+    set -l profile_candidate $profile_value
     if not string match -q '*/*' -- "$profile_value"
-        set profile_path "$HOME/.config/microvms/profiles/$profile_value.json"
+        set profile_candidate "$HOME/.config/microvms/profiles/$profile_value.json"
     end
 
-    if not test -f "$profile_path"
-        echo "claude-session: profile not found: $profile_path" >&2
+    set -l profile_path (realpath "$profile_candidate" 2>/dev/null)
+    if test -z "$profile_path"; or not test -f "$profile_path"
+        echo "claude-session: profile not found: $profile_candidate" >&2
         return 1
     end
 
