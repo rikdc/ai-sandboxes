@@ -24,7 +24,9 @@ if [[ -f "$seed" ]]; then
     cp -- "$seed" "$temporary" || die "could not seed $settings"
     # Linking is atomic and fails if another process created the settings file
     # after the existence check. Do not overwrite that competing state.
-    ln -- "$temporary" "$settings" || die "refusing to overwrite newly created $settings"
+    if ! ln -- "$temporary" "$settings"; then
+      [[ -e "$settings" ]] || die "could not create $settings"
+    fi
     rm -f -- "$temporary" || die "could not remove temporary settings file"
   else
     jq -s '
