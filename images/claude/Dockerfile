@@ -5,11 +5,15 @@ FROM base AS build
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
 ARG CLAUDE_CODE_VERSION
+ARG CLAUDE_RELEASE_KEY_FINGERPRINT
 ARG MARKETPLACES_CONFIG=config/marketplaces.json
-RUN npm install --global --omit=dev "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+COPY --chmod=0755 scripts/claude/install-binary.sh /tmp/install-claude-binary.sh
+RUN /tmp/install-claude-binary.sh "$CLAUDE_CODE_VERSION" "$CLAUDE_RELEASE_KEY_FINGERPRINT" /usr/local/bin \
+ && rm /tmp/install-claude-binary.sh \
+ && install -d -m 0755 /usr/local/lib/ai-sandboxes \
  && install -d -o node -g node -m 0755 /opt/claude-plugin-cache /opt/claude-plugin-seed /opt/claude-build-home /opt/claude-marketplaces
 COPY --chown=node:node ${MARKETPLACES_CONFIG} /opt/marketplaces.json
-COPY --chown=node:node scripts/marketplaces/install-claude.sh /usr/local/lib/ai-sandboxes/install-claude-marketplaces.sh
+COPY --chown=node:node --chmod=0755 scripts/marketplaces/install-claude.sh /usr/local/lib/ai-sandboxes/install-claude-marketplaces.sh
 USER node
 ENV HOME=/opt/claude-build-home CLAUDE_CODE_PLUGIN_CACHE_DIR=/opt/claude-plugin-cache CLAUDE_CODE_PLUGIN_SEED_DIR=/opt/claude-plugin-seed
 RUN /usr/local/lib/ai-sandboxes/install-claude-marketplaces.sh /opt/marketplaces.json
@@ -27,7 +31,7 @@ COPY --from=build /usr/local /usr/local
 COPY --from=build --chown=root:root /opt/claude-plugin-cache /opt/claude-plugin-cache
 COPY --from=build --chown=root:root /opt/claude-plugin-seed /opt/claude-plugin-seed
 COPY images/claude/entrypoint.sh /usr/local/bin/claude-entrypoint
-ENV CLAUDE_CODE_PLUGIN_CACHE_DIR=/opt/claude-plugin-cache CLAUDE_CODE_PLUGIN_SEED_DIR=/opt/claude-plugin-seed DISABLE_AUTOUPDATER=1
+ENV CLAUDE_CODE_PLUGIN_CACHE_DIR=/opt/claude-plugin-cache CLAUDE_CODE_PLUGIN_SEED_DIR=/opt/claude-plugin-seed DISABLE_UPDATES=1
 # Claude Code stores plugin runtime state here. Keep the downloaded cache
 # immutable while allowing the unprivileged runtime user to create that state.
 RUN chmod 0755 /usr/local/bin/claude-entrypoint \

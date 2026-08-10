@@ -1,5 +1,6 @@
 variable "NODE_IMAGE" {}
 variable "CLAUDE_CODE_VERSION" {}
+variable "CLAUDE_RELEASE_KEY_FINGERPRINT" {}
 variable "CODEX_VERSION" {}
 variable "TEA_IMAGE" {}
 variable "GH_APT_KEY_FINGERPRINT" {}
@@ -36,7 +37,11 @@ target "claude" {
   context = "."
   dockerfile = "images/claude/Dockerfile"
   contexts = { base = "target:tools" }
-  args = { CLAUDE_CODE_VERSION = CLAUDE_CODE_VERSION, MARKETPLACES_CONFIG = MARKETPLACES_CONFIG }
+  args = {
+    CLAUDE_CODE_VERSION = CLAUDE_CODE_VERSION
+    CLAUDE_RELEASE_KEY_FINGERPRINT = CLAUDE_RELEASE_KEY_FINGERPRINT
+    MARKETPLACES_CONFIG = MARKETPLACES_CONFIG
+  }
   tags = ["ai-sandboxes-claude:local"]
 }
 target "codex" {
