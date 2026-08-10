@@ -16,7 +16,7 @@ the public runtime, see [private profiles](private-profiles.md).
 Start with `config/marketplaces.example.json` and copy its entries into `config/marketplaces.json`.
 
 - Claude entries must be public canonical GitHub URLs, pinned to a full commit SHA. The selected source must contain `.claude-plugin/marketplace.json` at `path`.
-- `plugins` is an optional allowlist. Omit it or use `[]` to register a marketplace without installing plugins.
+- `plugins` is an optional allowlist. Omit it or use `[]` to register a marketplace without installing plugins. Selected plugins are installed and enabled when a fresh Claude sandbox home starts; an existing user disablement is preserved.
 - Codex entries must be pinned to a commit SHA and point `skills_path` at directories containing native `SKILL.md` files.
 - Do not put credentials in the configuration or repository URLs.
 
