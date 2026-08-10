@@ -18,7 +18,10 @@ fi
   IFS= read -r state_dir
   IFS= read -r state_env
   IFS= read -r state_db
-  IFS= read -r extra && fail "$binary" || :
+  # shellcheck disable=SC2034  # extra's value is unused; a successful read means a stray trailing line exists.
+  if IFS= read -r extra; then
+    fail "$binary"
+  fi
 } < "$state_file"
 
 case "$state_dir" in [a-z]*) ;; *) fail "$binary" ;; esac

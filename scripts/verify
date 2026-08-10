@@ -5,7 +5,9 @@ cd -- "$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)" || exit 1
 marketplace_test_image=ai-sandboxes-claude-marketplace-test:local
 cleanup_test_artifacts() {
   docker image rm -f "$marketplace_test_image" >/dev/null 2>&1 || true
-  command -v msb >/dev/null 2>&1 && msb volume remove verify-home 2>/dev/null || true
+  if command -v msb >/dev/null 2>&1; then
+    msb volume remove verify-home 2>/dev/null || true
+  fi
 }
 trap cleanup_test_artifacts EXIT
 
