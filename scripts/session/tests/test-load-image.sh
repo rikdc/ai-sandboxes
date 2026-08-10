@@ -17,7 +17,7 @@ trap cleanup EXIT
 build_dir=$(mktemp -d)
 printf 'FROM scratch\nCOPY resolved.json /resolved.json\n' >"$build_dir/Dockerfile"
 echo '{}' >"$build_dir/resolved.json"
-docker build --tag "$test_tag" "$build_dir" >/dev/null
+docker buildx build --load --tag "$test_tag" "$build_dir" >/dev/null
 rm -rf "$build_dir"
 
 claude_present_before=false

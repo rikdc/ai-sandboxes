@@ -25,6 +25,7 @@
 ## Task 1: Session profile example and validation fixtures
 
 **Files:**
+
 - Create: `config/session-profile.example.json`
 - Create: `scripts/session/fixtures/valid/empty.json`
 - Create: `scripts/session/fixtures/valid/full.json`
@@ -36,6 +37,7 @@
 - Create: `scripts/session/fixtures/invalid/missing-npm-version.json`
 
 **Interfaces:**
+
 - Produces: `config/session-profile.example.json` — the shipped starting-point profile (schema_version only, no selections). `scripts/session/fixtures/valid/*.json` and `scripts/session/fixtures/invalid/*.json` — inputs Task 2's validator test consumes by filename glob.
 
 - [ ] **Step 1: Create the shipped example profile**
@@ -167,11 +169,13 @@ git commit -m "feat: add session profile example and validation fixtures"
 ## Task 2: Session profile validator
 
 **Files:**
+
 - Create: `scripts/session/validate-profile.sh`
 - Create: `scripts/session/tests/test-validate-profile.sh`
 - Modify: `scripts/verify` (add `scripts/session/*.sh` and `scripts/session/tests/*.sh` to the existing `bash -n` syntax-check loop)
 
 **Interfaces:**
+
 - Consumes: fixtures from Task 1 (`scripts/session/fixtures/valid/*.json`, `scripts/session/fixtures/invalid/*.json`).
 - Produces: `scripts/session/validate-profile.sh PROFILE_PATH` — on a valid profile, prints canonical compact JSON (`jq -Sc`) to stdout and exits 0; on an invalid profile, prints `validate-profile: ...` to stderr and exits 2. Task 4 depends on this exact stdout/exit contract.
 
@@ -327,10 +331,12 @@ git commit -m "feat: add session profile validator"
 ## Task 3: Safe Dockerfile renderer
 
 **Files:**
+
 - Create: `scripts/session/render-dockerfile.sh`
 - Create: `scripts/session/tests/test-render-dockerfile.sh`
 
 **Interfaces:**
+
 - Consumes: nothing at call time from Tasks 1–2; only requires its caller to have already placed a `resolved.json` file in the target context directory (a file-based contract, checked at runtime).
 - Produces: `scripts/session/render-dockerfile.sh CONTEXT_DIR` — writes `CONTEXT_DIR/Dockerfile`; exits 1 with a stderr message if `CONTEXT_DIR/resolved.json` is missing. Task 4 depends on this file being written after it stages `resolved.json`.
 
@@ -421,10 +427,12 @@ git commit -m "feat: add safe session Dockerfile renderer"
 ## Task 4: Session image resolver and cache key
 
 **Files:**
+
 - Create: `scripts/session/resolve-image.sh`
 - Create: `scripts/session/tests/test-resolve-image.sh`
 
 **Interfaces:**
+
 - Consumes: `scripts/session/validate-profile.sh PROFILE_PATH` (Task 2: stdout canonical JSON, exit 0/2) and `scripts/session/render-dockerfile.sh CONTEXT_DIR` (Task 3).
 - Produces: `scripts/session/resolve-image.sh PROFILE_PATH` — prints the resolved image tag (e.g. `ai-sandboxes-claude-session:sha-<64 hex chars>`) to stdout on success, exit 0; prints `resolve-image: ...` to stderr and exits 1 on failure. Reads `CLAUDE_MSB_BUILD_EGRESS` (only consulted on a cache miss). Task 6 depends on this exact stdout/exit contract.
 
@@ -593,6 +601,7 @@ git commit -m "feat: add session image resolver with content-addressed cache key
 ## Task 5: Exact msb image loader
 
 **Files:**
+
 - Create: `scripts/lib/msb-image.sh`
 - Create: `scripts/session/load-image.sh`
 - Create: `scripts/session/tests/test-load-image.sh`
@@ -600,6 +609,7 @@ git commit -m "feat: add session image resolver with content-addressed cache key
 - Modify: `scripts/verify` (add `scripts/lib/*.sh` to the syntax-check loop)
 
 **Interfaces:**
+
 - Produces: `msb_image_present TAG` (function; returns 0 if `TAG` is present in `msb image list`, 1 otherwise) and `msb_load_image DOCKER_REF MSB_REF` (function; `docker save`s `DOCKER_REF` and `msb load --tag`s it as `MSB_REF`), both in `scripts/lib/msb-image.sh`. `scripts/session/load-image.sh TAG` — loads `TAG` into msb, skipping if already present; never calls `msb image remove`.
 
 This task is independent of Tasks 1–4 and can be done in any order relative to them, but Task 6 needs it.
@@ -745,12 +755,14 @@ git commit -m "feat: extract reusable msb image load logic and add session image
 ## Task 6: `claude-session` Fish launcher
 
 **Files:**
+
 - Modify: `shell/fish/lib/ai-sandbox.fish` (add `__ai_sandbox_run_claude`)
 - Modify: `shell/fish/claude.fish` (reduce to call the shared function)
 - Create: `shell/fish/claude-session.fish`
 - Create: `scripts/session/tests/test-claude-session-args.sh`
 
 **Interfaces:**
+
 - Consumes: `scripts/session/resolve-image.sh PROFILE_PATH` (Task 4: stdout tag, exit 0/1) and `scripts/session/load-image.sh TAG` (Task 5).
 - Produces: `__ai_sandbox_run_claude --argument-names image` in `shell/fish/lib/ai-sandbox.fish` (runs the existing hardened Claude `msb run` policy against whatever `image` tag it's given; remaining `$argv` is passed through to `claude` inside the guest). `claude-session` function in `shell/fish/claude-session.fish`.
 
@@ -950,9 +962,11 @@ git commit -m "feat: add claude-session launcher, extract shared Claude run poli
 ## Task 7: Empty-profile end-to-end verification
 
 **Files:**
+
 - Modify: `scripts/verify` (append session-image assertions inside the existing `if command -v msb` block)
 
 **Interfaces:**
+
 - Consumes: `config/session-profile.example.json` (Task 1), `scripts/session/resolve-image.sh` (Task 4), `scripts/session/load-image.sh` (Task 5).
 - Produces: nothing new — this is the terminal check for the vertical slice, run via `./scripts/verify`.
 
@@ -1002,6 +1016,7 @@ Expected: FAIL at `./scripts/session/resolve-image.sh: No such file or directory
 
 Run: `./scripts/build && ./scripts/verify`
 Expected: the script runs to completion with exit 0. The new block specifically confirms:
+
 - `resolve-image.sh` is idempotent (same tag on cache hit as on the initial build).
 - the session tag and `ai-sandboxes-claude:local` both remain present in `msb image list` afterward.
 - the session image runs as `node`, has no `sudo`, and cannot write to `/opt/session-profile/resolved.json`.
