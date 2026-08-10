@@ -99,7 +99,7 @@ jq -n \
   }' >"$context_dir/resolved.json" \
   || die "failed to generate resolved.json metadata"
 
-scripts/session/render-dockerfile.sh "$context_dir" "$base_digest" \
+scripts/session/render-dockerfile.sh "$context_dir" "$base_image@$base_digest" \
   || die "failed to render Dockerfile for context $context_dir"
 
 # The active buildx builder (e.g. CI's docker/setup-buildx-action instance) may
