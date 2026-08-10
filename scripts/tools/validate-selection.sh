@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -o pipefail
 
 catalog=${1:?usage: validate-selection.sh CATALOG SELECTION RUNTIME}
 selection=${2:?usage: validate-selection.sh CATALOG SELECTION RUNTIME}
@@ -13,7 +13,7 @@ fail() {
 require_unique_ids() {
   local file=$1
   local duplicates
-  duplicates=$(jq -r '.tools[].id' "$file" | sort | uniq -d)
+  duplicates=$(jq -r '.tools[].id' "$file" | sort | uniq -d) || fail "failed to read tool ids from $file"
   test -z "$duplicates" || fail "duplicate tool id(s): $duplicates"
 }
 
@@ -68,7 +68,7 @@ jq -e '
 
 while IFS= read -r id; do
   entry=$(jq -ce --arg id "$id" '.tools[] | select(.id == $id)' "$catalog") || fail "unknown tool id: $id"
-  selected=$(jq -ce --arg id "$id" '.tools[] | select(.id == $id)' "$selection")
+  selected=$(jq -ce --arg id "$id" '.tools[] | select(.id == $id)' "$selection") || fail "missing selection entry for tool id: $id"
   jq -e '((keys | sort) == ["id", "sha256", "version"]) and (.version | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]*$") and (contains("..") | not)) and (.sha256 | type == "string" and test("^[0-9a-f]{64}$"))' <<<"$selected" >/dev/null \
     || fail "invalid release selection: $id"
   if jq -e '.state_wrapper != null' <<<"$entry" >/dev/null; then

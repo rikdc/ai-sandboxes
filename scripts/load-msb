@@ -1,14 +1,14 @@
 #!/bin/bash
-set -euo pipefail
-cd "$(dirname "$0")/.."
+set -o pipefail
+cd -- "$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)" || exit 1
 
 load_image() {
   local docker_ref=$1 msb_ref=$2
   if msb image list --quiet | grep -Fxq "$msb_ref"; then
-    msb image remove "$msb_ref"
+    msb image remove "$msb_ref" || exit 1
   fi
   docker save "$docker_ref" | msb load --tag "$msb_ref"
 }
 
-load_image ai-sandboxes-claude:local ai-sandboxes-claude:local
-load_image ai-sandboxes-codex:local ai-sandboxes-codex:local
+load_image ai-sandboxes-claude:local ai-sandboxes-claude:local || exit 1
+load_image ai-sandboxes-codex:local ai-sandboxes-codex:local || exit 1

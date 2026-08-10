@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -o pipefail
 
 runtime=${1:?usage: runtime-values.sh RUNTIME}
 
