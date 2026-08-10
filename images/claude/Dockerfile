@@ -26,7 +26,10 @@ COPY --from=build --chown=root:root /opt/claude-plugin-cache /opt/claude-plugin-
 COPY --from=build --chown=root:root /opt/claude-plugin-seed /opt/claude-plugin-seed
 COPY images/claude/entrypoint.sh /usr/local/bin/claude-entrypoint
 ENV CLAUDE_CODE_PLUGIN_CACHE_DIR=/opt/claude-plugin-cache CLAUDE_CODE_PLUGIN_SEED_DIR=/opt/claude-plugin-seed DISABLE_AUTOUPDATER=1
-RUN chmod 0755 /usr/local/bin/claude-entrypoint
+# Claude Code stores plugin runtime state here. Keep the downloaded cache
+# immutable while allowing the unprivileged runtime user to create that state.
+RUN chmod 0755 /usr/local/bin/claude-entrypoint \
+ && install -d -o node -g node -m 0755 /opt/claude-plugin-cache/data
 USER node
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/claude-entrypoint"]
