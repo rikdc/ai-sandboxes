@@ -1,6 +1,6 @@
 source (dirname (realpath (status filename)))/lib/ai-sandbox.fish
 
-function claude-session --description 'Run Claude Code in a session image built from an explicit profile'
+function __ai_sandbox_impl_claude_session --description 'Run Claude Code in a session image built from an explicit profile'
     if test (count $argv) -lt 2; or test "$argv[1]" != --profile
         echo 'claude-session: usage: claude-session --profile PATH_OR_NAME [claude arguments...]' >&2
         return 2
@@ -27,10 +27,12 @@ function claude-session --description 'Run Claude Code in a session image built 
         return 127
     end
 
-    # resolve-image.sh and its helpers run as host-side bash with real Docker
-    # authority, before the guest VM ever starts. If the mounted workspace
-    # overlaps this checkout, a guest with write access to that mount could
-    # tamper with those scripts for a later host-side invocation to trust.
+    # Defense in depth: the real trust boundary is the installed wrapper from
+    # scripts/install-fish-functions, which runs this same check *before*
+    # sourcing this file at all (see shell/fish/trusted/guard.fish). A check
+    # inside a file that a guest with write access to this checkout could also
+    # edit cannot be the primary control, but this still catches direct or
+    # pre-wrapper invocations of the checkout's own implementation.
     set -l workspace (command git rev-parse --show-toplevel 2>/dev/null)
     if test -z "$workspace"
         set workspace (pwd -P)

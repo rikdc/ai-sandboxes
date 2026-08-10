@@ -1,3 +1,10 @@
+# Defense in depth only: this file is itself part of the checkout, so a guest
+# with write access to a mounted checkout could edit this check out entirely.
+# The real trust boundary is the wrapper installed by
+# scripts/install-fish-functions (see shell/fish/trusted/guard.fish), which
+# runs the same check *before* ever sourcing this file. This copy still
+# matters for direct or pre-wrapper invocations of the checkout's own
+# implementation functions.
 function __ai_sandbox_refuse_workspace_overlap --argument-names agent launcher_file workspace
     set -l launcher_root (dirname (dirname (dirname (realpath "$launcher_file"))))
     if test "$workspace" = "$launcher_root"; or string match -q -- "$launcher_root/*" "$workspace/"; or string match -q -- "$workspace/*" "$launcher_root/"
