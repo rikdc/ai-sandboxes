@@ -38,6 +38,6 @@ Shared state is visible to every image that opts into the same profile. It does 
 
 ### Claude Code distribution
 
-`CLAUDE_CODE_VERSION` is an exact Claude Code release pin for the fixed `linux/arm64` image target. The Claude image downloads that version's `manifest.json` and detached signature from Anthropic, imports Anthropic's release key, and requires fingerprint `31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE` before verifying the signature. It then downloads only the manifest's `linux-arm64` `claude` binary and verifies its SHA-256 checksum before installing it at `/usr/local/bin/claude`.
+`CLAUDE_CODE_VERSION` is an exact Claude Code release pin for the fixed `linux/arm64` image target. The Claude image downloads that version's `manifest.json` and detached signature from Anthropic, imports Anthropic's release key, and requires it to match the `CLAUDE_RELEASE_KEY_FINGERPRINT` pin before verifying the signature. It then downloads only the manifest's `linux-arm64` `claude` binary and verifies its SHA-256 checksum before installing it at `/usr/local/bin/claude`.
 
 The image does not run Anthropic's installer or install Claude Code from npm. `DISABLE_UPDATES=1` blocks both background and manual Claude updates at runtime, so changing the installed version requires updating `CLAUDE_CODE_VERSION` and rebuilding the image.

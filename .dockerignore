@@ -11,5 +11,8 @@ scripts/tools/*
 !scripts/marketplaces/
 scripts/marketplaces/*
 !scripts/marketplaces/*.sh
+!scripts/claude/
+scripts/claude/*
+!scripts/claude/*.sh
 *.tar
 *.tgz
