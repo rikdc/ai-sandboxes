@@ -33,7 +33,7 @@ lock_dir="${TMPDIR:-/tmp}/ai-sandboxes-session-lock-$cache_key"
 attempt=0
 until mkdir "$lock_dir" 2>/dev/null; do
   attempt=$((attempt + 1))
-  test "$attempt" -lt 600 || die 'timed out waiting for another build of this session image'
+  test "$attempt" -lt 3600 || die 'timed out waiting for another build of this session image (waited 30 minutes)'
   sleep 0.5
 done
 trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
@@ -76,15 +76,18 @@ jq -n \
     claude_marketplaces: ($request.claude_marketplaces // []),
     built_at: $built_at,
     cache_key: $cache_key
-  }' >"$context_dir/resolved.json"
+  }' >"$context_dir/resolved.json" \
+  || die "failed to generate resolved.json metadata"
 
-scripts/session/render-dockerfile.sh "$context_dir"
+scripts/session/render-dockerfile.sh "$context_dir" \
+  || die "failed to render Dockerfile for context $context_dir"
 
 docker build \
   --platform "$platform" \
   --tag "$tag" \
   --label io.ai-sandboxes.session-image=1 \
   --label io.ai-sandboxes.session-cache-key="$cache_key" \
-  "$context_dir" >&2
+  "$context_dir" >&2 \
+  || die "docker build failed for tag $tag"
 
 printf '%s\n' "$tag"
