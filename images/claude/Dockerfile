@@ -14,7 +14,9 @@ USER node
 ENV HOME=/opt/claude-build-home CLAUDE_CODE_PLUGIN_CACHE_DIR=/opt/claude-plugin-cache CLAUDE_CODE_PLUGIN_SEED_DIR=/opt/claude-plugin-seed
 RUN /usr/local/lib/ai-sandboxes/install-claude-marketplaces.sh /opt/marketplaces.json
 USER root
-RUN install -D -o node -g node -m 0644 /opt/claude-build-home/.claude/settings.json /opt/claude-plugin-seed/settings.json \
+RUN if test -f /opt/claude-build-home/.claude/settings.json; then \
+      install -D -o node -g node -m 0644 /opt/claude-build-home/.claude/settings.json /opt/claude-plugin-seed/settings.json; \
+    fi \
  && chmod -R a-w /opt/claude-plugin-cache /opt/claude-plugin-seed
 USER node
 # `base` is the Bake named build context, not an unpinned registry image.
