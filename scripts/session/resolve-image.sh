@@ -26,7 +26,23 @@ cache_key=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$base_digest" "$canonical" "$plat
   | shasum -a 256 | awk '{print $1}')
 tag="ai-sandboxes-claude-session:sha-$cache_key"
 
+# A tag is just a mutable pointer: something other than this script could have
+# written an unrelated (or stale, pre-labeling-scheme) image under this exact
+# predictable name. Require the labels this script itself writes on build to
+# match the computed cache key before trusting a tag as a real cache hit, per
+# the documented cache-identity design in docs/session-images.md. Fail closed
+# on mismatch rather than silently rebuilding over or reusing untrusted content.
+image_labels_match() {
+  local check_tag=$1
+  local image_flag session_key
+  image_flag=$(docker image inspect --format '{{ index .Config.Labels "io.ai-sandboxes.session-image" }}' "$check_tag" 2>/dev/null) || return 1
+  session_key=$(docker image inspect --format '{{ index .Config.Labels "io.ai-sandboxes.session-cache-key" }}' "$check_tag" 2>/dev/null) || return 1
+  test "$image_flag" = 1 && test "$session_key" = "$cache_key"
+}
+
 if docker image inspect "$tag" >/dev/null 2>&1; then
+  image_labels_match "$tag" \
+    || die "existing image $tag does not carry the expected session-image labels; remove it manually (docker image rm $tag) before retrying"
   printf '%s\n' "$tag"
   exit 0
 fi
@@ -43,6 +59,8 @@ trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
 # Re-check now that the lock is held: another process may have finished
 # building this exact key while we were waiting.
 if docker image inspect "$tag" >/dev/null 2>&1; then
+  image_labels_match "$tag" \
+    || die "existing image $tag does not carry the expected session-image labels; remove it manually (docker image rm $tag) before retrying"
   printf '%s\n' "$tag"
   exit 0
 fi
@@ -81,7 +99,7 @@ jq -n \
   }' >"$context_dir/resolved.json" \
   || die "failed to generate resolved.json metadata"
 
-scripts/session/render-dockerfile.sh "$context_dir" \
+scripts/session/render-dockerfile.sh "$context_dir" "$base_digest" \
   || die "failed to render Dockerfile for context $context_dir"
 
 # The active buildx builder (e.g. CI's docker/setup-buildx-action instance) may

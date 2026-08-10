@@ -56,6 +56,15 @@ the launcher must not discover `session.json` from the project mount: an agent
 can modify project files and must not be able to influence a future host-side
 build implicitly.
 
+Before running any resolver script, `claude-session` also refuses to launch if
+the workspace it would mount overlaps the ai-sandboxes checkout providing the
+launcher itself. The resolver and its helpers run as host-side scripts with
+real Docker authority before the guest ever starts; if that checkout were also
+the mounted project, a guest with write access to the mount could tamper with
+those scripts for a later host invocation to trust. The base `claude`/`codex`
+launchers carry the same check for the same reason, at smaller blast radius
+since they only re-source Fish functions rather than exec host-side scripts.
+
 The final `msb run` invocation retains the existing policy:
 
 - `--user node`
@@ -106,6 +115,14 @@ Direct npm and Python package versions are mandatory. Apt versions are
 supported and encouraged, but reproducibility remains limited by the apt
 repository state until a future snapshot-repository design is introduced.
 
+The renderer in this vertical slice only ever emits the fixed, package-free
+Dockerfile described under Implementation task 7; it does not yet install
+`apt`, `npm`, `python`, or `claude_marketplaces` entries. Validation therefore
+rejects any profile with a non-empty `apt`, `npm`, `python`, or
+`claude_marketplaces` field rather than accepting and silently dropping it.
+Only the empty profile (`{"schema_version": 1}`) validates until tasks 8-10
+land.
+
 ## Storing and selecting profiles
 
 This repository ships `config/session-profile.example.json`, following the
@@ -138,9 +155,23 @@ The resolver calculates a session-image key from:
 
 It uses the key in an image tag such as
 `ai-sandboxes-claude-session:sha-<hash>` and as image labels. An existing local
-image with matching labels is a cache hit. Otherwise, the resolver creates a
-temporary build context that contains only generated files and trusted
-installer scripts; it must never use the project checkout as Docker context.
+image is only a cache hit if its `io.ai-sandboxes.session-image` and
+`io.ai-sandboxes.session-cache-key` labels match; a tag match alone is not
+trusted, since a tag is a mutable pointer that something other than the
+resolver could have written. A tag that exists but does not carry the
+expected labels fails closed rather than being silently rebuilt over or
+reused. `claude-session` applies the same label check to the msb-side image
+after loading, since msb keeps a separate image store from Docker's and
+`load-image.sh` (a generic loader also used for non-session images) only
+checks whether *a* image exists under the tag, not whether it is the right
+one.
+
+Otherwise, the resolver creates a temporary build context that contains only
+generated files and trusted installer scripts; it must never use the project
+checkout as Docker context. The generated Dockerfile's `FROM` pins to the
+exact base image ID captured for the cache key, not the mutable
+`ai-sandboxes-claude:local` tag, so a concurrent `./scripts/build` cannot
+change what the build actually uses without also changing the cache key.
 
 The derived Dockerfile begins with the already built Claude image. BuildKit
 therefore reuses the existing operating-system, shared-tool, Claude, and baked

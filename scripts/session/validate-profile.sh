@@ -14,10 +14,30 @@ max_packages=50
 
 test -r "$profile_path" || die "cannot read profile: $profile_path"
 
-size=$(wc -c <"$profile_path")
+# Snapshot once so a profile living under a writable/mounted path cannot change
+# between the size check below and the validation/canonicalization passes that
+# follow: every subsequent read comes from this private copy, not the original.
+snapshot=$(mktemp)
+trap 'rm -f "$snapshot"' EXIT
+cp -- "$profile_path" "$snapshot" 2>/dev/null || die "cannot read profile: $profile_path"
+
+size=$(wc -c <"$snapshot")
 test "$size" -le "$max_bytes" || die "profile exceeds $max_bytes bytes"
 
-jq -e . "$profile_path" >/dev/null 2>&1 || die 'profile is not valid JSON'
+jq -e . "$snapshot" >/dev/null 2>&1 || die 'profile is not valid JSON'
+
+# The renderer currently emits a fixed Dockerfile with no apt/npm/Python/
+# marketplace layers (empty-profile vertical slice only), so a profile
+# requesting any of them would validate but be silently dropped from the
+# built image. Reject them explicitly until those layers are implemented.
+jq -e '
+  ((.apt // []) | length) == 0 and
+  ((.npm // []) | length) == 0 and
+  (((.python // {}).enabled // false) == false) and
+  (((.python // {}).packages // []) | length) == 0 and
+  ((.claude_marketplaces // []) | length) == 0
+' "$snapshot" >/dev/null 2>&1 \
+  || die 'apt, npm, python, and claude_marketplaces are not yet supported; only an empty profile is accepted (see docs/session-images.md)'
 
 jq -e --argjson max_len "$max_field_length" --argjson max_pkgs "$max_packages" '
   def short_string: type == "string" and length > 0 and length <= $max_len;
@@ -65,6 +85,6 @@ jq -e --argjson max_len "$max_field_length" --argjson max_pkgs "$max_packages" '
     (($py.packages // []) as $pp | ($pp | type == "array") and all($pp[]; valid_pkg_entry))) and
   ((.claude_marketplaces // []) as $mp | ($mp | type == "array") and all($mp[]; valid_marketplace_entry)) and
   ((((.apt // []) | length) + ((.npm // []) | length) + (((.python.packages) // []) | length)) <= $max_pkgs)
-' "$profile_path" >/dev/null || die 'invalid session profile'
+' "$snapshot" >/dev/null || die 'invalid session profile'
 
-jq -Sc . "$profile_path"
+jq -Sc . "$snapshot"

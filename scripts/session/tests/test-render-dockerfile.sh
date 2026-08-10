@@ -5,16 +5,16 @@ cd "$(dirname "$0")/../../.."
 context_dir=$(mktemp -d)
 trap 'rm -rf "$context_dir"' EXIT
 
-if scripts/session/render-dockerfile.sh "$context_dir" 2>/dev/null; then
+if scripts/session/render-dockerfile.sh "$context_dir" 'sha256:deadbeef' 2>/dev/null; then
   echo 'FAIL: should refuse a context dir with no resolved.json' >&2
   exit 1
 fi
 
 echo '{"ok":true}' >"$context_dir/resolved.json"
-scripts/session/render-dockerfile.sh "$context_dir"
+scripts/session/render-dockerfile.sh "$context_dir" 'sha256:deadbeef'
 
 test -f "$context_dir/Dockerfile"
-grep -qFx 'FROM ai-sandboxes-claude:local' "$context_dir/Dockerfile"
+grep -qFx 'FROM sha256:deadbeef' "$context_dir/Dockerfile"
 grep -qFx 'USER node' "$context_dir/Dockerfile"
 test "$(find "$context_dir" -maxdepth 1 -type f | wc -l)" -eq 2
 

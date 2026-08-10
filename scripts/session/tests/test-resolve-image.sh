@@ -14,7 +14,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if scripts/session/resolve-image.sh scripts/session/fixtures/valid/full.json >/dev/null 2>/tmp/resolve-image-stderr.$$; then
+if scripts/session/resolve-image.sh scripts/session/fixtures/valid/empty.json >/dev/null 2>/tmp/resolve-image-stderr.$$; then
   echo 'FAIL: cache miss should require CLAUDE_MSB_BUILD_EGRESS=1' >&2
   exit 1
 fi

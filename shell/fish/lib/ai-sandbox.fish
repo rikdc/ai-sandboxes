@@ -1,3 +1,14 @@
+function __ai_sandbox_refuse_workspace_overlap --argument-names agent launcher_file workspace
+    set -l launcher_root (dirname (dirname (dirname (realpath "$launcher_file"))))
+    if test "$workspace" = "$launcher_root"; or string match -q -- "$launcher_root/*" "$workspace/"; or string match -q -- "$workspace/*" "$launcher_root/"
+        echo "$agent: refusing to run: the workspace ($workspace) overlaps the ai-sandboxes checkout that provides this launcher ($launcher_root)" >&2
+        echo "$agent: a guest agent with write access to the mounted workspace could modify these host-trusted scripts, which would then run with full host access on a later invocation" >&2
+        echo "$agent: run $agent from a different project, or install ai-sandboxes to a location you never mount as a workspace" >&2
+        return 1
+    end
+    return 0
+end
+
 function __ai_sandbox_workspace_quota --argument-names launcher_file agent
     set -l versions_file (dirname (dirname (dirname (realpath "$launcher_file"))))/versions.env
     if not test -r "$versions_file"
@@ -122,6 +133,7 @@ function __ai_sandbox_launch --argument-names launcher_file agent image home_vol
         echo "$agent: refusing to mount an empty path, /, or the complete home directory" >&2
         return 2
     end
+    __ai_sandbox_refuse_workspace_overlap "$agent" "$launcher_file" "$workspace"; or return $status
 
     set -l slug (basename "$workspace" | string replace -ra '[^A-Za-z0-9._-]' '-')
     set -l short_hash (printf '%s' "$workspace" | shasum -a 256 | string split ' ' | head -n 1 | string sub -l 12)
@@ -138,8 +150,8 @@ function __ai_sandbox_launch --argument-names launcher_file agent image home_vol
     return $status
 end
 
-function __ai_sandbox_run_claude --argument-names image
-    set -l claude_argv $argv[2..-1]
+function __ai_sandbox_run_claude --argument-names launcher_file image
+    set -l claude_argv $argv[3..-1]
     set -l profile_volume 'claude-home-hardened'
     set -l egress_file "$HOME/.config/microvms/claude-egress"
     set -l workspace_quota '10G'
@@ -193,6 +205,7 @@ function __ai_sandbox_run_claude --argument-names image
         echo 'claude: refusing to mount an empty path, /, or the complete home directory' >&2
         return 2
     end
+    __ai_sandbox_refuse_workspace_overlap claude "$launcher_file" "$host_workspace"; or return $status
 
     set -l project_name (basename "$host_workspace" | string replace --all --regex '[^A-Za-z0-9._-]' '-')
     set -l project_hash (printf '%s' "$host_workspace" | git hash-object --stdin | string sub --length 12)
