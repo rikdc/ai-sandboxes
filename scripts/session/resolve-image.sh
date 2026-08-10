@@ -88,11 +88,11 @@ scripts/session/render-dockerfile.sh "$context_dir" \
 # use the docker-container driver, whose BuildKit runs isolated from the host
 # engine's image store and cannot resolve our locally built base image as a
 # FROM reference. A builder using the docker driver shares the engine's image
-# store directly, so pin this build to one tied to the current context.
-docker_context=$(docker context show)
-local_builder=ai-sandboxes-session-local
-docker buildx inspect "$local_builder" >/dev/null 2>&1 \
-  || docker buildx create --name "$local_builder" --driver docker "$docker_context" >/dev/null
+# store directly, so pin this build to that one instead. Only one docker-driver
+# builder can exist per host, already auto-registered for the current context,
+# so find it rather than trying to create a new one.
+local_builder=$(docker buildx ls | awk '$1 !~ /^\\_/ && $2 == "docker" { sub(/\*$/, "", $1); print $1; exit }')
+test -n "$local_builder" || die 'no buildx builder using the docker driver found'
 
 docker buildx build --builder "$local_builder" --load \
   --platform "$platform" \
