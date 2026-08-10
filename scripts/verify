@@ -58,6 +58,7 @@ printf '%s\n' "$plugin_output" | awk '
   found && /Status: ✔ enabled/ { enabled = 1; exit }
   END { exit !(found && enabled) }
 '
+docker run --rm --user node -e HOME=/tmp/claude-permissions-test "$marketplace_test_image" sh -c 'claude plugin list >/dev/null && test "$(stat -c %a "$HOME/.claude/settings.json")" = 600'
 docker run --rm --user node "$marketplace_test_image" sh -c 'touch /opt/claude-plugin-cache/data/.runtime-write-test'
 for image in ai-sandboxes-claude:local ai-sandboxes-codex:local; do
   if docker history --no-trunc "$image" | grep -Ei '(anthropic_api_key|openai_api_key|codex_access_token)'; then
