@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "apt": [
+    { "name": "graphviz", "version": "2.42.2-8" },
+    { "name": "postgresql-client" }
+  ]
+}

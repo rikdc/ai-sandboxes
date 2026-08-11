@@ -26,18 +26,15 @@ test "$size" -le "$max_bytes" || die "profile exceeds $max_bytes bytes"
 
 jq -e . "$snapshot" >/dev/null 2>&1 || die 'profile is not valid JSON'
 
-# The renderer emits an apt/npm/Python-free Dockerfile: those layers are not
-# implemented yet, so a profile requesting them would validate but be
-# silently dropped from the built image. Reject them explicitly.
-# claude_marketplaces IS implemented (see render-dockerfile.sh) and is
-# structurally validated separately, below.
+# The renderer does not yet implement the Python layer (task 9): a profile
+# requesting it would validate but be silently dropped from the built image.
+# Reject it explicitly. apt, npm, and claude_marketplaces ARE implemented
+# (see render-dockerfile.sh) and are structurally validated separately, below.
 jq -e '
-  ((.apt // []) | length) == 0 and
-  ((.npm // []) | length) == 0 and
   (((.python // {}).enabled // false) == false) and
   (((.python // {}).packages // []) | length) == 0
 ' "$snapshot" >/dev/null 2>&1 \
-  || die 'apt, npm, and python are not yet supported; see docs/session-images.md'
+  || die 'python is not yet supported; see docs/session-images.md'
 
 jq -e --argjson max_len "$max_field_length" --argjson max_pkgs "$max_packages" '
   def short_string: type == "string" and length > 0 and length <= $max_len;
@@ -76,8 +73,8 @@ jq -e --argjson max_len "$max_field_length" --argjson max_pkgs "$max_packages" '
   (type == "object") and
   ((keys - ["schema_version","apt","npm","python","claude_marketplaces"]) == []) and
   (.schema_version == 1) and
-  ((.apt // []) as $apt | ($apt | type == "array") and all($apt[]; valid_apt_entry)) and
-  ((.npm // []) as $npm | ($npm | type == "array") and all($npm[]; valid_pkg_entry)) and
+  ((.apt // []) as $apt | ($apt | type == "array") and all($apt[]; valid_apt_entry) and (($apt | map(.name) | length) == ($apt | map(.name) | unique | length))) and
+  ((.npm // []) as $npm | ($npm | type == "array") and all($npm[]; valid_pkg_entry) and (($npm | map(.package) | length) == ($npm | map(.package) | unique | length))) and
   ((.python // {}) as $py |
     ($py | type == "object") and
     ((($py | keys) - ["enabled","packages"]) == []) and
