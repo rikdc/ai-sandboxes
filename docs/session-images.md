@@ -127,13 +127,15 @@ Direct npm and Python package versions are mandatory. Apt versions are
 supported and encouraged, but reproducibility remains limited by the apt
 repository state until a future snapshot-repository design is introduced.
 
-The renderer in this vertical slice only ever emits the fixed, package-free
-Dockerfile described under Implementation task 7; it does not yet install
-`apt`, `npm`, `python`, or `claude_marketplaces` entries. Validation therefore
-rejects any profile with a non-empty `apt`, `npm`, `python`, or
-`claude_marketplaces` field rather than accepting and silently dropping it.
-Only the empty profile (`{"schema_version": 1}`) validates until tasks 8-10
-land.
+The renderer emits the fixed, package-free Dockerfile described under
+Implementation task 7 unless a profile's `claude_marketplaces` field is
+non-empty, in which case it also emits the marketplace-install layer
+described under "Claude marketplaces and plugins" below (Implementation task
+10). `apt`, `npm`, and `python` are not yet installed by the renderer, so
+validation still rejects any profile with a non-empty `apt`, `npm`, or
+`python` field rather than accepting and silently dropping it. Only an empty
+profile, or one with only `claude_marketplaces` populated, validates until
+tasks 8-9 land.
 
 ## Storing and selecting profiles
 
@@ -223,24 +225,29 @@ is added to `PATH`.
 
 ### Claude marketplaces and plugins
 
-Session marketplaces reuse the existing pinned installer model, but install
-into a second, session-specific cache and seed path rather than the base
-image's `/opt/claude-plugin-cache` and `/opt/claude-plugin-seed`. The session
-build sets a distinct `CLAUDE_CODE_SESSION_PLUGIN_SEED_DIR` (and matching
-session plugin-cache variable) to that path; the base image's own
-`CLAUDE_CODE_PLUGIN_SEED_DIR` is untouched, so both seeds are present in the
-final image.
+Session marketplaces reuse the existing pinned installer
+(`scripts/marketplaces/install-claude.sh`, copied into the build context
+unmodified) but install into a second, session-specific cache and seed path,
+`/opt/claude-session/plugin-cache` and `/opt/claude-session/plugin-seed`,
+rather than the base image's `/opt/claude-plugin-cache` and
+`/opt/claude-plugin-seed`. The session build sets
+`CLAUDE_CODE_SESSION_PLUGIN_SEED_DIR` and
+`CLAUDE_CODE_SESSION_PLUGIN_CACHE_DIR` to those paths; the base image's own
+`CLAUDE_CODE_PLUGIN_SEED_DIR`/`CLAUDE_CODE_PLUGIN_CACHE_DIR` are untouched, so
+both seeds are present in the final image. The install runs in a discarded
+build stage with a throwaway `HOME`, mirroring `images/claude/Dockerfile`'s
+own build/final split; only the resulting cache and seed directories are
+copied into the final image, root-owned and read-only.
 
-`images/claude/entrypoint.sh` currently hardcodes `/opt/claude-plugin-seed`
-instead of honoring the `CLAUDE_CODE_PLUGIN_SEED_DIR` the Dockerfile already
-exports. It must change to merge every seed it finds — the base seed at
-`CLAUDE_CODE_PLUGIN_SEED_DIR` and, when set, the session seed at
-`CLAUDE_CODE_SESSION_PLUGIN_SEED_DIR` — into `settings.json` on every launch,
-with session values taking precedence over base values for the same plugin
-key. This keeps a session's extra marketplaces additive: they layer on top of
-whatever the base image already selected rather than replacing it. The build
-then makes the session cache and seed root-owned/read-only, matching the base
-image's existing immutability.
+`images/claude/entrypoint.sh` reads `CLAUDE_CODE_PLUGIN_SEED_DIR` (required)
+for the base seed and `CLAUDE_CODE_SESSION_PLUGIN_SEED_DIR` (optional) for
+the session seed, and merges every seed it finds into `settings.json` on
+every launch via a recursive merge (`(base * session) * current`, jq's `*`
+operator, right side winning per key): session values take precedence over
+base values for the same key, and the user's already-persisted settings take
+precedence over both. This keeps a session's extra marketplaces additive:
+they layer on top of whatever the base image already selected rather than
+replacing it, and unrelated Claude settings are left untouched.
 
 ## Build-network policy
 
