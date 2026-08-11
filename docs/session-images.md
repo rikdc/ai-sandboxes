@@ -128,14 +128,16 @@ supported and encouraged, but reproducibility remains limited by the apt
 repository state until a future snapshot-repository design is introduced.
 
 The renderer emits the fixed, package-free Dockerfile described under
-Implementation task 7 unless a profile's `claude_marketplaces` field is
-non-empty, in which case it also emits the marketplace-install layer
-described under "Claude marketplaces and plugins" below (Implementation task
-10). `apt`, `npm`, and `python` are not yet installed by the renderer, so
-validation still rejects any profile with a non-empty `apt`, `npm`, or
-`python` field rather than accepting and silently dropping it. Only an empty
-profile, or one with only `claude_marketplaces` populated, validates until
-tasks 8-9 land.
+Implementation task 7 unless a profile's `apt`, `npm`, or
+`claude_marketplaces` fields are non-empty, in which case it emits the
+corresponding layers described under "Package layers" and "Claude
+marketplaces and plugins" below (Implementation tasks 8 and 10); any
+combination of these fields may be populated together, in a fixed
+apt-then-npm-then-marketplace order regardless of the profile's own field
+order. `python` is not yet installed by the renderer, so validation still
+rejects any profile with a non-empty `python` field rather than accepting
+and silently dropping it. Only a profile with `python` left unset validates
+until task 9 lands.
 
 ## Storing and selecting profiles
 
@@ -208,12 +210,24 @@ The generated Dockerfile installs only validated package specifications under
 The renderer, not the profile, constructs command syntax. This is an image-build
 operation; there is no runtime `apt-get` capability.
 
+Apt versions are optional in the profile, and even a pinned version can
+resolve differently depending on the apt repository's state at build time.
+After install, `scripts/session/install-apt-packages.sh` queries
+`dpkg-query` for each package's actual installed version and patches
+`/opt/session-profile/resolved.json` with it before the file is locked
+read-only, so the recorded provenance always reflects what was actually
+installed, not just what was requested.
+
 ### npm
 
-npm packages install during the build into an image-local prefix such as
-`/opt/claude-session/npm`. The final prefix is root-owned and read-only, with
-the selected bin directory added to `PATH`. The precise bin shim layout will be
-verified against npm before implementation.
+npm packages install during the build into an image-local prefix at
+`/opt/claude-session/npm`, via a single `npm install --global --prefix`
+invocation. The final prefix is root-owned and read-only
+(`chown -R root:root` + `chmod -R a-w`), with its `bin` directory added to
+`PATH`. A global-prefix install produces `<prefix>/bin/<binary>` as a
+relative symlink into `<prefix>/lib/node_modules/<package>/...`, which
+resolves correctly regardless of where the prefix ends up in the final
+image.
 
 ### Python
 
