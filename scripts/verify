@@ -8,8 +8,14 @@ cleanup_marketplace_test_image() {
 }
 trap cleanup_marketplace_test_image EXIT
 
-for file in scripts/build scripts/lint-dockerfiles scripts/load-msb scripts/verify images/claude/entrypoint.sh images/codex/entrypoint.sh scripts/claude/*.sh scripts/marketplaces/*.sh scripts/tools/*.sh; do bash -n "$file"; done
+for file in scripts/build scripts/lint-dockerfiles scripts/load-msb scripts/install-fish-functions scripts/verify images/claude/entrypoint.sh images/codex/entrypoint.sh scripts/claude/*.sh scripts/marketplaces/*.sh scripts/tools/*.sh scripts/session/*.sh scripts/session/tests/*.sh scripts/lib/*.sh; do bash -n "$file"; done
 if command -v fish >/dev/null 2>&1; then find shell/fish -type f -name '*.fish' -exec fish --no-execute {} +; fi
+bash scripts/session/tests/test-validate-profile.sh
+bash scripts/session/tests/test-render-dockerfile.sh
+bash scripts/session/tests/test-resolve-image.sh
+bash scripts/session/tests/test-load-image.sh
+bash scripts/session/tests/test-claude-session-args.sh
+bash scripts/session/tests/test-install-fish-functions.sh
 if git grep -nEi '(api[_-]?key|access[_-]?token|secret)[[:space:]]*=[[:space:]]*[^[:space:]]+' -- ':!README.md' ':!scripts/verify'; then
   exit 1
 fi
@@ -77,4 +83,18 @@ if command -v msb >/dev/null 2>&1; then
   msb run --pull never --no-tty --user node --mount-named verify-home:/home/node:rw ai-sandboxes-codex:local -- bash -lc 'touch "$HOME/.survives"'
   msb run --pull never --no-tty --user node --mount-named verify-home:/home/node:rw ai-sandboxes-codex:local -- test -f /home/node/.survives
   msb volume remove verify-home
+  session_tag_first=$(CLAUDE_MSB_BUILD_EGRESS=1 ./scripts/session/resolve-image.sh config/session-profile.example.json)
+  session_tag_second=$(./scripts/session/resolve-image.sh config/session-profile.example.json)
+  test "$session_tag_first" = "$session_tag_second"
+
+  ./scripts/session/load-image.sh "$session_tag_first"
+  msb image list --quiet | grep -Fxq "$session_tag_first"
+  msb image list --quiet | grep -Fxq ai-sandboxes-claude:local
+
+  msb run --pull never --no-tty --user node --security restricted "$session_tag_first" -- whoami | grep -Fxq node
+  msb run --pull never --no-tty --user node --security restricted "$session_tag_first" -- sh -c '! command -v sudo'
+  msb run --pull never --no-tty --user node --security restricted "$session_tag_first" -- sh -c '! touch /opt/session-profile/resolved.json 2>/dev/null'
+
+  docker image rm "$session_tag_first" >/dev/null 2>&1 || true
+  msb image remove "$session_tag_first" >/dev/null 2>&1 || true
 fi

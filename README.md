@@ -12,13 +12,23 @@ Requires Apple Silicon, Docker Desktop, Git, Fish, and Microsandbox (`msb`).
 ./scripts/load-msb
 ```
 
-Install the Fish launchers:
+Install the Fish launchers (`claude`, `codex`, and `claude-session`):
 
-```fish
-mkdir -p ~/.config/fish/functions
-ln -sf /path/to/ai-sandboxes/shell/fish/claude.fish ~/.config/fish/functions/claude.fish
-ln -sf /path/to/ai-sandboxes/shell/fish/codex.fish ~/.config/fish/functions/codex.fish
+```console
+./scripts/install-fish-functions
 ```
+
+This writes small wrapper functions into `~/.config/fish/functions/`, copied
+(not symlinked) from the checkout, plus a shared guard snippet under
+`~/.config/ai-sandboxes/trusted/`. Do not symlink these launchers into
+`~/.config/fish/functions/` yourself, and do not use any of them with a
+project that is, or contains, the ai-sandboxes checkout or either of those
+two installed directories: a launcher sourced from a location a guest agent
+can also write to would let that guest tamper with host-trusted launcher code
+for a later invocation to run with full host access. The installed wrapper
+refuses to run whenever the mounted workspace overlaps any of those paths;
+re-run `./scripts/install-fish-functions` after updating ai-sandboxes to
+refresh the installed copies.
 
 Claude uses an HTTPS allowlist by default. Create it before its first run:
 

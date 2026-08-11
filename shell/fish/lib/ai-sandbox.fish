@@ -1,3 +1,21 @@
+# Defense in depth only: this file is itself part of the checkout, so a guest
+# with write access to a mounted checkout could edit this check out entirely.
+# The real trust boundary is the wrapper installed by
+# scripts/install-fish-functions (see shell/fish/trusted/guard.fish), which
+# runs the same check *before* ever sourcing this file. This copy still
+# matters for direct or pre-wrapper invocations of the checkout's own
+# implementation functions.
+function __ai_sandbox_refuse_workspace_overlap --argument-names agent launcher_file workspace
+    set -l launcher_root (dirname (dirname (dirname (realpath "$launcher_file"))))
+    if test "$workspace" = "$launcher_root"; or string match -q -- "$launcher_root/*" "$workspace/"; or string match -q -- "$workspace/*" "$launcher_root/"
+        echo "$agent: refusing to run: the workspace ($workspace) overlaps the ai-sandboxes checkout that provides this launcher ($launcher_root)" >&2
+        echo "$agent: a guest agent with write access to the mounted workspace could modify these host-trusted scripts, which would then run with full host access on a later invocation" >&2
+        echo "$agent: run $agent from a different project, or install ai-sandboxes to a location you never mount as a workspace" >&2
+        return 1
+    end
+    return 0
+end
+
 function __ai_sandbox_workspace_quota --argument-names launcher_file agent
     set -l versions_file (dirname (dirname (dirname (realpath "$launcher_file"))))/versions.env
     if not test -r "$versions_file"
@@ -122,6 +140,7 @@ function __ai_sandbox_launch --argument-names launcher_file agent image home_vol
         echo "$agent: refusing to mount an empty path, /, or the complete home directory" >&2
         return 2
     end
+    __ai_sandbox_refuse_workspace_overlap "$agent" "$launcher_file" "$workspace"; or return $status
 
     set -l slug (basename "$workspace" | string replace -ra '[^A-Za-z0-9._-]' '-')
     set -l short_hash (printf '%s' "$workspace" | shasum -a 256 | string split ' ' | head -n 1 | string sub -l 12)
@@ -136,4 +155,85 @@ function __ai_sandbox_launch --argument-names launcher_file agent image home_vol
         $shared_state_args \
         --workdir "$guest_workspace" "$image" -- "$agent" "$argv"
     return $status
+end
+
+function __ai_sandbox_run_claude --argument-names launcher_file image
+    set -l claude_argv $argv[3..-1]
+    set -l profile_volume 'claude-home-hardened'
+    set -l egress_file "$HOME/.config/microvms/claude-egress"
+    set -l workspace_quota '10G'
+    set -l root_disk '10G'
+    # Let Microsandbox's gateway DNS follow the host resolver.  An external
+    # resolver is not reachable through every public-network gateway.
+    set -l network_args \
+        --no-net \
+        --net-rule 'allow@host:udp:53' \
+        --net-rule 'allow@host:tcp:53'
+
+    if not type -q msb
+        echo 'claude: msb is not installed or is not on PATH' >&2
+        return 127
+    end
+
+    if set -q CLAUDE_MSB_PUBLIC_EGRESS; and test "$CLAUDE_MSB_PUBLIC_EGRESS" = 1
+        set network_args --net public
+    else
+        if not test -f "$egress_file"
+            echo "claude: missing egress allowlist: $egress_file" >&2
+            echo 'claude: copy config/claude-egress.example there and review its hosts' >&2
+            return 1
+        end
+
+        while read -l egress_host
+            set egress_host (string trim -- "$egress_host")
+            if test -z "$egress_host"; or string match -q '#*' -- "$egress_host"
+                continue
+            end
+
+            # The allowlist contains hostnames only: one HTTPS destination per line.
+            if not string match -rq '^(\*\.)?[A-Za-z0-9][A-Za-z0-9.-]*$' -- "$egress_host"
+                echo "claude: invalid hostname in $egress_file: $egress_host" >&2
+                return 1
+            end
+            set -a network_args --net-rule "allow@$egress_host:tcp:443"
+        end < "$egress_file"
+    end
+
+    set -l shared_state_args (__ai_sandbox_prepare_shared_state claude "$image"); or return $status
+
+    set -l host_workspace (command git rev-parse --show-toplevel 2>/dev/null)
+    if test $status -ne 0
+        set host_workspace (pwd -P)
+    end
+    set host_workspace (realpath "$host_workspace")
+
+    set -l home_path (realpath "$HOME")
+    if test -z "$host_workspace"; or test "$host_workspace" = /; or test "$host_workspace" = "$home_path"
+        echo 'claude: refusing to mount an empty path, /, or the complete home directory' >&2
+        return 2
+    end
+    __ai_sandbox_refuse_workspace_overlap claude "$launcher_file" "$host_workspace"; or return $status
+
+    set -l project_name (basename "$host_workspace" | string replace --all --regex '[^A-Za-z0-9._-]' '-')
+    set -l project_hash (printf '%s' "$host_workspace" | git hash-object --stdin | string sub --length 12)
+    set -l guest_workspace "/workspace/$project_name-$project_hash"
+
+    command msb run \
+        --tty \
+        --pull never \
+        --user node \
+        --cpus 4 \
+        --memory 8G \
+        --root-disk "$root_disk" \
+        --security restricted \
+        $network_args \
+        --mount-dir "$host_workspace:$guest_workspace:rw,quota=$workspace_quota" \
+        --mount-named "$profile_volume:/home/node:kind=dir,quota=4G" \
+        $shared_state_args \
+        --workdir "$guest_workspace" \
+        "$image" \
+        -- env \
+            CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+            ENABLE_CLAUDEAI_MCP_SERVERS=false \
+            claude $claude_argv
 end
