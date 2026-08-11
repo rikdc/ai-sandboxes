@@ -26,18 +26,18 @@ test "$size" -le "$max_bytes" || die "profile exceeds $max_bytes bytes"
 
 jq -e . "$snapshot" >/dev/null 2>&1 || die 'profile is not valid JSON'
 
-# The renderer currently emits a fixed Dockerfile with no apt/npm/Python/
-# marketplace layers (empty-profile vertical slice only), so a profile
-# requesting any of them would validate but be silently dropped from the
-# built image. Reject them explicitly until those layers are implemented.
+# The renderer emits an apt/npm/Python-free Dockerfile: those layers are not
+# implemented yet, so a profile requesting them would validate but be
+# silently dropped from the built image. Reject them explicitly.
+# claude_marketplaces IS implemented (see render-dockerfile.sh) and is
+# structurally validated separately, below.
 jq -e '
   ((.apt // []) | length) == 0 and
   ((.npm // []) | length) == 0 and
   (((.python // {}).enabled // false) == false) and
-  (((.python // {}).packages // []) | length) == 0 and
-  ((.claude_marketplaces // []) | length) == 0
+  (((.python // {}).packages // []) | length) == 0
 ' "$snapshot" >/dev/null 2>&1 \
-  || die 'apt, npm, python, and claude_marketplaces are not yet supported; only an empty profile is accepted (see docs/session-images.md)'
+  || die 'apt, npm, and python are not yet supported; see docs/session-images.md'
 
 jq -e --argjson max_len "$max_field_length" --argjson max_pkgs "$max_packages" '
   def short_string: type == "string" and length > 0 and length <= $max_len;
