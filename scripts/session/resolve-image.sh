@@ -26,7 +26,7 @@ base_digest=$(docker image inspect --format '{{.Id}}' "$base_image" 2>/dev/null)
 # actually is. Hash each file individually and then hash that listing
 # (rather than concatenating file contents directly) so a change shifting
 # bytes across a file boundary can't produce a collision.
-renderer_hash=$(shasum -a 256 scripts/session/render-dockerfile.sh scripts/marketplaces/install-claude.sh scripts/session/merge-plugin-seed.sh \
+renderer_hash=$(shasum -a 256 scripts/session/render-dockerfile.sh scripts/marketplaces/install-claude.sh scripts/session/merge-plugin-seed.sh scripts/session/install-apt-packages.sh scripts/session/install-npm-packages.sh \
   | shasum -a 256 | awk '{print $1}')
 
 cache_key=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$base_digest" "$canonical" "$platform" "$schema_version" "$launcher_version" "$renderer_hash" \
