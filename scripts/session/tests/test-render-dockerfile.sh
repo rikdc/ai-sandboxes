@@ -36,6 +36,14 @@ grep -qFx 'FROM ai-sandboxes-claude-session-base:deadbeef AS build' "$marketplac
 grep -qF 'CLAUDE_CODE_PLUGIN_CACHE_DIR=/opt/claude-plugin-cache' "$marketplace_context_dir/Dockerfile"
 grep -qF 'CLAUDE_CODE_PLUGIN_SEED_DIR=/opt/claude-plugin-seed' "$marketplace_context_dir/Dockerfile"
 grep -qF 'merge-session-plugin-seed.sh /opt/claude-session-build-home/.claude/settings.json /opt/claude-plugin-seed/settings.json' "$marketplace_context_dir/Dockerfile"
+# The base image deliberately keeps /opt/claude-plugin-cache/data
+# node-owned/writable (for Claude's runtime plugin state) after locking
+# everything else read-only. The build stage's own relock sweeps that
+# subdirectory back to read-only since it already exists there, copied in
+# from the base image this stage starts FROM — the final stage must recreate
+# it after the COPY, or a marketplace-derived session image ships with
+# Claude's runtime-data directory read-only.
+grep -qFx 'RUN install -d -o node -g node -m 0755 /opt/claude-plugin-cache/data' "$marketplace_context_dir/Dockerfile"
 grep -qFx 'USER node' "$marketplace_context_dir/Dockerfile"
 test "$(find "$marketplace_context_dir" -maxdepth 1 -type f | wc -l)" -eq 5
 jq -e '.claude | length == 1' "$marketplace_context_dir/session-marketplaces.json" >/dev/null

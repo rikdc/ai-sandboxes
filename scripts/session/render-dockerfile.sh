@@ -52,7 +52,14 @@ fi
 # and re-locks before the final stage copies the augmented directories back
 # to their standard paths. Mirrors images/claude/Dockerfile's own build/final
 # split: install in a discarded build stage with a throwaway HOME, then copy
-# only the resulting cache/seed directories into the final image.
+# only the resulting cache/seed directories into the final image. The
+# build-stage relock (`chmod -R a-w`) sweeps /opt/claude-plugin-cache/data
+# too, since it already exists (copied in with the rest of the cache from
+# the base image this build stage starts FROM) — the base Dockerfile
+# deliberately keeps that one subdirectory node-owned and writable after
+# locking everything else, for Claude's own runtime plugin state, so the
+# final stage below must recreate it the same way after the COPY, or a
+# marketplace-derived session image ships with that directory read-only.
 jq -n --argjson claude "$marketplaces" '{claude: $claude, codex: []}' \
   >"$context_dir/session-marketplaces.json"
 cp -- "$repo_root/scripts/marketplaces/install-claude.sh" "$context_dir/install-claude-marketplaces.sh"
@@ -80,6 +87,7 @@ FROM $base_image_ref
 USER root
 COPY --from=build --chown=root:root /opt/claude-plugin-cache /opt/claude-plugin-cache
 COPY --from=build --chown=root:root /opt/claude-plugin-seed /opt/claude-plugin-seed
+RUN install -d -o node -g node -m 0755 /opt/claude-plugin-cache/data
 COPY --chown=root:root --chmod=0444 resolved.json /opt/session-profile/resolved.json
 USER node
 EOF

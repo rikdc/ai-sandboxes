@@ -45,4 +45,13 @@ printf '%s\n' "$plugin_output" | awk '
   END { exit !(found && enabled) }
 '
 
+# The base image deliberately keeps /opt/claude-plugin-cache/data
+# node-owned/writable for Claude's own runtime plugin state, even though the
+# rest of the cache is locked read-only. The session build stage's own
+# relock swept that subdirectory back to read-only since it already existed
+# there (copied in from the base image); this asserts the final stage
+# actually restores it, not just that read-only operations like `claude
+# plugin list` still succeed.
+docker run --rm --user node "$session_tag" sh -c 'touch /opt/claude-plugin-cache/data/.runtime-write-test'
+
 echo ok
