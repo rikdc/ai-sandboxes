@@ -19,14 +19,16 @@ Install the Fish launchers (`claude`, `codex`, and `claude-session`):
 ```
 
 This writes small wrapper functions into `~/.config/fish/functions/`, copied
-(not symlinked) from the checkout. Do not symlink these launchers into
-`~/.config/fish/functions/` yourself, and do not use any of them with this
-ai-sandboxes checkout itself as the mounted project: a launcher sourced
-directly from a checkout that a guest agent can also write to would let that
-guest tamper with host-trusted launcher code for a later invocation to run
-with full host access. The installed wrapper refuses to run when the two
-overlap; re-run `./scripts/install-fish-functions` after updating ai-sandboxes
-to refresh the installed copies.
+(not symlinked) from the checkout, plus a shared guard snippet under
+`~/.config/ai-sandboxes/trusted/`. Do not symlink these launchers into
+`~/.config/fish/functions/` yourself, and do not use any of them with a
+project that is, or contains, the ai-sandboxes checkout or either of those
+two installed directories: a launcher sourced from a location a guest agent
+can also write to would let that guest tamper with host-trusted launcher code
+for a later invocation to run with full host access. The installed wrapper
+refuses to run whenever the mounted workspace overlaps any of those paths;
+re-run `./scripts/install-fish-functions` after updating ai-sandboxes to
+refresh the installed copies.
 
 Claude uses an HTTPS allowlist by default. Create it before its first run:
 

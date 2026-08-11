@@ -57,21 +57,25 @@ can modify project files and must not be able to influence a future host-side
 build implicitly.
 
 `claude-session` (and `claude`/`codex`) refuse to launch if the workspace they
-would mount overlaps the ai-sandboxes checkout providing the launcher itself.
-The resolver and its helpers run as host-side scripts with real Docker
-authority before the guest ever starts; if that checkout were also the
-mounted project, a guest with write access to the mount could tamper with
-launcher code for a later host invocation to trust. A check placed inside the
-checkout's own Fish files cannot be the primary control here, since a guest
-with write access to those files could simply edit the check back out along
-with anything else. The actual trust boundary is `./scripts/install-fish-functions`
-(see the top-level README): it copies (never symlinks) small wrapper
-functions and a shared guard snippet to `~/.config/fish/functions/` and
+would mount overlaps any protected ai-sandboxes path. The resolver and its
+helpers run as host-side scripts with real Docker authority before the guest
+ever starts; if the mounted project overlapped one of these paths, a guest
+with write access to the mount could tamper with launcher code for a later
+host invocation to trust. A check placed inside the checkout's own Fish files
+cannot be the primary control here, since a guest with write access to those
+files could simply edit the check back out along with anything else. The
+actual trust boundary is `./scripts/install-fish-functions` (see the
+top-level README): it copies (never symlinks) small wrapper functions and a
+shared guard snippet to `~/.config/fish/functions/` and
 `~/.config/ai-sandboxes/trusted/`, outside any checkout a guest could write
 to, and the wrapper runs the overlap check *before* sourcing any
-checkout-provided code at all. The in-checkout copies of the same check
-(`shell/fish/lib/ai-sandbox.fish`) remain as defense in depth for direct or
-pre-wrapper invocations, not as the security boundary itself.
+checkout-provided code at all. The protected paths are the ai-sandboxes
+checkout itself *and* the wrapper/guard's own installed directories:
+protecting only the checkout would still let a guest mounted at, say,
+`~/.config/fish` tamper with the installed wrapper directly. The in-checkout
+copies of the same check (`shell/fish/lib/ai-sandbox.fish`) remain as defense
+in depth for direct or pre-wrapper invocations, not as the security boundary
+itself.
 
 The final `msb run` invocation retains the existing policy:
 

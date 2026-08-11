@@ -26,7 +26,7 @@ write_wrapper() {
 # ai-sandboxes to refresh it.
 function $agent --description 'ai-sandboxes: $agent (installed wrapper)'
     source '$trusted_dir/guard.fish'
-    __ai_sandbox_trusted_refuse_overlap $agent '$repo_root'; or return \$status
+    __ai_sandbox_trusted_refuse_overlap $agent '$repo_root' '$fish_functions_dir' '$trusted_dir'; or return \$status
     source '$repo_root/shell/fish/lib/ai-sandbox.fish'
     source '$impl_file'
     $impl_function \$argv
