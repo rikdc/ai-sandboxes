@@ -15,8 +15,27 @@ mkdir -p "$fish_functions_dir" "$trusted_dir"
 # to refresh the installed copies.
 install -m 0644 "$repo_root/shell/fish/trusted/guard.fish" "$trusted_dir/guard.fish"
 
+# Fish single-quoted strings only treat \' and \\ specially; every other
+# character, including a literal newline, is taken verbatim. Escape both
+# before wrapping in quotes so a path containing an apostrophe (a real
+# possibility in a $HOME directory name) can't break out of the generated
+# wrapper's fish syntax.
+fish_quote() {
+  local s=$1
+  s=${s//\\/\\\\}
+  s=${s//\'/\\\'}
+  printf "'%s'" "$s"
+}
+
 write_wrapper() {
   local agent=$1 impl_function=$2 impl_file=$3 out_file=$4
+  local q_guard q_repo_root q_fish_functions_dir q_trusted_dir q_lib q_impl_file
+  q_guard=$(fish_quote "$trusted_dir/guard.fish")
+  q_repo_root=$(fish_quote "$repo_root")
+  q_fish_functions_dir=$(fish_quote "$fish_functions_dir")
+  q_trusted_dir=$(fish_quote "$trusted_dir")
+  q_lib=$(fish_quote "$repo_root/shell/fish/lib/ai-sandbox.fish")
+  q_impl_file=$(fish_quote "$impl_file")
   cat >"$out_file" <<EOF
 # Installed by ai-sandboxes' scripts/install-fish-functions. This wrapper is a
 # copy, not a symlink, and lives outside the ai-sandboxes checkout on purpose:
@@ -25,10 +44,10 @@ write_wrapper() {
 # tamper with it. Re-run scripts/install-fish-functions after updating
 # ai-sandboxes to refresh it.
 function $agent --description 'ai-sandboxes: $agent (installed wrapper)'
-    source '$trusted_dir/guard.fish'
-    __ai_sandbox_trusted_refuse_overlap $agent '$repo_root' '$fish_functions_dir' '$trusted_dir'; or return \$status
-    source '$repo_root/shell/fish/lib/ai-sandbox.fish'
-    source '$impl_file'
+    source $q_guard
+    __ai_sandbox_trusted_refuse_overlap $agent $q_repo_root $q_fish_functions_dir $q_trusted_dir; or return \$status
+    source $q_lib
+    source $q_impl_file
     $impl_function \$argv
 end
 EOF
