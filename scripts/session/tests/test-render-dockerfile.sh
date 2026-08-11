@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd "$(dirname "$0")/../../.."
+cd "$(dirname "$0")/../../.." || exit 1
 
 context_dir=$(mktemp -d)
 marketplace_context_dir=$(mktemp -d)

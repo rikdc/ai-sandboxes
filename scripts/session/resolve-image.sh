@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
-cd "$repo_root"
+cd "$repo_root" || exit 1
 
 profile_path=${1:?usage: resolve-image.sh PROFILE_PATH}
 platform=linux/arm64

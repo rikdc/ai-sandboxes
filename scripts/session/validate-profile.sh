@@ -19,7 +19,7 @@ test -r "$profile_path" || die "cannot read profile: $profile_path"
 # follow: every subsequent read comes from this private copy, not the original.
 snapshot=$(mktemp)
 trap 'rm -f "$snapshot"' EXIT
-cp -- "$profile_path" "$snapshot" 2>/dev/null || die "cannot read profile: $profile_path"
+cp -- "$profile_path" "$snapshot" || die "cannot read profile: $profile_path"
 
 size=$(wc -c <"$snapshot")
 test "$size" -le "$max_bytes" || die "profile exceeds $max_bytes bytes"

@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+die() {
+  printf '%s\n' "merge-plugin-seed: $*" >&2
+  exit 1
+}
+
 # Merge a freshly-built settings.json (produced by this build stage's own
 # marketplace/plugin installs) into any pre-existing plugin seed from the
 # base image, the fresh settings taking precedence over the existing seed
@@ -21,11 +26,13 @@ seed_path=${2:?usage: merge-plugin-seed.sh BUILD_SETTINGS_JSON SEED_PATH}
 
 test -f "$build_settings" || exit 0
 
-merged=$(mktemp)
+merged=$(mktemp) || die 'could not create a scratch merge file'
 trap 'rm -f -- "$merged"' EXIT
 if test -f "$seed_path"; then
-  jq -s '.[0] * .[1]' "$seed_path" "$build_settings" >"$merged"
+  jq -s '.[0] * .[1]' "$seed_path" "$build_settings" >"$merged" \
+    || die "could not merge $seed_path with $build_settings"
 else
-  cp -- "$build_settings" "$merged"
+  cp -- "$build_settings" "$merged" || die "could not read $build_settings"
 fi
-install -D -o node -g node -m 0644 "$merged" "$seed_path"
+install -D -o node -g node -m 0644 "$merged" "$seed_path" \
+  || die "could not install $seed_path"

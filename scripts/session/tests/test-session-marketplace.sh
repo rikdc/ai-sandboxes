@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd "$(dirname "$0")/../../.."
+cd "$(dirname "$0")/../../.." || exit 1
 
 if ! docker image inspect ai-sandboxes-claude:local >/dev/null 2>&1; then
   echo 'skip: ai-sandboxes-claude:local not built (run ./scripts/build)' >&2
@@ -32,18 +32,26 @@ session_tag=$(CLAUDE_MSB_BUILD_EGRESS=1 scripts/session/resolve-image.sh scripts
 # would mean the test that catches exactly this class of regression never
 # runs automatically.
 marketplace_output=$(docker run --rm --user node -e HOME=/tmp/claude-session-marketplace-test "$session_tag" claude plugin marketplace list 2>&1)
-printf '%s\n' "$marketplace_output" | grep -Fq 'Source: GitHub (rikdc/ai-skills)'
+if ! printf '%s\n' "$marketplace_output" | grep -Fq 'Source: GitHub (rikdc/ai-skills)'; then
+  echo 'Claude did not register the session marketplace' >&2
+  printf '%s\n' "$marketplace_output" >&2
+  exit 1
+fi
 if printf '%s\n' "$marketplace_output" | grep -Fq 'Failed to load marketplace'; then
   echo 'Claude could not load the session marketplace' >&2
   exit 1
 fi
 
 plugin_output=$(docker run --rm --user node -e HOME=/tmp/claude-session-marketplace-test "$session_tag" claude plugin list 2>&1)
-printf '%s\n' "$plugin_output" | awk '
+if ! printf '%s\n' "$plugin_output" | awk '
   /dev-skills@ai-skills/ { found = 1; next }
   found && /Status: ✔ enabled/ { enabled = 1; exit }
   END { exit !(found && enabled) }
-'
+'; then
+  echo 'Session plugin dev-skills@ai-skills is not enabled' >&2
+  printf '%s\n' "$plugin_output" >&2
+  exit 1
+fi
 
 # The base image deliberately keeps /opt/claude-plugin-cache/data
 # node-owned/writable for Claude's own runtime plugin state, even though the
@@ -52,6 +60,7 @@ printf '%s\n' "$plugin_output" | awk '
 # there (copied in from the base image); this asserts the final stage
 # actually restores it, not just that read-only operations like `claude
 # plugin list` still succeed.
-docker run --rm --user node "$session_tag" sh -c 'touch /opt/claude-plugin-cache/data/.runtime-write-test'
+docker run --rm --user node "$session_tag" sh -c 'touch /opt/claude-plugin-cache/data/.runtime-write-test' \
+  || { echo 'Session image runtime data directory is not writable' >&2; exit 1; }
 
 echo ok
