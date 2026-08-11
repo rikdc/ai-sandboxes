@@ -127,13 +127,15 @@ Direct npm and Python package versions are mandatory. Apt versions are
 supported and encouraged, but reproducibility remains limited by the apt
 repository state until a future snapshot-repository design is introduced.
 
-The renderer in this vertical slice only ever emits the fixed, package-free
-Dockerfile described under Implementation task 7; it does not yet install
-`apt`, `npm`, `python`, or `claude_marketplaces` entries. Validation therefore
-rejects any profile with a non-empty `apt`, `npm`, `python`, or
-`claude_marketplaces` field rather than accepting and silently dropping it.
-Only the empty profile (`{"schema_version": 1}`) validates until tasks 8-10
-land.
+The renderer emits the fixed, package-free Dockerfile described under
+Implementation task 7 unless a profile's `claude_marketplaces` field is
+non-empty, in which case it also emits the marketplace-install layer
+described under "Claude marketplaces and plugins" below (Implementation task
+10). `apt`, `npm`, and `python` are not yet installed by the renderer, so
+validation still rejects any profile with a non-empty `apt`, `npm`, or
+`python` field rather than accepting and silently dropping it. Only an empty
+profile, or one with only `claude_marketplaces` populated, validates until
+tasks 8-9 land.
 
 ## Storing and selecting profiles
 
@@ -223,24 +225,52 @@ is added to `PATH`.
 
 ### Claude marketplaces and plugins
 
-Session marketplaces reuse the existing pinned installer model, but install
-into a second, session-specific cache and seed path rather than the base
-image's `/opt/claude-plugin-cache` and `/opt/claude-plugin-seed`. The session
-build sets a distinct `CLAUDE_CODE_SESSION_PLUGIN_SEED_DIR` (and matching
-session plugin-cache variable) to that path; the base image's own
-`CLAUDE_CODE_PLUGIN_SEED_DIR` is untouched, so both seeds are present in the
-final image.
+Session marketplaces reuse the existing pinned installer
+(`scripts/marketplaces/install-claude.sh`, copied into the build context
+unmodified) and install **additively into the base image's own**
+`/opt/claude-plugin-cache` and `/opt/claude-plugin-seed`, not a second,
+session-specific path. This was not the original design — an earlier version
+of this mechanism used a separate `/opt/claude-session/plugin-cache` and
+`/opt/claude-session/plugin-seed`, merged into `settings.json` at container
+launch. That design shipped a marketplace registration
+(`extraKnownMarketplaces` in `settings.json`) that looked correct but never
+actually loaded: Claude resolves a registered marketplace's code relative to
+`CLAUDE_CODE_PLUGIN_CACHE_DIR` at runtime, and that variable only ever points
+at the base image's cache directory — a marketplace cloned into a second,
+unreferenced root registers cleanly and shows as enabled, but its code is
+unreachable. This was confirmed empirically (overriding
+`CLAUDE_CODE_PLUGIN_CACHE_DIR` at runtime to point at the separate session
+cache made the marketplace appear; leaving it at the base path did not),
+not just inferred from documentation.
 
-`images/claude/entrypoint.sh` currently hardcodes `/opt/claude-plugin-seed`
-instead of honoring the `CLAUDE_CODE_PLUGIN_SEED_DIR` the Dockerfile already
-exports. It must change to merge every seed it finds — the base seed at
-`CLAUDE_CODE_PLUGIN_SEED_DIR` and, when set, the session seed at
-`CLAUDE_CODE_SESSION_PLUGIN_SEED_DIR` — into `settings.json` on every launch,
-with session values taking precedence over base values for the same plugin
-key. This keeps a session's extra marketplaces additive: they layer on top of
-whatever the base image already selected rather than replacing it. The build
-then makes the session cache and seed root-owned/read-only, matching the base
-image's existing immutability.
+The fix installs into the same cache Claude already reads. Those base paths
+are read-only in the base image, so the session build stage temporarily
+reclaims write access (`chown`/`chmod` back to node-writable, as root, before
+switching to `USER node` to run the installer — the same lifecycle the base
+image's own build already uses, just re-opened for one more layer), installs
+the profile's marketplaces alongside whatever the base image already has,
+merges the resulting `settings.json` with any pre-existing base seed via
+`scripts/session/merge-plugin-seed.sh` (session values winning on conflicts,
+matching the original "session is additive, layers on top of the base"
+intent — the mechanism moved from runtime to build time, not the
+precedence), and re-locks (`chown root:root`, `chmod -R a-w`) before the
+final stage copies the augmented directories back to their standard paths.
+The install runs in a discarded build stage with a throwaway `HOME`,
+mirroring `images/claude/Dockerfile`'s own build/final split.
+
+Because the session build produces one already-merged seed at the standard
+`CLAUDE_CODE_PLUGIN_SEED_DIR` path, it is indistinguishable at runtime from a
+base image that shipped with those marketplaces built in.
+`images/claude/entrypoint.sh` needs no session-specific logic: it reads
+`CLAUDE_CODE_PLUGIN_SEED_DIR` (required, already exported by the Dockerfile)
+and merges that one seed into `settings.json` on every launch via a
+recursive merge (jq's `*` operator, right side winning per key), the user's
+already-persisted settings taking precedence over the seed and unrelated
+Claude settings left untouched — the same shape this file used before this
+mechanism existed, just reading the seed path from an environment variable
+instead of a hardcoded path, and merging recursively (covering
+`extraKnownMarketplaces` alongside `enabledPlugins`) instead of only the
+single `enabledPlugins` key.
 
 ## Build-network policy
 
@@ -324,12 +354,19 @@ the tasks that must land first.
      validation/integration coverage.
 
 10. **Session Claude marketplace/plugin overlay** (depends on 3, 4)
-    - Make the entrypoint merge the base seed with an optional session seed
-      (`CLAUDE_CODE_SESSION_PLUGIN_SEED_DIR`), session values taking
-      precedence, instead of hardcoding a single seed path.
-    - Reuse the existing marketplace validation/installation model for session
-      cache/seed paths and test that base and session plugins are both
+    - Reuse the existing marketplace validation/installation model to install
+      a session profile's marketplaces additively into the base image's own
+      `/opt/claude-plugin-cache`/`/opt/claude-plugin-seed` at build time
+      (not a separate session-specific cache/seed path merged at runtime —
+      Claude resolves a marketplace's code relative to
+      `CLAUDE_CODE_PLUGIN_CACHE_DIR` at runtime, so a separate root nothing
+      points to would register but never load; see "Claude marketplaces and
+      plugins" above), and test that the session marketplace's plugin is
       enabled after a fresh-home launch.
+    - Make the entrypoint read `CLAUDE_CODE_PLUGIN_SEED_DIR` from the
+      environment instead of a hardcoded path, and merge that seed
+      recursively (covering `extraKnownMarketplaces` alongside
+      `enabledPlugins`) instead of only a single hardcoded key.
 
 11. **Image GC and host-local metadata** (depends on 4, 5, 6)
     - Implement discovery, dry-run output, `--apply`, TTL/size policy, and
