@@ -3,51 +3,51 @@ set -euo pipefail
 cd "$(dirname "$0")/../../.."
 
 fake_home=$(mktemp -d)
-base_seed_dir=$(mktemp -d)
-session_seed_dir=$(mktemp -d)
-trap 'rm -rf "$fake_home" "$base_seed_dir" "$session_seed_dir"' EXIT
+seed_dir=$(mktemp -d)
+trap 'rm -rf "$fake_home" "$seed_dir"' EXIT
 
-cat >"$base_seed_dir/settings.json" <<'JSON'
-{"enabledPlugins":{"a@m1":true,"b@m1":true}}
+# Real shape Claude writes on a successful `claude plugin marketplace add` +
+# `claude plugin install`: marketplace registration lives under
+# extraKnownMarketplaces (Claude resolves the marketplace's code relative to
+# CLAUDE_CODE_PLUGIN_CACHE_DIR at runtime, not from a path recorded here),
+# and enablement lives under enabledPlugins.
+cat >"$seed_dir/settings.json" <<'JSON'
+{
+  "extraKnownMarketplaces": {
+    "ai-skills": {
+      "source": { "source": "github", "repo": "rikdc/ai-skills" }
+    }
+  },
+  "enabledPlugins": {
+    "dev-skills@ai-skills": true
+  }
+}
 JSON
-cat >"$session_seed_dir/settings.json" <<'JSON'
-{"enabledPlugins":{"c@m2":true}}
-JSON
 
-# Fresh home, both a base and a session seed: both must be enabled.
-HOME="$fake_home" CLAUDE_CODE_PLUGIN_SEED_DIR="$base_seed_dir" \
-  CLAUDE_CODE_SESSION_PLUGIN_SEED_DIR="$session_seed_dir" \
-  images/claude/entrypoint.sh true
+# Fresh home: the whole seed becomes the initial settings.json.
+HOME="$fake_home" CLAUDE_CODE_PLUGIN_SEED_DIR="$seed_dir" images/claude/entrypoint.sh true
 
-jq -e '.enabledPlugins["a@m1"] == true' "$fake_home/.claude/settings.json" >/dev/null
-jq -e '.enabledPlugins["b@m1"] == true' "$fake_home/.claude/settings.json" >/dev/null
-jq -e '.enabledPlugins["c@m2"] == true' "$fake_home/.claude/settings.json" >/dev/null
+jq -e '.extraKnownMarketplaces["ai-skills"].source.repo == "rikdc/ai-skills"' "$fake_home/.claude/settings.json" >/dev/null
+jq -e '.enabledPlugins["dev-skills@ai-skills"] == true' "$fake_home/.claude/settings.json" >/dev/null
 
-# Second launch: the user has since disabled a@m1 and set an unrelated key.
-# Both must survive the merge; still-missing defaults must still be added.
-jq -n '{enabledPlugins: {"a@m1": false}, theme: "dark"}' >"$fake_home/.claude/settings.json"
+# Second launch: the user has since disabled the plugin and set an unrelated
+# key. Both must survive the merge; the marketplace registration (a key the
+# user never touched) must still be present, and not just enabledPlugins —
+# this is what the recursive merge covers that the original single-key
+# merge (enabledPlugins only) would have dropped on this second launch.
+jq -n '{enabledPlugins: {"dev-skills@ai-skills": false}, theme: "dark"}' >"$fake_home/.claude/settings.json"
 
-HOME="$fake_home" CLAUDE_CODE_PLUGIN_SEED_DIR="$base_seed_dir" \
-  CLAUDE_CODE_SESSION_PLUGIN_SEED_DIR="$session_seed_dir" \
-  images/claude/entrypoint.sh true
+HOME="$fake_home" CLAUDE_CODE_PLUGIN_SEED_DIR="$seed_dir" images/claude/entrypoint.sh true
 
-jq -e '.enabledPlugins["a@m1"] == false' "$fake_home/.claude/settings.json" >/dev/null
-jq -e '.enabledPlugins["b@m1"] == true' "$fake_home/.claude/settings.json" >/dev/null
-jq -e '.enabledPlugins["c@m2"] == true' "$fake_home/.claude/settings.json" >/dev/null
+jq -e '.extraKnownMarketplaces["ai-skills"].source.repo == "rikdc/ai-skills"' "$fake_home/.claude/settings.json" >/dev/null
+jq -e '.enabledPlugins["dev-skills@ai-skills"] == false' "$fake_home/.claude/settings.json" >/dev/null
 jq -e '.theme == "dark"' "$fake_home/.claude/settings.json" >/dev/null
 
-# Base seed only (today's exact scenario: no session overlay at all).
+# No seed at all: must no-op cleanly.
 fake_home2=$(mktemp -d)
-trap 'rm -rf "$fake_home" "$base_seed_dir" "$session_seed_dir" "$fake_home2"' EXIT
-HOME="$fake_home2" CLAUDE_CODE_PLUGIN_SEED_DIR="$base_seed_dir" images/claude/entrypoint.sh true
-jq -e '.enabledPlugins["a@m1"] == true' "$fake_home2/.claude/settings.json" >/dev/null
-jq -e '.enabledPlugins["c@m2"]? == null' "$fake_home2/.claude/settings.json" >/dev/null
-
-# No base seed and no session seed at all: must no-op cleanly.
-fake_home3=$(mktemp -d)
 empty_seed_dir=$(mktemp -d)
-trap 'rm -rf "$fake_home" "$base_seed_dir" "$session_seed_dir" "$fake_home2" "$fake_home3" "$empty_seed_dir"' EXIT
-HOME="$fake_home3" CLAUDE_CODE_PLUGIN_SEED_DIR="$empty_seed_dir" images/claude/entrypoint.sh true
-test ! -e "$fake_home3/.claude/settings.json"
+trap 'rm -rf "$fake_home" "$seed_dir" "$fake_home2" "$empty_seed_dir"' EXIT
+HOME="$fake_home2" CLAUDE_CODE_PLUGIN_SEED_DIR="$empty_seed_dir" images/claude/entrypoint.sh true
+test ! -e "$fake_home2/.claude/settings.json"
 
 echo ok

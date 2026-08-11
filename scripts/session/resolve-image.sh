@@ -20,10 +20,14 @@ canonical=$(scripts/session/validate-profile.sh "$profile_path") || exit 1
 base_digest=$(docker image inspect --format '{{.Id}}' "$base_image" 2>/dev/null) \
   || die "base image not found: $base_image (run ./scripts/build first)"
 
-# A change to the marketplace installer should also bust the session-image
-# cache, for the same reason the renderer itself is hashed: both are trusted
-# inputs to what a cached tag's content actually is.
-renderer_hash=$(cat scripts/session/render-dockerfile.sh scripts/marketplaces/install-claude.sh | shasum -a 256 | awk '{print $1}')
+# A change to the marketplace installer or the seed-merge helper should also
+# bust the session-image cache, for the same reason the renderer itself is
+# hashed: all three are trusted inputs to what a cached tag's content
+# actually is. Hash each file individually and then hash that listing
+# (rather than concatenating file contents directly) so a change shifting
+# bytes across a file boundary can't produce a collision.
+renderer_hash=$(shasum -a 256 scripts/session/render-dockerfile.sh scripts/marketplaces/install-claude.sh scripts/session/merge-plugin-seed.sh \
+  | shasum -a 256 | awk '{print $1}')
 
 cache_key=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$base_digest" "$canonical" "$platform" "$schema_version" "$launcher_version" "$renderer_hash" \
   | shasum -a 256 | awk '{print $1}')

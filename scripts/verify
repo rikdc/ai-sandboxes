@@ -13,6 +13,7 @@ if command -v fish >/dev/null 2>&1; then find shell/fish -type f -name '*.fish' 
 bash scripts/session/tests/test-validate-profile.sh
 bash scripts/session/tests/test-render-dockerfile.sh
 bash scripts/session/tests/test-resolve-image.sh
+bash scripts/session/tests/test-session-marketplace.sh
 bash scripts/session/tests/test-load-image.sh
 bash scripts/session/tests/test-claude-session-args.sh
 bash scripts/session/tests/test-install-fish-functions.sh
@@ -98,6 +99,4 @@ if command -v msb >/dev/null 2>&1; then
 
   docker image rm "$session_tag_first" >/dev/null 2>&1 || true
   msb image remove "$session_tag_first" >/dev/null 2>&1 || true
-
-  bash scripts/session/tests/test-session-marketplace.sh
 fi

@@ -26,15 +26,22 @@ scripts/session/render-dockerfile.sh "$marketplace_context_dir" 'ai-sandboxes-cl
 test -f "$marketplace_context_dir/Dockerfile"
 test -f "$marketplace_context_dir/session-marketplaces.json"
 test -f "$marketplace_context_dir/install-claude-marketplaces.sh"
+test -f "$marketplace_context_dir/merge-plugin-seed.sh"
 grep -qFx 'FROM ai-sandboxes-claude-session-base:deadbeef AS build' "$marketplace_context_dir/Dockerfile"
-grep -qF 'CLAUDE_CODE_PLUGIN_CACHE_DIR=/opt/claude-session/plugin-cache' "$marketplace_context_dir/Dockerfile"
-grep -qF 'CLAUDE_CODE_SESSION_PLUGIN_SEED_DIR=/opt/claude-session/plugin-seed' "$marketplace_context_dir/Dockerfile"
-grep -qF 'CLAUDE_CODE_SESSION_PLUGIN_CACHE_DIR=/opt/claude-session/plugin-cache' "$marketplace_context_dir/Dockerfile"
+# Installs additively into the SAME paths the running container reads, not a
+# separate/unreferenced root: Claude resolves a marketplace's code relative
+# to CLAUDE_CODE_PLUGIN_CACHE_DIR at runtime (confirmed empirically), so a
+# session-only cache root nothing points to at runtime would register but
+# never load.
+grep -qF 'CLAUDE_CODE_PLUGIN_CACHE_DIR=/opt/claude-plugin-cache' "$marketplace_context_dir/Dockerfile"
+grep -qF 'CLAUDE_CODE_PLUGIN_SEED_DIR=/opt/claude-plugin-seed' "$marketplace_context_dir/Dockerfile"
+grep -qF 'merge-session-plugin-seed.sh /opt/claude-session-build-home/.claude/settings.json /opt/claude-plugin-seed/settings.json' "$marketplace_context_dir/Dockerfile"
 grep -qFx 'USER node' "$marketplace_context_dir/Dockerfile"
-test "$(find "$marketplace_context_dir" -maxdepth 1 -type f | wc -l)" -eq 4
+test "$(find "$marketplace_context_dir" -maxdepth 1 -type f | wc -l)" -eq 5
 jq -e '.claude | length == 1' "$marketplace_context_dir/session-marketplaces.json" >/dev/null
 jq -e '.claude[0].url == "https://github.com/rikdc/ai-skills.git"' "$marketplace_context_dir/session-marketplaces.json" >/dev/null
 jq -e '.codex == []' "$marketplace_context_dir/session-marketplaces.json" >/dev/null
 diff -q "$marketplace_context_dir/install-claude-marketplaces.sh" scripts/marketplaces/install-claude.sh
+diff -q "$marketplace_context_dir/merge-plugin-seed.sh" scripts/session/merge-plugin-seed.sh
 
 echo ok

@@ -38,15 +38,25 @@ fi
 # Session marketplaces reuse the base image's own pinned installer
 # (scripts/marketplaces/install-claude.sh, copied in verbatim below — this
 # context dir must never reference the checkout path directly from the
-# Dockerfile) but install into a second, session-specific cache/seed path
-# rather than the base image's /opt/claude-plugin-cache and
-# /opt/claude-plugin-seed, so the base image's own marketplace selection is
-# untouched. Mirrors images/claude/Dockerfile's own build/final split:
-# install in a discarded build stage with a throwaway HOME, then copy only
-# the resulting cache/seed directories into the final image.
+# Dockerfile) and install additively into the SAME /opt/claude-plugin-cache
+# and /opt/claude-plugin-seed paths the base image already uses, not a
+# second, separate root: Claude resolves a registered marketplace's code
+# relative to CLAUDE_CODE_PLUGIN_CACHE_DIR at runtime (confirmed empirically
+# — a marketplace registered against a cache directory nothing points to at
+# runtime shows as "No marketplaces configured" even though its settings.json
+# entry and cloned content both exist), so a separate session-only cache root
+# would register cleanly but never actually load. Those base paths are
+# read-only in the base image; this build stage temporarily reclaims write
+# access, installs, merges the resulting settings.json with any pre-existing
+# base seed (scripts/session/merge-plugin-seed.sh, session values winning),
+# and re-locks before the final stage copies the augmented directories back
+# to their standard paths. Mirrors images/claude/Dockerfile's own build/final
+# split: install in a discarded build stage with a throwaway HOME, then copy
+# only the resulting cache/seed directories into the final image.
 jq -n --argjson claude "$marketplaces" '{claude: $claude, codex: []}' \
   >"$context_dir/session-marketplaces.json"
 cp -- "$repo_root/scripts/marketplaces/install-claude.sh" "$context_dir/install-claude-marketplaces.sh"
+cp -- "$repo_root/scripts/session/merge-plugin-seed.sh" "$context_dir/merge-plugin-seed.sh"
 
 cat >"$context_dir/Dockerfile" <<EOF
 # syntax=docker/dockerfile:1.7
@@ -54,21 +64,22 @@ FROM $base_image_ref AS build
 USER root
 COPY --chown=node:node session-marketplaces.json /opt/session-marketplaces.json
 COPY --chown=node:node --chmod=0755 install-claude-marketplaces.sh /usr/local/lib/ai-sandboxes/install-session-claude-marketplaces.sh
-RUN install -d -o node -g node -m 0755 /opt/claude-session/plugin-cache /opt/claude-session/plugin-seed /opt/claude-session-build-home /opt/claude-marketplaces
+COPY --chown=node:node --chmod=0755 merge-plugin-seed.sh /usr/local/lib/ai-sandboxes/merge-session-plugin-seed.sh
+RUN chown -R node:node /opt/claude-plugin-cache /opt/claude-plugin-seed \\
+ && chmod -R u+w /opt/claude-plugin-cache /opt/claude-plugin-seed \\
+ && install -d -o node -g node -m 0755 /opt/claude-session-build-home /opt/claude-marketplaces
 USER node
-ENV HOME=/opt/claude-session-build-home CLAUDE_CODE_PLUGIN_CACHE_DIR=/opt/claude-session/plugin-cache CLAUDE_CODE_PLUGIN_SEED_DIR=/opt/claude-session/plugin-seed
+ENV HOME=/opt/claude-session-build-home CLAUDE_CODE_PLUGIN_CACHE_DIR=/opt/claude-plugin-cache CLAUDE_CODE_PLUGIN_SEED_DIR=/opt/claude-plugin-seed
 RUN /usr/local/lib/ai-sandboxes/install-session-claude-marketplaces.sh /opt/session-marketplaces.json
 USER root
-RUN if test -f /opt/claude-session-build-home/.claude/settings.json; then \\
-      install -D -o node -g node -m 0644 /opt/claude-session-build-home/.claude/settings.json /opt/claude-session/plugin-seed/settings.json; \\
-    fi \\
- && chmod -R a-w /opt/claude-session/plugin-cache /opt/claude-session/plugin-seed
+RUN /usr/local/lib/ai-sandboxes/merge-session-plugin-seed.sh /opt/claude-session-build-home/.claude/settings.json /opt/claude-plugin-seed/settings.json \\
+ && chown -R root:root /opt/claude-plugin-cache /opt/claude-plugin-seed \\
+ && chmod -R a-w /opt/claude-plugin-cache /opt/claude-plugin-seed
 USER node
 FROM $base_image_ref
 USER root
-COPY --from=build --chown=root:root /opt/claude-session/plugin-cache /opt/claude-session/plugin-cache
-COPY --from=build --chown=root:root /opt/claude-session/plugin-seed /opt/claude-session/plugin-seed
-ENV CLAUDE_CODE_SESSION_PLUGIN_SEED_DIR=/opt/claude-session/plugin-seed CLAUDE_CODE_SESSION_PLUGIN_CACHE_DIR=/opt/claude-session/plugin-cache
+COPY --from=build --chown=root:root /opt/claude-plugin-cache /opt/claude-plugin-cache
+COPY --from=build --chown=root:root /opt/claude-plugin-seed /opt/claude-plugin-seed
 COPY --chown=root:root --chmod=0444 resolved.json /opt/session-profile/resolved.json
 USER node
 EOF
