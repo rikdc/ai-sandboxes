@@ -55,6 +55,7 @@ if [[ "$have_base_seed" == true || "$have_session_seed" == true ]]; then
       || die "could not merge plugin defaults into $settings"
     mv -f -- "$temporary" "$settings" || die "could not update $settings"
   fi
+  rm -f -- "$defaults" || die "could not remove scratch defaults file"
   trap - EXIT
 fi
 
