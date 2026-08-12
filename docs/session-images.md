@@ -119,12 +119,18 @@ YAML is deferred rather than introducing a second parser dependency.
 
 Validation must reject unknown fields, credentials, arbitrary URLs, shell
 syntax, package-manager options, local package files, source repository
-changes, and malformed package names/versions. Marketplace entries reuse the
-existing public-GitHub, full-commit-SHA, safe-path, and plugin-name constraints.
-Profiles also have package-count, field-length, and estimated-size limits.
+changes, malformed package names/versions, and duplicate package names within
+`apt` or within `npm`. Marketplace entries reuse the existing public-GitHub,
+full-commit-SHA, safe-path, and plugin-name constraints. Profiles also have
+package-count, field-length, and estimated-size limits.
 
-Direct npm and Python package versions are mandatory. Apt versions are
-supported and encouraged, but reproducibility remains limited by the apt
+Direct npm and Python package versions are mandatory and must be an exact
+semantic version (optionally with a pre-release or build-metadata suffix,
+e.g. `1.2.3-beta.1`); dist-tags and ranges (`latest`, `1.x`, `^1.2.3`) are
+rejected, since an unpinned npm version would make `resolved.json`'s
+provenance a lie about what is actually reproducible on a later rebuild. Apt
+versions are supported and encouraged, but reproducibility remains limited by
+the apt
 repository state until a future snapshot-repository design is introduced.
 
 The renderer emits the fixed, package-free Dockerfile described under

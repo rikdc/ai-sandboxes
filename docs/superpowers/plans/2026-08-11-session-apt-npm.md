@@ -173,7 +173,7 @@ This mirrors the existing `claude_marketplaces` `plugins` dedup check (`(($p | l
 
 Run: `bash scripts/session/tests/test-validate-profile.sh`
 
-Expected: `ok` — this exercises every fixture in `scripts/session/fixtures/valid/*.json` and `scripts/session/fixtures/invalid/*.json`, including all fixtures added in Step 1 and the pre-existing ones (in particular `scripts/session/fixtures/invalid/non-empty-packages.json`, which stays invalid because it still has `python.enabled: true` — confirm this fixture is still present and still rejected, now specifically because of `python`, not `apt`/`npm`).
+Expected: `ok` — this exercises every fixture in `scripts/session/fixtures/valid/*.json` and `scripts/session/fixtures/invalid/*.json`, including all fixtures added in Step 1 and the pre-existing ones (in particular `scripts/session/fixtures/invalid/python-enabled.json`, which stays invalid because it still has `python.enabled: true` — confirm this fixture is still present and still rejected, now specifically because of `python`, not `apt`/`npm`).
 
 - [ ] **Step 6: Commit**
 
