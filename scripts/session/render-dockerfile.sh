@@ -21,10 +21,12 @@ apt_packages=$(jq -c '.apt // []' <<<"$canonical_profile") || die 'could not rea
 apt_count=$(jq 'length' <<<"$apt_packages") || die 'could not count apt packages'
 npm_packages=$(jq -c '.npm // []' <<<"$canonical_profile") || die 'could not read npm packages from profile'
 npm_count=$(jq 'length' <<<"$npm_packages") || die 'could not count npm packages'
+tools_selection=$(jq -c '.tools // []' <<<"$canonical_profile") || die 'could not read tools from profile'
+tools_count=$(jq 'length' <<<"$tools_selection") || die 'could not count tools'
 marketplaces=$(jq -c '.claude_marketplaces // []' <<<"$canonical_profile") || die 'could not read marketplaces from profile'
 marketplace_count=$(jq 'length' <<<"$marketplaces") || die 'could not count marketplaces'
 
-if test "$apt_count" -eq 0 && test "$npm_count" -eq 0 && test "$marketplace_count" -eq 0; then
+if test "$apt_count" -eq 0 && test "$npm_count" -eq 0 && test "$tools_count" -eq 0 && test "$marketplace_count" -eq 0; then
   cat >"$context_dir/Dockerfile" <<EOF || die "could not write $context_dir/Dockerfile"
 # syntax=docker/dockerfile:1.7
 FROM $base_image_ref
@@ -101,6 +103,25 @@ USER root
 RUN chown -R root:root /opt/claude-session/npm \\
  && chmod -R a-w /opt/claude-session/npm
 ENV PATH=\$PATH:/opt/claude-session/npm/bin
+EOF
+fi
+
+if test "$tools_count" -gt 0; then
+  jq -n --argjson tools "$tools_selection" '{tools: $tools}' >"$context_dir/session-tools-selection.json" \
+    || die 'could not write session-tools-selection.json'
+  cp -- "$repo_root/config/tool-catalog.json" "$context_dir/session-tool-catalog.json" \
+    || die 'could not copy tool-catalog.json into context'
+  cp -- "$repo_root/scripts/tools/install-selected.sh" "$context_dir/install-selected.sh" \
+    || die 'could not copy install-selected.sh into context'
+  cp -- "$repo_root/scripts/tools/install-github-release-tar.sh" "$context_dir/install-github-release-tar.sh" \
+    || die 'could not copy install-github-release-tar.sh into context'
+  cat >>"$dockerfile" <<EOF || die "could not write $dockerfile"
+COPY --chown=root:root session-tool-catalog.json /opt/session-tool-catalog.json
+COPY --chown=root:root session-tools-selection.json /opt/session-tools-selection.json
+COPY --chown=root:root --chmod=0755 install-selected.sh /usr/local/lib/ai-sandboxes/install-selected.sh
+COPY --chown=root:root --chmod=0755 install-github-release-tar.sh /usr/local/lib/ai-sandboxes/install-github-release-tar.sh
+RUN install -d /usr/local/libexec \\
+ && /usr/local/lib/ai-sandboxes/install-selected.sh runtime /opt/session-tool-catalog.json /opt/session-tools-selection.json
 EOF
 fi
 
