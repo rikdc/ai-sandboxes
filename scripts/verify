@@ -102,4 +102,8 @@ if command -v msb >/dev/null 2>&1; then
 
   docker image rm "$session_tag_first" >/dev/null 2>&1 || true
   msb image remove "$session_tag_first" >/dev/null 2>&1 || true
+
+  if command -v fish >/dev/null 2>&1; then
+    bash scripts/session/tests/test-claude-session-shared-state.sh || exit 1
+  fi
 fi
