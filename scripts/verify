@@ -15,6 +15,7 @@ bash scripts/session/tests/test-render-dockerfile.sh || exit 1
 bash scripts/session/tests/test-resolve-image.sh || exit 1
 bash scripts/session/tests/test-session-marketplace.sh || exit 1
 bash scripts/session/tests/test-session-apt-npm.sh || exit 1
+bash scripts/session/tests/test-session-tools.sh || exit 1
 bash scripts/session/tests/test-load-image.sh || exit 1
 bash scripts/session/tests/test-claude-session-args.sh || exit 1
 bash scripts/session/tests/test-install-fish-functions.sh || exit 1
