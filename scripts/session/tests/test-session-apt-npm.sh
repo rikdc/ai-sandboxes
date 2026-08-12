@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -o pipefail
 cd "$(dirname "$0")/../../.." || exit 1
 
 if ! docker image inspect ai-sandboxes-claude:local >/dev/null 2>&1; then
@@ -15,13 +15,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
-session_tag=$(CLAUDE_MSB_BUILD_EGRESS=1 scripts/session/resolve-image.sh scripts/session/fixtures/valid/apt-npm-packages.json)
+session_tag=$(CLAUDE_MSB_BUILD_EGRESS=1 scripts/session/resolve-image.sh scripts/session/fixtures/valid/apt-npm-packages.json) || exit 1
 
 docker run --rm --user node "$session_tag" tree --version >/dev/null \
   || { echo 'apt-installed tree binary does not run' >&2; exit 1; }
 
-recorded_version=$(docker run --rm --user node "$session_tag" sh -c "jq -r '.packages.apt[] | select(.name==\"tree\") | .version' /opt/session-profile/resolved.json")
-actual_version=$(docker run --rm --user root "$session_tag" dpkg-query -W -f='${Version}' tree)
+recorded_version=$(docker run --rm --user node "$session_tag" sh -c "jq -r '.packages.apt[] | select(.name==\"tree\") | .version' /opt/session-profile/resolved.json") || exit 1
+actual_version=$(docker run --rm --user root "$session_tag" dpkg-query -W -f='${Version}' tree) || exit 1
 test -n "$recorded_version" \
   || { echo 'resolved.json has no recorded apt version for tree' >&2; exit 1; }
 test "$recorded_version" = "$actual_version" \

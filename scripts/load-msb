@@ -1,15 +1,15 @@
 #!/bin/bash
-set -euo pipefail
-cd "$(dirname "$0")/.."
-source scripts/lib/msb-image.sh
+set -o pipefail
+cd "$(dirname "$0")/.." || exit 1
+source scripts/lib/msb-image.sh || exit 1
 
 load_image() {
   local docker_ref=$1 msb_ref=$2
   if msb_image_present "$msb_ref"; then
-    msb image remove "$msb_ref"
+    msb image remove "$msb_ref" || return 1
   fi
   msb_load_image "$docker_ref" "$msb_ref"
 }
 
-load_image ai-sandboxes-claude:local ai-sandboxes-claude:local
-load_image ai-sandboxes-codex:local ai-sandboxes-codex:local
+load_image ai-sandboxes-claude:local ai-sandboxes-claude:local || exit 1
+load_image ai-sandboxes-codex:local ai-sandboxes-codex:local || exit 1

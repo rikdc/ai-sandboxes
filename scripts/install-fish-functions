@@ -1,19 +1,25 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -o pipefail
 
-repo_root=$(cd "$(dirname "$0")/.." && pwd)
+die() {
+  printf 'install-fish-functions: %s\n' "$*" >&2
+  exit 1
+}
+
+repo_root=$(cd "$(dirname "$0")/.." && pwd) || exit 1
 
 fish_functions_dir="$HOME/.config/fish/functions"
 trusted_dir="$HOME/.config/ai-sandboxes/trusted"
 
-mkdir -p "$fish_functions_dir" "$trusted_dir"
+mkdir -p "$fish_functions_dir" "$trusted_dir" || die 'could not create installation directories'
 
 # Copy (never symlink) the trust boundary and the wrappers below out of the
 # checkout: a symlink would resolve back into the (possibly agent-mounted and
 # therefore guest-writable) checkout at read time, defeating the point of
 # installing them outside it. Re-run this script after updating ai-sandboxes
 # to refresh the installed copies.
-install -m 0644 "$repo_root/shell/fish/trusted/guard.fish" "$trusted_dir/guard.fish"
+install -m 0644 "$repo_root/shell/fish/trusted/guard.fish" "$trusted_dir/guard.fish" \
+  || die 'could not install the trust-boundary guard'
 
 # Fish single-quoted strings only treat \' and \\ specially; every other
 # character, including a literal newline, is taken verbatim. Escape both
@@ -30,13 +36,13 @@ fish_quote() {
 write_wrapper() {
   local agent=$1 impl_function=$2 impl_file=$3 out_file=$4
   local q_guard q_repo_root q_fish_functions_dir q_trusted_dir q_lib q_impl_file
-  q_guard=$(fish_quote "$trusted_dir/guard.fish")
-  q_repo_root=$(fish_quote "$repo_root")
-  q_fish_functions_dir=$(fish_quote "$fish_functions_dir")
-  q_trusted_dir=$(fish_quote "$trusted_dir")
-  q_lib=$(fish_quote "$repo_root/shell/fish/lib/ai-sandbox.fish")
-  q_impl_file=$(fish_quote "$impl_file")
-  cat >"$out_file" <<EOF
+  q_guard=$(fish_quote "$trusted_dir/guard.fish") || return 1
+  q_repo_root=$(fish_quote "$repo_root") || return 1
+  q_fish_functions_dir=$(fish_quote "$fish_functions_dir") || return 1
+  q_trusted_dir=$(fish_quote "$trusted_dir") || return 1
+  q_lib=$(fish_quote "$repo_root/shell/fish/lib/ai-sandbox.fish") || return 1
+  q_impl_file=$(fish_quote "$impl_file") || return 1
+  cat >"$out_file" <<EOF || return 1
 # Installed by ai-sandboxes' scripts/install-fish-functions. This wrapper is a
 # copy, not a symlink, and lives outside the ai-sandboxes checkout on purpose:
 # it is the trust boundary that runs before any checkout-provided code, so a
@@ -53,8 +59,11 @@ end
 EOF
 }
 
-write_wrapper claude __ai_sandbox_impl_claude "$repo_root/shell/fish/claude.fish" "$fish_functions_dir/claude.fish"
-write_wrapper codex __ai_sandbox_impl_codex "$repo_root/shell/fish/codex.fish" "$fish_functions_dir/codex.fish"
-write_wrapper claude-session __ai_sandbox_impl_claude_session "$repo_root/shell/fish/claude-session.fish" "$fish_functions_dir/claude-session.fish"
+write_wrapper claude __ai_sandbox_impl_claude "$repo_root/shell/fish/claude.fish" "$fish_functions_dir/claude.fish" \
+  || die 'could not write the claude wrapper'
+write_wrapper codex __ai_sandbox_impl_codex "$repo_root/shell/fish/codex.fish" "$fish_functions_dir/codex.fish" \
+  || die 'could not write the codex wrapper'
+write_wrapper claude-session __ai_sandbox_impl_claude_session "$repo_root/shell/fish/claude-session.fish" "$fish_functions_dir/claude-session.fish" \
+  || die 'could not write the claude-session wrapper'
 
 printf 'Installed ai-sandboxes Fish wrappers into %s (checkout: %s)\n' "$fish_functions_dir" "$repo_root"

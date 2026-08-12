@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -o pipefail
 cd "$(dirname "$0")/../../.." || exit 1
 
 if ! docker image inspect ai-sandboxes-claude:local >/dev/null 2>&1; then
@@ -15,7 +15,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-session_tag=$(CLAUDE_MSB_BUILD_EGRESS=1 scripts/session/resolve-image.sh scripts/session/fixtures/valid/claude-marketplaces.json)
+session_tag=$(CLAUDE_MSB_BUILD_EGRESS=1 scripts/session/resolve-image.sh scripts/session/fixtures/valid/claude-marketplaces.json) || exit 1
 
 # Marketplace registration and code reachability are two different failures:
 # a marketplace can show as enabled in `claude plugin list` (settings.json
@@ -31,7 +31,7 @@ session_tag=$(CLAUDE_MSB_BUILD_EGRESS=1 scripts/session/resolve-image.sh scripts
 # and CI's runner does not have msb installed, so gating this behind msb
 # would mean the test that catches exactly this class of regression never
 # runs automatically.
-marketplace_output=$(docker run --rm --user node -e HOME=/tmp/claude-session-marketplace-test "$session_tag" claude plugin marketplace list 2>&1)
+marketplace_output=$(docker run --rm --user node -e HOME=/tmp/claude-session-marketplace-test "$session_tag" claude plugin marketplace list 2>&1) || exit 1
 if ! printf '%s\n' "$marketplace_output" | grep -Fq 'Source: GitHub (rikdc/ai-skills)'; then
   echo 'Claude did not register the session marketplace' >&2
   printf '%s\n' "$marketplace_output" >&2
@@ -42,7 +42,7 @@ if printf '%s\n' "$marketplace_output" | grep -Fq 'Failed to load marketplace'; 
   exit 1
 fi
 
-plugin_output=$(docker run --rm --user node -e HOME=/tmp/claude-session-marketplace-test "$session_tag" claude plugin list 2>&1)
+plugin_output=$(docker run --rm --user node -e HOME=/tmp/claude-session-marketplace-test "$session_tag" claude plugin list 2>&1) || exit 1
 if ! printf '%s\n' "$plugin_output" | awk '
   /dev-skills@ai-skills/ { found = 1; next }
   found && /Status: ✔ enabled/ { enabled = 1; exit }

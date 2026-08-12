@@ -1,23 +1,29 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -o pipefail
 
 catalog=${1:?usage: install-github-release-tar.sh CATALOG SELECTION TOOL_ID DESTINATION}
 selection=${2:?usage: install-github-release-tar.sh CATALOG SELECTION TOOL_ID DESTINATION}
 tool_id=${3:?usage: install-github-release-tar.sh CATALOG SELECTION TOOL_ID DESTINATION}
 destination=${4:?usage: install-github-release-tar.sh CATALOG SELECTION TOOL_ID DESTINATION}
 
-entry=$(jq -ce --arg id "$tool_id" '.tools[] | select(.id == $id)' "$catalog")
-selected=$(jq -ce --arg id "$tool_id" '.tools[] | select(.id == $id)' "$selection")
-repository=$(jq -er '.repository' <<<"$entry")
-asset=$(jq -er '.asset' <<<"$entry")
-binary=$(jq -er '.binary' <<<"$entry")
-archive_member=$(jq -er '.archive_member' <<<"$entry")
-version=$(jq -er '.version' <<<"$selected")
-checksum=$(jq -er '.sha256' <<<"$selected")
-archive=$(mktemp)
-extract_dir=$(mktemp -d)
+die() {
+  printf 'install-github-release-tar: %s\n' "$*" >&2
+  exit 1
+}
+
+entry=$(jq -ce --arg id "$tool_id" '.tools[] | select(.id == $id)' "$catalog") || die "unknown tool id: $tool_id"
+selected=$(jq -ce --arg id "$tool_id" '.tools[] | select(.id == $id)' "$selection") || die "no selection for tool id: $tool_id"
+repository=$(jq -er '.repository' <<<"$entry") || die "catalog entry missing repository: $tool_id"
+asset=$(jq -er '.asset' <<<"$entry") || die "catalog entry missing asset: $tool_id"
+binary=$(jq -er '.binary' <<<"$entry") || die "catalog entry missing binary: $tool_id"
+archive_member=$(jq -er '.archive_member' <<<"$entry") || die "catalog entry missing archive_member: $tool_id"
+version=$(jq -er '.version' <<<"$selected") || die "selection missing version: $tool_id"
+checksum=$(jq -er '.sha256' <<<"$selected") || die "selection missing sha256: $tool_id"
+archive=$(mktemp) || die 'could not create a scratch file for the downloaded archive'
+extract_dir=$(mktemp -d) || die 'could not create a scratch directory for extraction'
 trap 'rm -rf "$archive" "$extract_dir"' EXIT
-curl -fsSL "https://github.com/${repository}/releases/download/${version}/${asset}" -o "$archive"
-echo "${checksum}  ${archive}" | sha256sum -c -
-tar -xzf "$archive" -C "$extract_dir" "$archive_member"
-install -Dm 0755 "$extract_dir/$archive_member" "$destination/$binary"
+curl -fsSL "https://github.com/${repository}/releases/download/${version}/${asset}" -o "$archive" \
+  || die "download failed for $repository $version $asset"
+echo "${checksum}  ${archive}" | sha256sum -c - >/dev/null || die "checksum mismatch for $repository $version $asset"
+tar -xzf "$archive" -C "$extract_dir" "$archive_member" || die "could not extract $archive_member from archive"
+install -Dm 0755 "$extract_dir/$archive_member" "$destination/$binary" || die "could not install $binary to $destination"

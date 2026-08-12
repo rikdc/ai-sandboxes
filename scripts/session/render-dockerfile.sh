@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -o pipefail
 
-repo_root=$(cd "$(dirname "$0")/../.." && pwd)
+die() {
+  printf 'render-dockerfile: %s\n' "$*" >&2
+  exit 1
+}
+
+repo_root=$(cd "$(dirname "$0")/../.." && pwd) || exit 1
 
 context_dir=${1:?usage: render-dockerfile.sh CONTEXT_DIR BASE_IMAGE_REF CANONICAL_PROFILE_JSON}
 base_image_ref=${2:?usage: render-dockerfile.sh CONTEXT_DIR BASE_IMAGE_REF CANONICAL_PROFILE_JSON}
@@ -12,15 +17,15 @@ test -f "$context_dir/resolved.json" || {
   exit 1
 }
 
-apt_packages=$(jq -c '.apt // []' <<<"$canonical_profile")
-apt_count=$(jq 'length' <<<"$apt_packages")
-npm_packages=$(jq -c '.npm // []' <<<"$canonical_profile")
-npm_count=$(jq 'length' <<<"$npm_packages")
-marketplaces=$(jq -c '.claude_marketplaces // []' <<<"$canonical_profile")
-marketplace_count=$(jq 'length' <<<"$marketplaces")
+apt_packages=$(jq -c '.apt // []' <<<"$canonical_profile") || die 'could not read apt packages from profile'
+apt_count=$(jq 'length' <<<"$apt_packages") || die 'could not count apt packages'
+npm_packages=$(jq -c '.npm // []' <<<"$canonical_profile") || die 'could not read npm packages from profile'
+npm_count=$(jq 'length' <<<"$npm_packages") || die 'could not count npm packages'
+marketplaces=$(jq -c '.claude_marketplaces // []' <<<"$canonical_profile") || die 'could not read marketplaces from profile'
+marketplace_count=$(jq 'length' <<<"$marketplaces") || die 'could not count marketplaces'
 
 if test "$apt_count" -eq 0 && test "$npm_count" -eq 0 && test "$marketplace_count" -eq 0; then
-  cat >"$context_dir/Dockerfile" <<EOF
+  cat >"$context_dir/Dockerfile" <<EOF || die "could not write $context_dir/Dockerfile"
 # syntax=docker/dockerfile:1.7
 FROM $base_image_ref
 USER root
@@ -31,16 +36,18 @@ EOF
 fi
 
 dockerfile="$context_dir/Dockerfile"
-: >"$dockerfile"
-printf '# syntax=docker/dockerfile:1.7\n' >>"$dockerfile"
+: >"$dockerfile" || die "could not create $dockerfile"
+printf '# syntax=docker/dockerfile:1.7\n' >>"$dockerfile" || die "could not write to $dockerfile"
 
 if test "$marketplace_count" -gt 0; then
   jq -n --argjson claude "$marketplaces" '{claude: $claude, codex: []}' \
-    >"$context_dir/session-marketplaces.json"
-  cp -- "$repo_root/scripts/marketplaces/install-claude.sh" "$context_dir/install-claude-marketplaces.sh"
-  cp -- "$repo_root/scripts/session/merge-plugin-seed.sh" "$context_dir/merge-plugin-seed.sh"
+    >"$context_dir/session-marketplaces.json" || die 'could not write session-marketplaces.json'
+  cp -- "$repo_root/scripts/marketplaces/install-claude.sh" "$context_dir/install-claude-marketplaces.sh" \
+    || die 'could not copy install-claude.sh into context'
+  cp -- "$repo_root/scripts/session/merge-plugin-seed.sh" "$context_dir/merge-plugin-seed.sh" \
+    || die 'could not copy merge-plugin-seed.sh into context'
 
-  cat >>"$dockerfile" <<EOF
+  cat >>"$dockerfile" <<EOF || die "could not write $dockerfile"
 FROM $base_image_ref AS build
 USER root
 COPY --chown=node:node session-marketplaces.json /opt/session-marketplaces.json
@@ -61,16 +68,18 @@ FROM $base_image_ref
 USER root
 EOF
 else
-  cat >>"$dockerfile" <<EOF
+  cat >>"$dockerfile" <<EOF || die "could not write $dockerfile"
 FROM $base_image_ref
 USER root
 EOF
 fi
 
 if test "$apt_count" -gt 0; then
-  jq -n --argjson apt "$apt_packages" '{apt: $apt}' >"$context_dir/session-apt-packages.json"
-  cp -- "$repo_root/scripts/session/install-apt-packages.sh" "$context_dir/install-apt-packages.sh"
-  cat >>"$dockerfile" <<EOF
+  jq -n --argjson apt "$apt_packages" '{apt: $apt}' >"$context_dir/session-apt-packages.json" \
+    || die 'could not write session-apt-packages.json'
+  cp -- "$repo_root/scripts/session/install-apt-packages.sh" "$context_dir/install-apt-packages.sh" \
+    || die 'could not copy install-apt-packages.sh into context'
+  cat >>"$dockerfile" <<EOF || die "could not write $dockerfile"
 COPY --chown=root:root session-apt-packages.json /opt/session-apt-packages.json
 COPY --chown=root:root --chmod=0755 install-apt-packages.sh /usr/local/lib/ai-sandboxes/install-session-apt-packages.sh
 RUN /usr/local/lib/ai-sandboxes/install-session-apt-packages.sh /opt/session-apt-packages.json /opt/session-apt-installed.json
@@ -78,9 +87,11 @@ EOF
 fi
 
 if test "$npm_count" -gt 0; then
-  jq -n --argjson npm "$npm_packages" '{npm: $npm}' >"$context_dir/session-npm-packages.json"
-  cp -- "$repo_root/scripts/session/install-npm-packages.sh" "$context_dir/install-npm-packages.sh"
-  cat >>"$dockerfile" <<EOF
+  jq -n --argjson npm "$npm_packages" '{npm: $npm}' >"$context_dir/session-npm-packages.json" \
+    || die 'could not write session-npm-packages.json'
+  cp -- "$repo_root/scripts/session/install-npm-packages.sh" "$context_dir/install-npm-packages.sh" \
+    || die 'could not copy install-npm-packages.sh into context'
+  cat >>"$dockerfile" <<EOF || die "could not write $dockerfile"
 COPY --chown=root:root session-npm-packages.json /opt/session-npm-packages.json
 COPY --chown=root:root --chmod=0755 install-npm-packages.sh /usr/local/lib/ai-sandboxes/install-session-npm-packages.sh
 RUN install -d -o node -g node -m 0755 /opt/claude-session/npm
@@ -94,7 +105,7 @@ EOF
 fi
 
 if test "$marketplace_count" -gt 0; then
-  cat >>"$dockerfile" <<EOF
+  cat >>"$dockerfile" <<EOF || die "could not write $dockerfile"
 COPY --from=build --chown=root:root /opt/claude-plugin-cache /opt/claude-plugin-cache
 COPY --from=build --chown=root:root /opt/claude-plugin-seed /opt/claude-plugin-seed
 RUN install -d -o node -g node -m 0755 /opt/claude-plugin-cache/data
@@ -102,12 +113,13 @@ EOF
 fi
 
 if test "$apt_count" -eq 0; then
-  cat >>"$dockerfile" <<EOF
+  cat >>"$dockerfile" <<EOF || die "could not write $dockerfile"
 COPY --chown=root:root --chmod=0444 resolved.json /opt/session-profile/resolved.json
 EOF
 else
-  cp -- "$repo_root/scripts/session/patch-apt-provenance.sh" "$context_dir/patch-apt-provenance.sh"
-  cat >>"$dockerfile" <<EOF
+  cp -- "$repo_root/scripts/session/patch-apt-provenance.sh" "$context_dir/patch-apt-provenance.sh" \
+    || die 'could not copy patch-apt-provenance.sh into context'
+  cat >>"$dockerfile" <<EOF || die "could not write $dockerfile"
 COPY --chown=root:root resolved.json /opt/session-profile/resolved.json
 COPY --chown=root:root --chmod=0755 patch-apt-provenance.sh /usr/local/lib/ai-sandboxes/patch-apt-provenance.sh
 RUN /usr/local/lib/ai-sandboxes/patch-apt-provenance.sh /opt/session-profile/resolved.json /opt/session-apt-installed.json \\
@@ -115,4 +127,4 @@ RUN /usr/local/lib/ai-sandboxes/patch-apt-provenance.sh /opt/session-profile/res
 EOF
 fi
 
-printf 'USER node\n' >>"$dockerfile"
+printf 'USER node\n' >>"$dockerfile" || die "could not write $dockerfile"

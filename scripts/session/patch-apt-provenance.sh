@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -o pipefail
 
 resolved_json=${1:?usage: patch-apt-provenance.sh RESOLVED_JSON FRAGMENT_JSON}
 fragment_json=${2:?usage: patch-apt-provenance.sh RESOLVED_JSON FRAGMENT_JSON}

@@ -189,11 +189,12 @@ image is only a cache hit if its `io.ai-sandboxes.session-image` and
 trusted, since a tag is a mutable pointer that something other than the
 resolver could have written. A tag that exists but does not carry the
 expected labels fails closed rather than being silently rebuilt over or
-reused. `claude-session` applies the same label check to the msb-side image
-after loading, since msb keeps a separate image store from Docker's and
-`load-image.sh` (a generic loader also used for non-session images) only
-checks whether *a* image exists under the tag, not whether it is the right
-one.
+reused. `claude-session` also verifies the msb-side image after loading,
+since msb keeps a separate image store from Docker's and `load-image.sh` (a
+generic loader also used for non-session images) only checks whether *a*
+image exists under the tag, not whether it is the right one. `msb load`
+does not retain OCI labels, so this second check compares the preserved OCI
+config digest reported by msb with Docker's image ID instead.
 
 Otherwise, the resolver creates a temporary build context that contains only
 generated files and trusted installer scripts; it must never use the project

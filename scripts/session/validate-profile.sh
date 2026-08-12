@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -o pipefail
 
 profile_path=${1:?usage: validate-profile.sh PROFILE_PATH}
 
@@ -17,11 +17,11 @@ test -r "$profile_path" || die "cannot read profile: $profile_path"
 # Snapshot once so a profile living under a writable/mounted path cannot change
 # between the size check below and the validation/canonicalization passes that
 # follow: every subsequent read comes from this private copy, not the original.
-snapshot=$(mktemp)
+snapshot=$(mktemp) || die 'could not create a scratch file for the profile snapshot'
 trap 'rm -f "$snapshot"' EXIT
 cp -- "$profile_path" "$snapshot" || die "cannot read profile: $profile_path"
 
-size=$(wc -c <"$snapshot")
+size=$(wc -c <"$snapshot") || die "could not measure profile size: $profile_path"
 test "$size" -le "$max_bytes" || die "profile exceeds $max_bytes bytes"
 
 jq -e . "$snapshot" >/dev/null 2>&1 || die 'profile is not valid JSON'

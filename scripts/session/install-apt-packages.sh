@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -o pipefail
 
 apt_json=${1:?usage: install-apt-packages.sh APT_PACKAGES_JSON FRAGMENT_OUTPUT_PATH}
 fragment_output=${2:?usage: install-apt-packages.sh APT_PACKAGES_JSON FRAGMENT_OUTPUT_PATH}
@@ -29,7 +29,7 @@ apt-get install -y --no-install-recommends "${specs[@]}" \
 # image, not just what was requested.
 names_json=$(jq -r '.apt[].name' "$apt_json") \
   || die "could not read apt package names from $apt_json"
-actual=$(jq -cn '[]')
+actual=$(jq -cn '[]') || die 'could not initialize provenance list'
 if test -n "$names_json"; then
   while IFS= read -r name; do
     version=$(dpkg-query -W -f='${Version}' "$name") \
@@ -44,4 +44,4 @@ fi
 printf '%s\n' "$actual" >"$fragment_output" \
   || die "could not write $fragment_output"
 
-rm -rf /var/lib/apt/lists/*
+rm -rf /var/lib/apt/lists/* || die 'could not clean up apt lists'

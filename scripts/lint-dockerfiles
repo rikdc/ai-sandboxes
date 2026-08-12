@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-set -euo pipefail
-cd "$(dirname "$0")/.."
+set -o pipefail
+cd "$(dirname "$0")/.." || exit 1
 
+fail=0
 while IFS= read -r -d '' dockerfile; do
   docker run --rm -v "$PWD:/work:ro" hadolint/hadolint:v2.12.0 \
-    hadolint --config /work/hadolint.yaml "/work/${dockerfile#./}"
+    hadolint --config /work/hadolint.yaml "/work/${dockerfile#./}" || fail=1
 done < <(find . -name Dockerfile -type f -print0)
+exit "$fail"
