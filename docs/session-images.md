@@ -127,10 +127,17 @@ package-count, field-length, and estimated-size limits.
 Direct npm and Python package versions are mandatory and must be an exact
 semantic version (optionally with a pre-release or build-metadata suffix,
 e.g. `1.2.3-beta.1`); dist-tags and ranges (`latest`, `1.x`, `^1.2.3`) are
-rejected, since an unpinned npm version would make `resolved.json`'s
-provenance a lie about what is actually reproducible on a later rebuild. Apt
-versions are supported and encouraged, but reproducibility remains limited by
-the apt
+rejected, so `resolved.json` always records an exact, unambiguous direct
+version rather than a moving target. This pin covers only the profile's
+directly-requested package, not its transitive dependency tree: `npm
+install` resolves each dependency's own version ranges at build time, and
+neither the resulting dependency versions nor their integrity hashes are
+locked or recorded in `resolved.json`, so two builds of an otherwise
+unchanged profile can still install different transitive dependency
+versions. Full reproducibility (a lockfile with integrity hashes, recorded
+alongside the rest of the provenance) is a known limitation, not yet
+implemented. Apt versions are supported and encouraged, but reproducibility
+remains limited by the apt
 repository state until a future snapshot-repository design is introduced.
 
 The renderer emits the fixed, package-free Dockerfile described under
@@ -224,13 +231,32 @@ After install, `scripts/session/install-apt-packages.sh` queries
 read-only, so the recorded provenance always reflects what was actually
 installed, not just what was requested.
 
+Apt packages are trusted build-time code, not merely data: `apt-get
+install` runs as root, and a package's maintainer scripts (`postinst` and
+friends) run as root too, with no sandboxing beyond the build environment
+itself. A profile author can therefore request anything the public apt
+repositories serve, including packages that introduce their own privileged
+artifacts (`sudo`, setuid/setgid binaries, Linux capabilities) into the
+image. This is the same trust relationship as a host running `docker build`
+with their own Dockerfile — session profiles are host-supplied input, never
+guest/agent-discoverable (see "Launcher flow" above) — so it does not open a
+new privilege-escalation path for the guest agent, which still runs as
+`node` under the unchanged `restricted` runtime policy regardless of what
+the image contains. It does mean a host can silently bake privileged
+artifacts into an image without any explicit signal that they did so; there
+is currently no allowlist, deny-list, or post-install policy check against
+this.
+
 ### npm
 
 npm packages install during the build into an image-local prefix at
 `/opt/claude-session/npm`, via a single `npm install --global --prefix`
 invocation. The final prefix is root-owned and read-only
-(`chown -R root:root` + `chmod -R a-w`), with its `bin` directory added to
-`PATH`. A global-prefix install produces `<prefix>/bin/<binary>` as a
+(`chown -R root:root` + `chmod -R a-w`), with its `bin` directory appended
+to `PATH` — appended, not prepended, so a session-installed package can
+never shadow a base-image command the harness itself depends on (`claude`,
+`git`, `curl`, ...); the base image's own directories are always resolved
+first. A global-prefix install produces `<prefix>/bin/<binary>` as a
 relative symlink into `<prefix>/lib/node_modules/<package>/...`, which
 resolves correctly regardless of where the prefix ends up in the final
 image.

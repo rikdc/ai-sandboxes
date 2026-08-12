@@ -89,7 +89,7 @@ RUN /usr/local/lib/ai-sandboxes/install-session-npm-packages.sh /opt/session-npm
 USER root
 RUN chown -R root:root /opt/claude-session/npm \\
  && chmod -R a-w /opt/claude-session/npm
-ENV PATH=/opt/claude-session/npm/bin:\$PATH
+ENV PATH=\$PATH:/opt/claude-session/npm/bin
 EOF
 fi
 

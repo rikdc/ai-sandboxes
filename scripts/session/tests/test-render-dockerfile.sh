@@ -88,7 +88,12 @@ grep -qFx 'RUN /usr/local/lib/ai-sandboxes/install-session-npm-packages.sh /opt/
 # the rest of the final image), then root re-locks the prefix read-only.
 grep -qFx 'USER root' "$npm_context_dir/Dockerfile"
 grep -qFx 'RUN chown -R root:root /opt/claude-session/npm \' "$npm_context_dir/Dockerfile"
-grep -qFx "ENV PATH=/opt/claude-session/npm/bin:\$PATH" "$npm_context_dir/Dockerfile"
+# PATH is appended to, never prepended: a prepended npm bin dir could shadow
+# base-image commands the harness itself depends on (claude, git, curl),
+# letting a session-installed package silently replace what the agent
+# actually executes. Appending guarantees base-image binaries always resolve
+# first.
+grep -qFx "ENV PATH=\$PATH:/opt/claude-session/npm/bin" "$npm_context_dir/Dockerfile"
 grep -qF -- '--chmod=0444 resolved.json' "$npm_context_dir/Dockerfile"
 diff -q "$npm_context_dir/install-npm-packages.sh" scripts/session/install-npm-packages.sh
 jq -e '.npm | length == 1 and .[0].package == "cowsay"' "$npm_context_dir/session-npm-packages.json" >/dev/null
