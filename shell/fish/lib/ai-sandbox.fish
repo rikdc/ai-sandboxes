@@ -84,6 +84,35 @@ function __ai_sandbox_shared_state_mount_args --argument-names agent image
     printf '%s\n' --mount-named "agent-state-$state_id-v1:/var/lib/agent-state:kind=dir,quota=$state_quota"
 end
 
+# Builds and validates shared-state mount args directly from an already-known
+# id/quota pair, rather than deriving them from msb image labels the way
+# __ai_sandbox_shared_state_mount_args (above) does. A session image's
+# shared-state request travels as data in resolve-image.sh's own descriptor,
+# not as an OCI label, because msb load drops labels — see
+# docs/session-images.md. The regexes here match runtime.json's and
+# scripts/tools/validate-selection.sh's shared_state validation exactly: the
+# request was already validated host-side by the time it reaches here, but
+# this is the boundary where untrusted-shaped JSON becomes a shell command
+# argument, so it is revalidated rather than trusted blindly.
+function __ai_sandbox_shared_state_request_args --argument-names agent state_id state_quota
+    if test -z "$state_id"; and test -z "$state_quota"
+        return 0
+    end
+    if test -z "$state_id"; or test -z "$state_quota"
+        echo "$agent: invalid shared-state request" >&2
+        return 2
+    end
+    if not string match -rq '^[a-z0-9][a-z0-9-]{0,62}$' -- "$state_id"
+        echo "$agent: invalid shared-state id" >&2
+        return 2
+    end
+    if not string match -rq '^[1-9][0-9]*[KMGT]$' -- "$state_quota"
+        echo "$agent: invalid shared-state quota" >&2
+        return 2
+    end
+    printf '%s\n' --mount-named "agent-state-$state_id-v1:/var/lib/agent-state:kind=dir,quota=$state_quota"
+end
+
 function __ai_sandbox_prepare_shared_state --argument-names agent image
     set -l mount_args (__ai_sandbox_shared_state_mount_args "$agent" "$image"); or return $status
     __ai_sandbox_initialize_shared_state "$agent" "$image" $mount_args; or return $status
@@ -157,8 +186,15 @@ function __ai_sandbox_launch --argument-names launcher_file agent image home_vol
     return $status
 end
 
-function __ai_sandbox_run_claude --argument-names launcher_file image
-    set -l claude_argv $argv[3..-1]
+function __ai_sandbox_run_claude --argument-names launcher_file image shared_state_arg_count
+    set -l shared_state_args
+    set -l claude_argv
+    if test "$shared_state_arg_count" -gt 0
+        set shared_state_args $argv[4..(math "3 + $shared_state_arg_count")]
+        set claude_argv $argv[(math "4 + $shared_state_arg_count")..-1]
+    else
+        set claude_argv $argv[4..-1]
+    end
     set -l profile_volume 'claude-home-hardened'
     set -l egress_file "$HOME/.config/microvms/claude-egress"
     set -l workspace_quota '10G'
@@ -198,8 +234,6 @@ function __ai_sandbox_run_claude --argument-names launcher_file image
             set -a network_args --net-rule "allow@$egress_host:tcp:443"
         end < "$egress_file"
     end
-
-    set -l shared_state_args (__ai_sandbox_prepare_shared_state claude "$image"); or return $status
 
     set -l host_workspace (command git rev-parse --show-toplevel 2>/dev/null)
     if test $status -ne 0
