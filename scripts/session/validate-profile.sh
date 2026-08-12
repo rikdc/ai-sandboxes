@@ -86,6 +86,16 @@ jq -e --argjson max_len "$max_field_length" --argjson max_pkgs "$max_packages" '
   ((((.apt // []) | length) + ((.npm // []) | length) + (((.python.packages) // []) | length)) <= $max_pkgs)
 ' "$snapshot" >/dev/null || die 'invalid session profile'
 
+# Ensure tools/shared_state have the correct JSON types before delegating validation.
+# This catches cases like {"tools":false} or {"shared_state":false}, which would
+# silently become {"tools":[]} or {"shared_state":null} via the // operator below,
+# but we must reject to avoid passing invalid data to downstream consumers.
+jq -e '
+  (if has("tools") then (.tools | type) == "array" else true end) and
+  (if has("shared_state") then (.shared_state | type) == "object" else true end)
+' "$snapshot" >/dev/null 2>&1 \
+  || die 'tools must be an array and shared_state must be an object or omitted'
+
 # tools/shared_state reuse the exact structural and semantic checks
 # scripts/tools/validate-selection.sh already enforces for the base-image
 # tool-selection mechanism (config/tools.json + config/runtime.json), rather
