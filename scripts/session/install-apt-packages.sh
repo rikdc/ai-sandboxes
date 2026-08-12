@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-apt_json=${1:?usage: install-apt-packages.sh APT_PACKAGES_JSON RESOLVED_JSON}
-resolved_json=${2:?usage: install-apt-packages.sh APT_PACKAGES_JSON RESOLVED_JSON}
+apt_json=${1:?usage: install-apt-packages.sh APT_PACKAGES_JSON FRAGMENT_OUTPUT_PATH}
+fragment_output=${2:?usage: install-apt-packages.sh APT_PACKAGES_JSON FRAGMENT_OUTPUT_PATH}
 
 die() {
   printf 'install-apt-packages: %s\n' "$*" >&2
@@ -33,18 +33,15 @@ actual=$(jq -cn '[]')
 if test -n "$names_json"; then
   while IFS= read -r name; do
     version=$(dpkg-query -W -f='${Version}' "$name") \
-      || die "dpkg-query could not find an installed version for $name"
+      || die "dpkg-query could not find an installed version for $name (if this is a virtual package, request the providing package by its real name instead)"
+    test -n "$version" || die "dpkg-query returned an empty version for $name"
     actual=$(jq -c --arg name "$name" --arg version "$version" \
       '. + [{name: $name, version: $version}]' <<<"$actual") \
       || die "could not record installed version for $name"
   done <<<"$names_json"
 fi
 
-patched=$(mktemp) || die 'could not create a scratch file for resolved.json'
-trap 'rm -f -- "$patched"' EXIT
-jq --argjson actual "$actual" '.packages.apt = $actual' "$resolved_json" >"$patched" \
-  || die "could not patch $resolved_json with actual apt versions"
-mv -f -- "$patched" "$resolved_json" \
-  || die "could not install patched $resolved_json"
+printf '%s\n' "$actual" >"$fragment_output" \
+  || die "could not write $fragment_output"
 
 rm -rf /var/lib/apt/lists/*

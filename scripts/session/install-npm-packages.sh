@@ -22,9 +22,7 @@ npm install --global --prefix "$prefix" "${specs[@]}" \
 
 cache_dir=$(npm config get cache) \
   || die 'could not determine npm cache directory'
-rm -rf "$cache_dir"
-
-chown -R root:root "$prefix" \
-  || die "could not lock ownership of $prefix"
-chmod -R a-w "$prefix" \
-  || die "could not lock permissions of $prefix"
+case "$cache_dir" in
+  /*) rm -rf "$cache_dir" ;;
+  *) die "npm cache directory is not an absolute path: $cache_dir" ;;
+esac

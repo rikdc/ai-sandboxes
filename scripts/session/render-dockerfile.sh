@@ -73,8 +73,7 @@ if test "$apt_count" -gt 0; then
   cat >>"$dockerfile" <<EOF
 COPY --chown=root:root session-apt-packages.json /opt/session-apt-packages.json
 COPY --chown=root:root --chmod=0755 install-apt-packages.sh /usr/local/lib/ai-sandboxes/install-session-apt-packages.sh
-COPY --chown=root:root resolved.json /opt/session-profile/resolved.json
-RUN /usr/local/lib/ai-sandboxes/install-session-apt-packages.sh /opt/session-apt-packages.json /opt/session-profile/resolved.json
+RUN /usr/local/lib/ai-sandboxes/install-session-apt-packages.sh /opt/session-apt-packages.json /opt/session-apt-installed.json
 EOF
 fi
 
@@ -84,7 +83,12 @@ if test "$npm_count" -gt 0; then
   cat >>"$dockerfile" <<EOF
 COPY --chown=root:root session-npm-packages.json /opt/session-npm-packages.json
 COPY --chown=root:root --chmod=0755 install-npm-packages.sh /usr/local/lib/ai-sandboxes/install-session-npm-packages.sh
+RUN install -d -o node -g node -m 0755 /opt/claude-session/npm
+USER node
 RUN /usr/local/lib/ai-sandboxes/install-session-npm-packages.sh /opt/session-npm-packages.json
+USER root
+RUN chown -R root:root /opt/claude-session/npm \\
+ && chmod -R a-w /opt/claude-session/npm
 ENV PATH=/opt/claude-session/npm/bin:\$PATH
 EOF
 fi
@@ -102,8 +106,12 @@ if test "$apt_count" -eq 0; then
 COPY --chown=root:root --chmod=0444 resolved.json /opt/session-profile/resolved.json
 EOF
 else
+  cp -- "$repo_root/scripts/session/patch-apt-provenance.sh" "$context_dir/patch-apt-provenance.sh"
   cat >>"$dockerfile" <<EOF
-RUN chmod 0444 /opt/session-profile/resolved.json
+COPY --chown=root:root resolved.json /opt/session-profile/resolved.json
+COPY --chown=root:root --chmod=0755 patch-apt-provenance.sh /usr/local/lib/ai-sandboxes/patch-apt-provenance.sh
+RUN /usr/local/lib/ai-sandboxes/patch-apt-provenance.sh /opt/session-profile/resolved.json /opt/session-apt-installed.json \\
+ && chmod 0444 /opt/session-profile/resolved.json
 EOF
 fi
 

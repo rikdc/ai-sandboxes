@@ -50,19 +50,28 @@ scripts/session/render-dockerfile.sh "$apt_context_dir" 'ai-sandboxes-claude-ses
 test -f "$apt_context_dir/Dockerfile"
 test -f "$apt_context_dir/session-apt-packages.json"
 test -f "$apt_context_dir/install-apt-packages.sh"
+test -f "$apt_context_dir/patch-apt-provenance.sh"
 grep -qFx 'FROM ai-sandboxes-claude-session-base:deadbeef' "$apt_context_dir/Dockerfile"
+grep -qFx 'RUN /usr/local/lib/ai-sandboxes/install-session-apt-packages.sh /opt/session-apt-packages.json /opt/session-apt-installed.json' "$apt_context_dir/Dockerfile"
 grep -qF 'COPY --chown=root:root resolved.json /opt/session-profile/resolved.json' "$apt_context_dir/Dockerfile"
-grep -qFx 'RUN /usr/local/lib/ai-sandboxes/install-session-apt-packages.sh /opt/session-apt-packages.json /opt/session-profile/resolved.json' "$apt_context_dir/Dockerfile"
-grep -qFx 'RUN chmod 0444 /opt/session-profile/resolved.json' "$apt_context_dir/Dockerfile"
+grep -qFx 'RUN /usr/local/lib/ai-sandboxes/patch-apt-provenance.sh /opt/session-profile/resolved.json /opt/session-apt-installed.json \' "$apt_context_dir/Dockerfile"
+grep -qFx ' && chmod 0444 /opt/session-profile/resolved.json' "$apt_context_dir/Dockerfile"
 # apt makes resolved.json writable-then-locked (patched by the installer, then
-# locked as the very last step) instead of copied in already read-only.
+# locked as the very last step) instead of copied in already read-only, and
+# the resolved.json COPY is positioned at the very end (after the apt RUN,
+# not before it) so its per-build-unique content never busts the apt-get
+# layer's own cache.
 if grep -qF -- '--chmod=0444 resolved.json' "$apt_context_dir/Dockerfile"; then
   echo 'FAIL: apt-only render should not copy resolved.json already read-only' >&2
   exit 1
 fi
+resolved_copy_line=$(grep -n 'COPY --chown=root:root resolved.json /opt/session-profile/resolved.json' "$apt_context_dir/Dockerfile" | cut -d: -f1)
+apt_install_line=$(grep -n 'RUN /usr/local/lib/ai-sandboxes/install-session-apt-packages.sh' "$apt_context_dir/Dockerfile" | cut -d: -f1)
+test "$apt_install_line" -lt "$resolved_copy_line"
 diff -q "$apt_context_dir/install-apt-packages.sh" scripts/session/install-apt-packages.sh
+diff -q "$apt_context_dir/patch-apt-provenance.sh" scripts/session/patch-apt-provenance.sh
 jq -e '.apt | length == 1 and .[0].name == "tree"' "$apt_context_dir/session-apt-packages.json" >/dev/null
-test "$(find "$apt_context_dir" -maxdepth 1 -type f | wc -l)" -eq 4
+test "$(find "$apt_context_dir" -maxdepth 1 -type f | wc -l)" -eq 5
 
 echo '{"ok":true}' >"$npm_context_dir/resolved.json"
 profile_with_npm='{"schema_version":1,"npm":[{"package":"cowsay","version":"1.6.0"}]}'
@@ -71,8 +80,15 @@ scripts/session/render-dockerfile.sh "$npm_context_dir" 'ai-sandboxes-claude-ses
 test -f "$npm_context_dir/Dockerfile"
 test -f "$npm_context_dir/session-npm-packages.json"
 test -f "$npm_context_dir/install-npm-packages.sh"
+grep -qFx 'RUN install -d -o node -g node -m 0755 /opt/claude-session/npm' "$npm_context_dir/Dockerfile"
+grep -qFx 'USER node' "$npm_context_dir/Dockerfile"
 grep -qFx 'RUN /usr/local/lib/ai-sandboxes/install-session-npm-packages.sh /opt/session-npm-packages.json' "$npm_context_dir/Dockerfile"
-grep -qFx 'ENV PATH=/opt/claude-session/npm/bin:$PATH' "$npm_context_dir/Dockerfile"
+# npm installs as the unprivileged node user (a compromised postinstall
+# script only ever has write access to its own not-yet-locked prefix, never
+# the rest of the final image), then root re-locks the prefix read-only.
+grep -qFx 'USER root' "$npm_context_dir/Dockerfile"
+grep -qFx 'RUN chown -R root:root /opt/claude-session/npm \' "$npm_context_dir/Dockerfile"
+grep -qFx "ENV PATH=/opt/claude-session/npm/bin:\$PATH" "$npm_context_dir/Dockerfile"
 grep -qF -- '--chmod=0444 resolved.json' "$npm_context_dir/Dockerfile"
 diff -q "$npm_context_dir/install-npm-packages.sh" scripts/session/install-npm-packages.sh
 jq -e '.npm | length == 1 and .[0].package == "cowsay"' "$npm_context_dir/session-npm-packages.json" >/dev/null
@@ -84,12 +100,24 @@ scripts/session/render-dockerfile.sh "$combined_context_dir" 'ai-sandboxes-claud
 
 test -f "$combined_context_dir/Dockerfile"
 # Canonical layer order regardless of profile field order: apt, then npm,
-# then the marketplace build stage's output.
-apt_line=$(grep -n 'install-session-apt-packages.sh /opt/session-apt-packages.json /opt/session-profile/resolved.json' "$combined_context_dir/Dockerfile" | cut -d: -f1)
-npm_line=$(grep -n 'install-session-npm-packages.sh /opt/session-npm-packages.json' "$combined_context_dir/Dockerfile" | cut -d: -f1)
+# then the marketplace build stage's output, then resolved.json (patched and
+# locked) last of all — so its per-build-unique content never busts the
+# cache for any package-installing layer.
+apt_line=$(grep -n 'RUN /usr/local/lib/ai-sandboxes/install-session-apt-packages.sh' "$combined_context_dir/Dockerfile" | cut -d: -f1)
+npm_line=$(grep -n 'RUN /usr/local/lib/ai-sandboxes/install-session-npm-packages.sh' "$combined_context_dir/Dockerfile" | cut -d: -f1)
 marketplace_copy_line=$(grep -n 'COPY --from=build --chown=root:root /opt/claude-plugin-cache /opt/claude-plugin-cache' "$combined_context_dir/Dockerfile" | cut -d: -f1)
+resolved_copy_line=$(grep -n 'COPY --chown=root:root resolved.json /opt/session-profile/resolved.json' "$combined_context_dir/Dockerfile" | cut -d: -f1)
+patch_line=$(grep -n 'RUN /usr/local/lib/ai-sandboxes/patch-apt-provenance.sh' "$combined_context_dir/Dockerfile" | cut -d: -f1)
 test "$apt_line" -lt "$npm_line"
 test "$npm_line" -lt "$marketplace_copy_line"
-test "$(find "$combined_context_dir" -maxdepth 1 -type f | wc -l)" -eq 9
+test "$marketplace_copy_line" -lt "$resolved_copy_line"
+test "$resolved_copy_line" -lt "$patch_line"
+if grep -qF -- '--chmod=0444 resolved.json' "$combined_context_dir/Dockerfile"; then
+  echo 'FAIL: combined render should not copy resolved.json already read-only' >&2
+  exit 1
+fi
+tail -3 "$combined_context_dir/Dockerfile" | grep -qF 'chmod 0444 /opt/session-profile/resolved.json'
+tail -1 "$combined_context_dir/Dockerfile" | grep -qFx 'USER node'
+test "$(find "$combined_context_dir" -maxdepth 1 -type f | wc -l)" -eq 10
 
 echo ok
