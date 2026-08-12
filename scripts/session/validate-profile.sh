@@ -41,7 +41,7 @@ jq -e --argjson max_len "$max_field_length" --argjson max_pkgs "$max_packages" '
   def apt_name: short_string and test("^[a-z0-9][a-z0-9.+-]*$");
   def apt_version: short_string and test("^[A-Za-z0-9][A-Za-z0-9.:+~-]*$");
   def pkg_name: short_string and test("^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$");
-  def pkg_version: short_string and test("^[A-Za-z0-9][A-Za-z0-9.+_-]*$");
+  def pkg_version: short_string and test("^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$");
   def marketplace_url: short_string and test("^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\\.git$") and (contains("..") | not);
   def marketplace_ref: short_string and test("^[0-9a-f]{40}$");
   def marketplace_path: short_string and (. == "." or (test("^[A-Za-z0-9][A-Za-z0-9._/-]*$") and (contains("..") | not)));
