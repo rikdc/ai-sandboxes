@@ -26,7 +26,7 @@ base_digest=$(docker image inspect --format '{{.Id}}' "$base_image" 2>/dev/null)
 # actually is. Hash each file individually and then hash that listing
 # (rather than concatenating file contents directly) so a change shifting
 # bytes across a file boundary can't produce a collision.
-renderer_hash=$(shasum -a 256 scripts/session/render-dockerfile.sh scripts/marketplaces/install-claude.sh scripts/session/merge-plugin-seed.sh scripts/session/install-apt-packages.sh scripts/session/install-npm-packages.sh scripts/session/patch-apt-provenance.sh \
+renderer_hash=$(shasum -a 256 scripts/session/render-dockerfile.sh scripts/marketplaces/install-claude.sh scripts/session/merge-plugin-seed.sh scripts/session/install-apt-packages.sh scripts/session/install-npm-packages.sh scripts/session/patch-apt-provenance.sh config/tool-catalog.json scripts/tools/install-selected.sh scripts/tools/install-github-release-tar.sh \
   | shasum -a 256 | awk '{print $1}') \
   || die 'could not hash renderer inputs'
 
@@ -49,10 +49,16 @@ image_labels_match() {
   test "$image_flag" = 1 && test "$session_key" = "$cache_key"
 }
 
+emit_descriptor() {
+  jq -cn --arg image "$tag" --argjson shared_state "$(jq -c '.shared_state // null' <<<"$canonical")" \
+    '{image: $image, shared_state: $shared_state}' \
+    || die 'could not build session image descriptor'
+}
+
 if docker image inspect "$tag" >/dev/null 2>&1; then
   image_labels_match "$tag" \
     || die "existing image $tag does not carry the expected session-image labels; remove it manually (docker image rm $tag) before retrying"
-  printf '%s\n' "$tag"
+  emit_descriptor
   exit 0
 fi
 
@@ -70,7 +76,7 @@ trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
 if docker image inspect "$tag" >/dev/null 2>&1; then
   image_labels_match "$tag" \
     || die "existing image $tag does not carry the expected session-image labels; remove it manually (docker image rm $tag) before retrying"
-  printf '%s\n' "$tag"
+  emit_descriptor
   exit 0
 fi
 
@@ -97,6 +103,8 @@ test "$(docker image inspect --format '{{.Id}}' "$pinned_base" 2>/dev/null)" = "
 trap 'rmdir "$lock_dir" 2>/dev/null || true; rm -rf "$context_dir"; docker image rm "$pinned_base" >/dev/null 2>&1 || true' EXIT
 
 built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) || die 'could not determine build timestamp'
+tool_catalog_sha256=$(shasum -a 256 config/tool-catalog.json | awk '{print $1}') \
+  || die 'could not hash config/tool-catalog.json'
 jq -n \
   --argjson request "$canonical" \
   --arg base_image "$base_image" \
@@ -106,6 +114,8 @@ jq -n \
   --argjson launcher_version "$launcher_version" \
   --arg built_at "$built_at" \
   --arg cache_key "$cache_key" \
+  --arg tool_catalog_sha256 "$tool_catalog_sha256" \
+  --slurpfile catalog config/tool-catalog.json \
   '{
     canonical_request: $request,
     base_image: $base_image,
@@ -116,9 +126,12 @@ jq -n \
     packages: {
       apt: ($request.apt // []),
       npm: ($request.npm // []),
-      python: (($request.python // {}).packages // [])
+      python: (($request.python // {}).packages // []),
+      tools: (($request.tools // []) | map(. as $t | $t + {binary: ($catalog[0].tools[] | select(.id == $t.id) | .binary)}))
     },
     claude_marketplaces: ($request.claude_marketplaces // []),
+    shared_state: ($request.shared_state // null),
+    tool_catalog_sha256: $tool_catalog_sha256,
     built_at: $built_at,
     cache_key: $cache_key
   }' >"$context_dir/resolved.json" \
@@ -140,4 +153,4 @@ docker build \
   "$context_dir" >&2 \
   || die "docker build failed for tag $tag"
 
-printf '%s\n' "$tag"
+emit_descriptor
