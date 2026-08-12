@@ -1,6 +1,6 @@
 #!/bin/bash
-set -euo pipefail
-cd "$(dirname "$0")/.."
+set -o pipefail
+cd "$(dirname "$0")/.." || exit 1
 
 marketplace_test_image=ai-sandboxes-claude-marketplace-test:local
 cleanup_marketplace_test_image() {
@@ -8,67 +8,68 @@ cleanup_marketplace_test_image() {
 }
 trap cleanup_marketplace_test_image EXIT
 
-for file in scripts/build scripts/lint-dockerfiles scripts/load-msb scripts/install-fish-functions scripts/verify images/claude/entrypoint.sh images/codex/entrypoint.sh scripts/claude/*.sh scripts/marketplaces/*.sh scripts/tools/*.sh scripts/session/*.sh scripts/session/tests/*.sh scripts/lib/*.sh; do bash -n "$file"; done
-if command -v fish >/dev/null 2>&1; then find shell/fish -type f -name '*.fish' -exec fish --no-execute {} +; fi
-bash scripts/session/tests/test-validate-profile.sh
-bash scripts/session/tests/test-render-dockerfile.sh
-bash scripts/session/tests/test-resolve-image.sh
-bash scripts/session/tests/test-session-marketplace.sh
-bash scripts/session/tests/test-load-image.sh
-bash scripts/session/tests/test-claude-session-args.sh
-bash scripts/session/tests/test-install-fish-functions.sh
-bash scripts/session/tests/test-claude-entrypoint-seed-merge.sh
+for file in scripts/build scripts/lint-dockerfiles scripts/load-msb scripts/install-fish-functions scripts/verify images/claude/entrypoint.sh images/codex/entrypoint.sh scripts/claude/*.sh scripts/marketplaces/*.sh scripts/tools/*.sh scripts/session/*.sh scripts/session/tests/*.sh scripts/lib/*.sh; do bash -n "$file" || exit 1; done
+if command -v fish >/dev/null 2>&1; then find shell/fish -type f -name '*.fish' -exec fish --no-execute {} + || exit 1; fi
+bash scripts/session/tests/test-validate-profile.sh || exit 1
+bash scripts/session/tests/test-render-dockerfile.sh || exit 1
+bash scripts/session/tests/test-resolve-image.sh || exit 1
+bash scripts/session/tests/test-session-marketplace.sh || exit 1
+bash scripts/session/tests/test-session-apt-npm.sh || exit 1
+bash scripts/session/tests/test-load-image.sh || exit 1
+bash scripts/session/tests/test-claude-session-args.sh || exit 1
+bash scripts/session/tests/test-install-fish-functions.sh || exit 1
+bash scripts/session/tests/test-claude-entrypoint-seed-merge.sh || exit 1
 if git grep -nEi '(api[_-]?key|access[_-]?token|secret)[[:space:]]*=[[:space:]]*[^[:space:]]+' -- ':!README.md' ':!scripts/verify'; then
   exit 1
 fi
 
-for image in ai-sandboxes-base:local ai-sandboxes-tools:local ai-sandboxes-claude:local ai-sandboxes-codex:local; do docker image inspect "$image" >/dev/null; done
-test "$(docker image inspect --format '{{.Architecture}}' ai-sandboxes-base:local)" = arm64
+for image in ai-sandboxes-base:local ai-sandboxes-tools:local ai-sandboxes-claude:local ai-sandboxes-codex:local; do docker image inspect "$image" >/dev/null || exit 1; done
+test "$(docker image inspect --format '{{.Architecture}}' ai-sandboxes-base:local)" = arm64 || exit 1
 expected_state_id=''
 expected_state_quota=''
-runtime_values=$(./scripts/tools/runtime-values.sh config/runtime.json)
+runtime_values=$(./scripts/tools/runtime-values.sh config/runtime.json) || exit 1
 if test -n "$runtime_values"; then
-  IFS=$'\t' read -r expected_state_id expected_state_quota <<<"$runtime_values"
+  IFS=$'\t' read -r expected_state_id expected_state_quota <<<"$runtime_values" || exit 1
 fi
 for image in ai-sandboxes-tools:local ai-sandboxes-claude:local ai-sandboxes-codex:local; do
-  test "$(docker image inspect --format '{{ with index .Config.Labels "io.ai-sandboxes.shared-state.id" }}{{ . }}{{ end }}' "$image")" = "$expected_state_id"
-  test "$(docker image inspect --format '{{ with index .Config.Labels "io.ai-sandboxes.shared-state.quota" }}{{ . }}{{ end }}' "$image")" = "$expected_state_quota"
+  test "$(docker image inspect --format '{{ with index .Config.Labels "io.ai-sandboxes.shared-state.id" }}{{ . }}{{ end }}' "$image")" = "$expected_state_id" || exit 1
+  test "$(docker image inspect --format '{{ with index .Config.Labels "io.ai-sandboxes.shared-state.quota" }}{{ . }}{{ end }}' "$image")" = "$expected_state_quota" || exit 1
 done
 docker run --rm --user node -e HOME=/home/node ai-sandboxes-base:local bash -lc '
   for tool in bash curl git gh tea jq rg ssh; do command -v "$tool" >/dev/null; done
   ! command -v go
-'
+' || exit 1
 while IFS= read -r tool; do
-  docker run --rm --user node -e HOME=/home/node ai-sandboxes-tools:local "$tool" --version
+  docker run --rm --user node -e HOME=/home/node ai-sandboxes-tools:local "$tool" --version || exit 1
 done < <(jq -r --slurpfile selection config/tools.json '.tools[] | select(.id as $id | $selection[0].tools[].id == $id) | .binary' config/tool-catalog.json)
 set -a
 # shellcheck disable=SC1091 # Resolved from the repository root above.
-source ./versions.env
+source ./versions.env || exit 1
 set +a
-claude_version=$(docker run --rm --user node -e HOME=/home/node ai-sandboxes-claude:local bash -lc 'test "$DISABLE_UPDATES" = 1; claude --version')
-test "${claude_version%% *}" = "$CLAUDE_CODE_VERSION"
-docker run --rm --user node -e HOME=/home/node ai-sandboxes-codex:local codex --version
+claude_version=$(docker run --rm --user node -e HOME=/home/node ai-sandboxes-claude:local bash -lc 'test "$DISABLE_UPDATES" = 1; claude --version') || exit 1
+test "${claude_version%% *}" = "$CLAUDE_CODE_VERSION" || exit 1
+docker run --rm --user node -e HOME=/home/node ai-sandboxes-codex:local codex --version || exit 1
 docker buildx bake --load \
   --set "tools.args.SHARED_STATE_ID=$expected_state_id" \
   --set "tools.args.SHARED_STATE_QUOTA=$expected_state_quota" \
   --set claude.args.MARKETPLACES_CONFIG=config/marketplaces.runtime-test.json \
   --set "claude.tags=$marketplace_test_image" \
-  claude
-marketplace_output=$(docker run --rm --user node -e HOME=/tmp/claude-runtime-test "$marketplace_test_image" claude plugin marketplace list 2>&1)
-printf '%s\n' "$marketplace_output" | grep -Fq 'Source: GitHub (anthropics/claude-plugins-official)'
-printf '%s\n' "$marketplace_output" | grep -Fq 'Source: GitHub (rikdc/ai-skills)'
+  claude || exit 1
+marketplace_output=$(docker run --rm --user node -e HOME=/tmp/claude-runtime-test "$marketplace_test_image" claude plugin marketplace list 2>&1) || exit 1
+printf '%s\n' "$marketplace_output" | grep -Fq 'Source: GitHub (anthropics/claude-plugins-official)' || exit 1
+printf '%s\n' "$marketplace_output" | grep -Fq 'Source: GitHub (rikdc/ai-skills)' || exit 1
 if printf '%s\n' "$marketplace_output" | grep -Fq 'Failed to load marketplace'; then
   echo 'Claude could not load the runtime-test marketplace' >&2
   exit 1
 fi
-plugin_output=$(docker run --rm --user node -e HOME=/tmp/claude-runtime-test "$marketplace_test_image" claude plugin list 2>&1)
+plugin_output=$(docker run --rm --user node -e HOME=/tmp/claude-runtime-test "$marketplace_test_image" claude plugin list 2>&1) || exit 1
 printf '%s\n' "$plugin_output" | awk '
   /dev-skills@ai-skills/ { found = 1; next }
   found && /Status: ✔ enabled/ { enabled = 1; exit }
   END { exit !(found && enabled) }
-'
-docker run --rm --user node -e HOME=/tmp/claude-permissions-test "$marketplace_test_image" sh -c 'claude plugin list >/dev/null && test "$(stat -c %a "$HOME/.claude/settings.json")" = 600'
-docker run --rm --user node "$marketplace_test_image" sh -c 'touch /opt/claude-plugin-cache/data/.runtime-write-test'
+' || exit 1
+docker run --rm --user node -e HOME=/tmp/claude-permissions-test "$marketplace_test_image" sh -c 'claude plugin list >/dev/null && test "$(stat -c %a "$HOME/.claude/settings.json")" = 600' || exit 1
+docker run --rm --user node "$marketplace_test_image" sh -c 'touch /opt/claude-plugin-cache/data/.runtime-write-test' || exit 1
 for image in ai-sandboxes-claude:local ai-sandboxes-codex:local; do
   if docker history --no-trunc "$image" | grep -Ei '(anthropic_api_key|openai_api_key|codex_access_token)'; then
     exit 1
@@ -76,26 +77,26 @@ for image in ai-sandboxes-claude:local ai-sandboxes-codex:local; do
 done
 
 if command -v msb >/dev/null 2>&1; then
-  ./scripts/load-msb
-  msb run --pull never --no-tty --user node -e HOME=/home/node ai-sandboxes-claude:local -- claude --version
-  msb run --pull never --no-tty --user node -e HOME=/home/node ai-sandboxes-codex:local -- codex --version
+  ./scripts/load-msb || exit 1
+  msb run --pull never --no-tty --user node -e HOME=/home/node ai-sandboxes-claude:local -- claude --version || exit 1
+  msb run --pull never --no-tty --user node -e HOME=/home/node ai-sandboxes-codex:local -- codex --version || exit 1
   msb volume remove verify-home 2>/dev/null || true
-  msb volume create verify-home
+  msb volume create verify-home || exit 1
   # shellcheck disable=SC2016 # $HOME expands in the guest shell, not on the host.
-  msb run --pull never --no-tty --user node --mount-named verify-home:/home/node:rw ai-sandboxes-codex:local -- bash -lc 'touch "$HOME/.survives"'
-  msb run --pull never --no-tty --user node --mount-named verify-home:/home/node:rw ai-sandboxes-codex:local -- test -f /home/node/.survives
-  msb volume remove verify-home
-  session_tag_first=$(CLAUDE_MSB_BUILD_EGRESS=1 ./scripts/session/resolve-image.sh config/session-profile.example.json)
-  session_tag_second=$(./scripts/session/resolve-image.sh config/session-profile.example.json)
-  test "$session_tag_first" = "$session_tag_second"
+  msb run --pull never --no-tty --user node --mount-named verify-home:/home/node:rw ai-sandboxes-codex:local -- bash -lc 'touch "$HOME/.survives"' || exit 1
+  msb run --pull never --no-tty --user node --mount-named verify-home:/home/node:rw ai-sandboxes-codex:local -- test -f /home/node/.survives || exit 1
+  msb volume remove verify-home || exit 1
+  session_tag_first=$(CLAUDE_MSB_BUILD_EGRESS=1 ./scripts/session/resolve-image.sh config/session-profile.example.json) || exit 1
+  session_tag_second=$(./scripts/session/resolve-image.sh config/session-profile.example.json) || exit 1
+  test "$session_tag_first" = "$session_tag_second" || exit 1
 
-  ./scripts/session/load-image.sh "$session_tag_first"
-  msb image list --quiet | grep -Fxq "$session_tag_first"
-  msb image list --quiet | grep -Fxq ai-sandboxes-claude:local
+  ./scripts/session/load-image.sh "$session_tag_first" || exit 1
+  msb image list --quiet | grep -Fxq "$session_tag_first" || exit 1
+  msb image list --quiet | grep -Fxq ai-sandboxes-claude:local || exit 1
 
-  msb run --pull never --no-tty --user node --security restricted "$session_tag_first" -- whoami | grep -Fxq node
-  msb run --pull never --no-tty --user node --security restricted "$session_tag_first" -- sh -c '! command -v sudo'
-  msb run --pull never --no-tty --user node --security restricted "$session_tag_first" -- sh -c '! touch /opt/session-profile/resolved.json 2>/dev/null'
+  msb run --pull never --no-tty --user node --security restricted "$session_tag_first" -- whoami | grep -Fxq node || exit 1
+  msb run --pull never --no-tty --user node --security restricted "$session_tag_first" -- sh -c '! command -v sudo' || exit 1
+  msb run --pull never --no-tty --user node --security restricted "$session_tag_first" -- sh -c '! touch /opt/session-profile/resolved.json 2>/dev/null' || exit 1
 
   docker image rm "$session_tag_first" >/dev/null 2>&1 || true
   msb image remove "$session_tag_first" >/dev/null 2>&1 || true

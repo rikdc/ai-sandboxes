@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "npm": [
+    { "package": "@modelcontextprotocol/inspector", "version": "0.14.0" }
+  ]
+}

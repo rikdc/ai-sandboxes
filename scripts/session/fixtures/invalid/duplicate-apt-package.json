@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "apt": [
+    { "name": "jq" },
+    { "name": "jq", "version": "1.7-1" }
+  ]
+}

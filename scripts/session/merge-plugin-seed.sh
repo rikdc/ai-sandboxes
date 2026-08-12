@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -o pipefail
 
 die() {
   printf '%s\n' "merge-plugin-seed: $*" >&2

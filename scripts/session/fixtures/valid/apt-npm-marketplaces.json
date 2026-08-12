@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "apt": [
+    { "name": "graphviz", "version": "2.42.2-8" }
+  ],
+  "npm": [
+    { "package": "@modelcontextprotocol/inspector", "version": "0.14.0" }
+  ],
+  "claude_marketplaces": [
+    {
+      "url": "https://github.com/rikdc/ai-skills.git",
+      "ref": "d66daa0504ff859a9d51c86b9175eb9fe768cd25",
+      "path": ".",
+      "plugins": ["dev-skills"]
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -o pipefail
 
-repo_root=$(cd "$(dirname "$0")/../.." && pwd)
+repo_root=$(cd "$(dirname "$0")/../.." && pwd) || exit 1
 cd "$repo_root" || exit 1
 
 profile_path=${1:?usage: resolve-image.sh PROFILE_PATH}
@@ -26,11 +26,13 @@ base_digest=$(docker image inspect --format '{{.Id}}' "$base_image" 2>/dev/null)
 # actually is. Hash each file individually and then hash that listing
 # (rather than concatenating file contents directly) so a change shifting
 # bytes across a file boundary can't produce a collision.
-renderer_hash=$(shasum -a 256 scripts/session/render-dockerfile.sh scripts/marketplaces/install-claude.sh scripts/session/merge-plugin-seed.sh \
-  | shasum -a 256 | awk '{print $1}')
+renderer_hash=$(shasum -a 256 scripts/session/render-dockerfile.sh scripts/marketplaces/install-claude.sh scripts/session/merge-plugin-seed.sh scripts/session/install-apt-packages.sh scripts/session/install-npm-packages.sh scripts/session/patch-apt-provenance.sh \
+  | shasum -a 256 | awk '{print $1}') \
+  || die 'could not hash renderer inputs'
 
 cache_key=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$base_digest" "$canonical" "$platform" "$schema_version" "$launcher_version" "$renderer_hash" \
-  | shasum -a 256 | awk '{print $1}')
+  | shasum -a 256 | awk '{print $1}') \
+  || die 'could not compute cache key'
 tag="ai-sandboxes-claude-session:sha-$cache_key"
 
 # A tag is just a mutable pointer: something other than this script could have
@@ -75,7 +77,7 @@ fi
 test "${CLAUDE_MSB_BUILD_EGRESS:-}" = 1 \
   || die 'cache miss requires CLAUDE_MSB_BUILD_EGRESS=1 to build (see docs/session-images.md)'
 
-context_dir=$(mktemp -d)
+context_dir=$(mktemp -d) || die 'could not create a scratch build context directory'
 
 # A registry-style name@digest reference isn't enough to pin FROM to this
 # exact local image: BuildKit resolves it via manifest-digest lookup, which
@@ -94,7 +96,7 @@ test "$(docker image inspect --format '{{.Id}}' "$pinned_base" 2>/dev/null)" = "
 
 trap 'rmdir "$lock_dir" 2>/dev/null || true; rm -rf "$context_dir"; docker image rm "$pinned_base" >/dev/null 2>&1 || true' EXIT
 
-built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) || die 'could not determine build timestamp'
 jq -n \
   --argjson request "$canonical" \
   --arg base_image "$base_image" \
@@ -125,17 +127,12 @@ jq -n \
 scripts/session/render-dockerfile.sh "$context_dir" "$pinned_base" "$canonical" \
   || die "failed to render Dockerfile for context $context_dir"
 
-# The active buildx builder (e.g. CI's docker/setup-buildx-action instance) may
-# use the docker-container driver, whose BuildKit runs isolated from the host
-# engine's image store and cannot resolve our locally built base image as a
-# FROM reference. A builder using the docker driver shares the engine's image
-# store directly, so pin this build to that one instead. Only one docker-driver
-# builder can exist per host, already auto-registered for the current context,
-# so find it rather than trying to create a new one.
-local_builder=$(docker buildx ls | awk '$1 !~ /^\\_/ && $2 == "docker" { sub(/\*$/, "", $1); print $1; exit }')
-test -n "$local_builder" || die 'no buildx builder using the docker driver found'
-
-docker buildx build --builder "$local_builder" --load \
+# This derived image only needs a local Dockerfile build; it uses no Buildx-
+# specific features. Use the Docker engine directly so the private base tag is
+# resolved from the active Docker context's local image store. Docker Desktop's
+# default Buildx builder commonly uses the docker-container driver, whose
+# isolated store cannot resolve that local-only base image.
+docker build \
   --platform "$platform" \
   --tag "$tag" \
   --label io.ai-sandboxes.session-image=1 \

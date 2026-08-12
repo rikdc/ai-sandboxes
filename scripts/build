@@ -1,12 +1,12 @@
 #!/bin/bash
-set -euo pipefail
-cd "$(dirname "$0")/.."
+set -o pipefail
+cd "$(dirname "$0")/.." || exit 1
 set -a
 # shellcheck disable=SC1091 # Resolved after cd to the repository root.
-source ./versions.env
+source ./versions.env || exit 1
 set +a
-./scripts/tools/validate-selection.sh config/tool-catalog.json config/tools.json config/runtime.json
-runtime_values=$(./scripts/tools/runtime-values.sh config/runtime.json)
+./scripts/tools/validate-selection.sh config/tool-catalog.json config/tools.json config/runtime.json || exit 1
+runtime_values=$(./scripts/tools/runtime-values.sh config/runtime.json) || exit 1
 if test -z "$runtime_values"; then
   SHARED_STATE_ID=''
   SHARED_STATE_QUOTA=''

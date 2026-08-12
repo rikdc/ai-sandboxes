@@ -119,23 +119,38 @@ YAML is deferred rather than introducing a second parser dependency.
 
 Validation must reject unknown fields, credentials, arbitrary URLs, shell
 syntax, package-manager options, local package files, source repository
-changes, and malformed package names/versions. Marketplace entries reuse the
-existing public-GitHub, full-commit-SHA, safe-path, and plugin-name constraints.
-Profiles also have package-count, field-length, and estimated-size limits.
+changes, malformed package names/versions, and duplicate package names within
+`apt` or within `npm`. Marketplace entries reuse the existing public-GitHub,
+full-commit-SHA, safe-path, and plugin-name constraints. Profiles also have
+package-count, field-length, and estimated-size limits.
 
-Direct npm and Python package versions are mandatory. Apt versions are
-supported and encouraged, but reproducibility remains limited by the apt
+Direct npm and Python package versions are mandatory and must be an exact
+semantic version (optionally with a pre-release or build-metadata suffix,
+e.g. `1.2.3-beta.1`); dist-tags and ranges (`latest`, `1.x`, `^1.2.3`) are
+rejected, so `resolved.json` always records an exact, unambiguous direct
+version rather than a moving target. This pin covers only the profile's
+directly-requested package, not its transitive dependency tree: `npm
+install` resolves each dependency's own version ranges at build time, and
+neither the resulting dependency versions nor their integrity hashes are
+locked or recorded in `resolved.json`, so two builds of an otherwise
+unchanged profile can still install different transitive dependency
+versions. Full reproducibility (a lockfile with integrity hashes, recorded
+alongside the rest of the provenance) is a known limitation, not yet
+implemented. Apt versions are supported and encouraged, but reproducibility
+remains limited by the apt
 repository state until a future snapshot-repository design is introduced.
 
 The renderer emits the fixed, package-free Dockerfile described under
-Implementation task 7 unless a profile's `claude_marketplaces` field is
-non-empty, in which case it also emits the marketplace-install layer
-described under "Claude marketplaces and plugins" below (Implementation task
-10). `apt`, `npm`, and `python` are not yet installed by the renderer, so
-validation still rejects any profile with a non-empty `apt`, `npm`, or
-`python` field rather than accepting and silently dropping it. Only an empty
-profile, or one with only `claude_marketplaces` populated, validates until
-tasks 8-9 land.
+Implementation task 7 unless a profile's `apt`, `npm`, or
+`claude_marketplaces` fields are non-empty, in which case it emits the
+corresponding layers described under "Package layers" and "Claude
+marketplaces and plugins" below (Implementation tasks 8 and 10); any
+combination of these fields may be populated together, in a fixed
+apt-then-npm-then-marketplace order regardless of the profile's own field
+order. `python` is not yet installed by the renderer, so validation still
+rejects any profile with a non-empty `python` field rather than accepting
+and silently dropping it. Only a profile with `python` left unset validates
+until task 9 lands.
 
 ## Storing and selecting profiles
 
@@ -174,11 +189,12 @@ image is only a cache hit if its `io.ai-sandboxes.session-image` and
 trusted, since a tag is a mutable pointer that something other than the
 resolver could have written. A tag that exists but does not carry the
 expected labels fails closed rather than being silently rebuilt over or
-reused. `claude-session` applies the same label check to the msb-side image
-after loading, since msb keeps a separate image store from Docker's and
-`load-image.sh` (a generic loader also used for non-session images) only
-checks whether *a* image exists under the tag, not whether it is the right
-one.
+reused. `claude-session` also verifies the msb-side image after loading,
+since msb keeps a separate image store from Docker's and `load-image.sh` (a
+generic loader also used for non-session images) only checks whether *a*
+image exists under the tag, not whether it is the right one. `msb load`
+does not retain OCI labels, so this second check compares the preserved OCI
+config digest reported by msb with Docker's image ID instead.
 
 Otherwise, the resolver creates a temporary build context that contains only
 generated files and trusted installer scripts; it must never use the project
@@ -208,12 +224,43 @@ The generated Dockerfile installs only validated package specifications under
 The renderer, not the profile, constructs command syntax. This is an image-build
 operation; there is no runtime `apt-get` capability.
 
+Apt versions are optional in the profile, and even a pinned version can
+resolve differently depending on the apt repository's state at build time.
+After install, `scripts/session/install-apt-packages.sh` queries
+`dpkg-query` for each package's actual installed version and patches
+`/opt/session-profile/resolved.json` with it before the file is locked
+read-only, so the recorded provenance always reflects what was actually
+installed, not just what was requested.
+
+Apt packages are trusted build-time code, not merely data: `apt-get
+install` runs as root, and a package's maintainer scripts (`postinst` and
+friends) run as root too, with no sandboxing beyond the build environment
+itself. A profile author can therefore request anything the public apt
+repositories serve, including packages that introduce their own privileged
+artifacts (`sudo`, setuid/setgid binaries, Linux capabilities) into the
+image. This is the same trust relationship as a host running `docker build`
+with their own Dockerfile — session profiles are host-supplied input, never
+guest/agent-discoverable (see "Launcher flow" above) — so it does not open a
+new privilege-escalation path for the guest agent, which still runs as
+`node` under the unchanged `restricted` runtime policy regardless of what
+the image contains. It does mean a host can silently bake privileged
+artifacts into an image without any explicit signal that they did so; there
+is currently no allowlist, deny-list, or post-install policy check against
+this.
+
 ### npm
 
-npm packages install during the build into an image-local prefix such as
-`/opt/claude-session/npm`. The final prefix is root-owned and read-only, with
-the selected bin directory added to `PATH`. The precise bin shim layout will be
-verified against npm before implementation.
+npm packages install during the build into an image-local prefix at
+`/opt/claude-session/npm`, via a single `npm install --global --prefix`
+invocation. The final prefix is root-owned and read-only
+(`chown -R root:root` + `chmod -R a-w`), with its `bin` directory appended
+to `PATH` — appended, not prepended, so a session-installed package can
+never shadow a base-image command the harness itself depends on (`claude`,
+`git`, `curl`, ...); the base image's own directories are always resolved
+first. A global-prefix install produces `<prefix>/bin/<binary>` as a
+relative symlink into `<prefix>/lib/node_modules/<package>/...`, which
+resolves correctly regardless of where the prefix ends up in the final
+image.
 
 ### Python
 
