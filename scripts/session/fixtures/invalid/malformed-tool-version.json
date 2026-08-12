@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "tools": [
+    { "id": "rtk", "version": "not a valid version!", "sha256": "80a746dd305ef944ff50ef011ae4ce3878dd5ba88dfe35d859d05498191637c3" }
+  ]
+}

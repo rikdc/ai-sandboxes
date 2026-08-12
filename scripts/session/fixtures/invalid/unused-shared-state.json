@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "tools": [
+    { "id": "rtk", "version": "v0.45.0", "sha256": "80a746dd305ef944ff50ef011ae4ce3878dd5ba88dfe35d859d05498191637c3" }
+  ],
+  "shared_state": {
+    "id": "personal",
+    "quota": "2G"
+  }
+}

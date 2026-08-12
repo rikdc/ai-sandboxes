@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "tools": [
+    { "id": "rtk", "version": "v0.45.0", "sha256": "not-a-sha256" }
+  ]
+}
