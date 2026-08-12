@@ -187,6 +187,10 @@ function __ai_sandbox_launch --argument-names launcher_file agent image home_vol
 end
 
 function __ai_sandbox_run_claude --argument-names launcher_file image shared_state_arg_count
+    if not string match -rq '^[0-9]+$' -- "$shared_state_arg_count"
+        echo "claude: internal error: invalid shared_state_arg_count" >&2
+        return 2
+    end
     set -l shared_state_args
     set -l claude_argv
     if test "$shared_state_arg_count" -gt 0

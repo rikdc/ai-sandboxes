@@ -36,7 +36,7 @@ test "$descriptor_empty" = "$descriptor_empty_again" || exit 1
 
 descriptor_icm=$(CLAUDE_MSB_BUILD_EGRESS=1 scripts/session/resolve-image.sh scripts/session/fixtures/valid/icm-with-shared-state.json) || exit 1
 tag_icm=$(jq -er '.image' <<<"$descriptor_icm") || exit 1
-jq -e '.shared_state.id == "personal" and .shared_state.quota == "2G"' <<<"$descriptor_icm" >/dev/null \
+jq -e '.shared_state.id == "session-tools-verify" and .shared_state.quota == "2G"' <<<"$descriptor_icm" >/dev/null \
   || { echo 'FAIL: icm-with-shared-state descriptor did not carry the requested shared_state' >&2; exit 1; }
 
 echo ok

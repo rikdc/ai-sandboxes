@@ -21,7 +21,7 @@ cleanup() {
     docker image rm -f "$session_tag" >/dev/null 2>&1 || true
     msb image remove "$session_tag" >/dev/null 2>&1 || true
   fi
-  msb volume remove agent-state-personal-v1 >/dev/null 2>&1 || true
+  msb volume remove "agent-state-${state_id:-}-v1" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 

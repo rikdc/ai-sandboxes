@@ -18,6 +18,7 @@ bash scripts/session/tests/test-session-apt-npm.sh || exit 1
 bash scripts/session/tests/test-session-tools.sh || exit 1
 bash scripts/session/tests/test-load-image.sh || exit 1
 bash scripts/session/tests/test-claude-session-args.sh || exit 1
+bash scripts/session/tests/test-run-claude-argv-slicing.sh || exit 1
 bash scripts/session/tests/test-install-fish-functions.sh || exit 1
 bash scripts/session/tests/test-claude-entrypoint-seed-merge.sh || exit 1
 if git grep -nEi '(api[_-]?key|access[_-]?token|secret)[[:space:]]*=[[:space:]]*[^[:space:]]+' -- ':!README.md' ':!scripts/verify'; then

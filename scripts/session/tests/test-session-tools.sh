@@ -60,7 +60,7 @@ docker run --rm --user node "$icm_tag" sh -c '! touch /usr/local/libexec/.write-
   || { echo '/usr/local/libexec is writable by node (icm image)' >&2; exit 1; }
 
 recorded_shared_state=$(docker run --rm --user node "$icm_tag" jq -c '.shared_state' /opt/session-profile/resolved.json) || exit 1
-test "$recorded_shared_state" = '{"id":"personal","quota":"2G"}' \
+test "$recorded_shared_state" = '{"id":"session-tools-verify","quota":"2G"}' \
   || { echo "resolved.json did not record the requested shared_state (got: $recorded_shared_state)" >&2; exit 1; }
 
 echo ok
