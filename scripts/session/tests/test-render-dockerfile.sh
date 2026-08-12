@@ -99,8 +99,8 @@ grep -qFx "ENV PATH=\$PATH:/opt/claude-session/npm/bin" "$npm_context_dir/Docker
 grep -qF -- '--chmod=0444 resolved.json' "$npm_context_dir/Dockerfile" || exit 1
 diff -q "$npm_context_dir/install-npm-packages.sh" scripts/session/install-npm-packages.sh || exit 1
 grep -qFx 'cache_dir=/tmp/claude-session-npm-cache' "$npm_context_dir/install-npm-packages.sh" || exit 1
-grep -qF -- 'npm install --global --prefix "$prefix" --cache "$cache_dir"' "$npm_context_dir/install-npm-packages.sh" || exit 1
-grep -qF -- 'rm -rf -- "$cache_dir"' "$npm_context_dir/install-npm-packages.sh" || exit 1
+grep -qF -- "npm install --global --prefix \"\$prefix\" --cache \"\$cache_dir\"" "$npm_context_dir/install-npm-packages.sh" || exit 1
+grep -qF -- "rm -rf -- \"\$cache_dir\"" "$npm_context_dir/install-npm-packages.sh" || exit 1
 if grep -qF -- 'npm config get cache' "$npm_context_dir/install-npm-packages.sh"; then
   echo 'FAIL: npm installer must not trust a cache path read after lifecycle hooks' >&2
   exit 1
