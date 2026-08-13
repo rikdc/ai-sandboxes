@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+version_pattern='^[A-Za-z0-9][A-Za-z0-9._-]*$'
+branch=automated/agent-version-update
+repository=${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}
+
+latest_version() {
+  local package=$1 version
+  version=$(curl --fail --location --silent --show-error --retry 3 "https://registry.npmjs.org/${package}/latest" | jq --raw-output --exit-status .version)
+  [[ "$version" =~ $version_pattern && "$version" != *..* ]] || {
+    printf '%s\n' "error: invalid discovered version for $package: $version" >&2
+    return 1
+  }
+  printf '%s\n' "$version"
+}
+
+codex_version=$(latest_version '@openai%2Fcodex')
+claude_version=$(latest_version '@anthropic-ai%2Fclaude-code')
+
+if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+  git fetch origin "$branch"
+  git switch -C "$branch" "origin/$branch"
+else
+  git switch -c "$branch"
+fi
+
+sed -i "s/^CODEX_VERSION=.*/CODEX_VERSION=$codex_version/" versions.env
+sed -i "s/^CLAUDE_CODE_VERSION=.*/CLAUDE_CODE_VERSION=$claude_version/" versions.env
+git diff --quiet -- versions.env && {
+  printf '%s\n' 'Agent runtime versions are current.'
+  exit 0
+}
+
+git config user.name 'github-actions[bot]'
+git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+git add versions.env
+git commit -m 'chore: update agent runtime versions'
+git push --set-upstream origin "$branch"
+
+if ! gh pr list --repo "$repository" --base main --head "$branch" --state open --json number --jq '.[0].number' | grep -q .; then
+  gh pr create --repo "$repository" --base main --head "$branch" \
+    --title 'chore: update agent runtime versions' \
+    --body "Updates Codex to $codex_version and Claude Code to $claude_version. Merging this pull request runs ARM64 verification and publishes the immutable release marker."
+fi
