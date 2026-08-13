@@ -87,6 +87,7 @@ light_verify() {
     return 0
   fi
   set -a
+  # shellcheck disable=SC1091
   . ./versions.env
   set +a
   local claude_v codex_v

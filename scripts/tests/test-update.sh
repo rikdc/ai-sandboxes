@@ -18,18 +18,29 @@ trap cleanup EXIT
 
 base_path=$PATH
 sanitized_path() {
-  # PATH with every directory dropped that provides a real docker or msb, so a
-  # scenario where they must be "absent" can never fall through to the host's.
-  local dir out='' dirs
+  # Mirror the host PATH but without the real `docker` and `msb` binary names,
+  # so a scenario where they must be "absent" can never fall through to the
+  # host's. We drop the two named binaries as individuals via a symlink farm
+  # rather than removing whole directories: on Linux docker shares /usr/bin
+  # with coreutils (cat, basename, dirname, mktemp), so dropping the directory
+  # would starve the scripts under test of basic tools.
+  local dir name linkdir="$mockdir/path" dirs
+  mkdir -p "$linkdir"
   IFS=: read -r -a dirs <<<"$base_path"
   for dir in "${dirs[@]}"; do
-    if test -x "$dir/docker" || test -x "$dir/msb"; then
-      continue
-    fi
-    if test -n "$out"; then out="$out:"; fi
-    out="$out$dir"
+    test -d "$dir" || continue
+    for src in "$dir"/*; do
+      test -f "$src" && test -x "$src" || continue
+      name=${src##*/}
+      if test "$name" = docker || test "$name" = msb; then
+        continue
+      fi
+      if test ! -e "$linkdir/$name"; then
+        ln -s "$src" "$linkdir/$name"
+      fi
+    done
   done
-  printf '%s\n' "$out"
+  printf '%s\n' "$linkdir"
 }
 base_sanitized=$(sanitized_path)
 
