@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# Update the locally installed ai-sandboxes checkout to origin/main and refresh
+# what it drives: the locally built images, the installed fish wrappers, and —
+# when present — msb. --check is read-only and suitable for a schedule; the
+# default mode fast-forwards, rebuilds, and reloads.
+set -o pipefail
+IFS=$'\n\t'
+
+name=$(basename "$0")
+
+die() {
+  printf '%s: %s\n' "$name" "$*" >&2
+  exit 2
+}
+
+usage() {
+  cat >&2 <<EOF
+usage: $name [--check] [--verify]
+  --check   report whether an update is available (exit 0 = current, 1 = behind)
+  --verify  run the full ./scripts/verify after updating (default: light checks)
+EOF
+  exit 64
+}
+
+cd "$(dirname "$0")/.." || die 'could not cd to repository root'
+
+check_mode=0
+verify_full=0
+while test "$#" -gt 0; do
+  case "$1" in
+    --check) check_mode=1 ;;
+    --verify) verify_full=1 ;;
+    *) usage ;;
+  esac
+  shift
+done
+if test "$check_mode" = 1 && test "$verify_full" = 1; then
+  usage
+fi
+
+git config --get remote.origin.url >/dev/null 2>&1 \
+  || die 'no git remote "origin"; cannot determine upstream'
+test "$(git symbolic-ref --short HEAD 2>/dev/null)" = main \
+  || die 'not on branch main; the updater only manages the installed main checkout'
+test -z "$(git status --porcelain 2>/dev/null)" \
+  || die 'working tree is dirty; commit or stash before updating'
+
+git fetch origin main --quiet || die 'could not fetch origin/main'
+old_head=$(git rev-parse HEAD) || die 'could not resolve HEAD'
+new_head=$(git rev-parse origin/main) || die 'could not resolve origin/main after fetch'
+
+if test "$old_head" = "$new_head"; then
+  printf 'up to date\n'
+  exit 0
+fi
+if ! git merge-base --is-ancestor "$old_head" "$new_head"; then
+  die 'history diverged from origin/main; cannot fast-forward (rebase or start from a fresh clone)'
+fi
+
+tmpdir=$(mktemp -d) || die 'could not create a temporary directory'
+trap 'rm -rf -- "$tmpdir"' EXIT
+old_env="$tmpdir/old.env"
+new_env="$tmpdir/new.env"
+
+read_value() {
+  local file=$1 key=$2 value='' line
+  while IFS= read -r line; do
+    [[ "$line" == "$key="* ]] && value=${line#"$key="}
+  done <"$file"
+  printf '%s\n' "$value"
+}
+
+version_change_summary() {
+  git show HEAD:versions.env >"$old_env" 2>/dev/null || : >"$old_env"
+  git show origin/main:versions.env >"$new_env" 2>/dev/null || : >"$new_env"
+  if test -s "$old_env" && test -s "$new_env" \
+    && ./.github/workflows/release-marker changed "$old_env" "$new_env" >/dev/null 2>&1; then
+    printf 'version change: Codex %s -> %s, Claude Code %s -> %s' \
+      "$(read_value "$old_env" CODEX_VERSION)" "$(read_value "$new_env" CODEX_VERSION)" \
+      "$(read_value "$old_env" CLAUDE_CODE_VERSION)" "$(read_value "$new_env" CLAUDE_CODE_VERSION)"
+  fi
+}
+
+light_verify() {
+  if ! command -v docker >/dev/null 2>&1; then
+    printf 'WARNING: docker not found; skipping light verification\n' >&2
+    return 0
+  fi
+  set -a
+  . ./versions.env
+  set +a
+  local claude_v codex_v
+  claude_v=$(docker run --rm --user node -e HOME=/home/node ai-sandboxes-claude:local \
+    bash -lc 'test "$DISABLE_UPDATES" = 1; claude --version' 2>/dev/null) || true
+  test "${claude_v%% *}" = "$CLAUDE_CODE_VERSION" \
+    || printf 'WARNING: built Claude Code is %s, expected %s\n' "${claude_v%% *}" "$CLAUDE_CODE_VERSION" >&2
+  codex_v=$(docker run --rm --user node -e HOME=/home/node ai-sandboxes-codex:local \
+    codex --version 2>/dev/null) || true
+  test "$codex_v" = "$CODEX_VERSION" \
+    || printf 'WARNING: built Codex is %s, expected %s\n' "$codex_v" "$CODEX_VERSION" >&2
+}
+
+commits_behind=$(git rev-list --count "$old_head..$new_head")
+printf 'update available: %s commits behind origin/main' "$commits_behind"
+summary=$(version_change_summary)
+if test -n "$summary"; then printf '; %s' "$summary"; fi
+printf '\n'
+if test "$check_mode" = 1; then
+  exit 1
+fi
+
+printf 'updating %s -> %s\n' "$old_head" "$new_head"
+git merge --ff-only origin/main \
+  || die 'git merge --ff-only origin/main failed; inspect the output above'
+changed_paths=$(git diff --name-only "$old_head" "$new_head")
+
+need_build=0
+need_install=0
+while IFS= read -r p; do
+  case "$p" in
+    scripts/install-fish-functions|shell/*) need_install=1 ;;
+    scripts/update) : ;;
+    versions.env|.dockerignore|docker-bake.hcl|images/*|config/*|scripts/*) need_build=1 ;;
+  esac
+done <<<"$changed_paths"
+
+if test "$need_build" = 1; then
+  printf 'rebuilding images...\n'
+  ./scripts/build || die './scripts/build failed after updating; re-run scripts/update to retry'
+fi
+
+if test "$need_install" = 1; then
+  printf 'reinstalling fish wrappers...\n'
+  ./scripts/install-fish-functions || die 'fish wrapper install failed after updating'
+fi
+
+loaded=0
+if test "$need_build" = 1 && command -v msb >/dev/null 2>&1; then
+  printf 'reloading msb images...\n'
+  ./scripts/load-msb || die 'msb image reload failed after updating'
+  loaded=1
+fi
+
+if test "$need_build" = 1; then
+  if test "$verify_full" = 1; then
+    printf 'running full verification...\n'
+    ./scripts/verify || die './scripts/verify failed after updating'
+  else
+    light_verify
+  fi
+fi
+
+status="fast-forwarded $commits_behind commits to ${new_head:0:7}"
+if test "$need_build" = 1; then status="$status, rebuilt docker images"; fi
+if test "$need_install" = 1; then status="$status, reinstalled fish wrappers"; fi
+if test "$loaded" = 1; then status="$status, loaded images into msb"; fi
+printf 'done: %s\n' "$status"
+exit 0
