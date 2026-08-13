@@ -2,10 +2,10 @@ name: ARM64 image verification
 
 on:
   pull_request:
-    paths: [images/**, scripts/**, shell/**, config/**, docker-bake.hcl, versions.env, .dockerignore]
+    paths: [images/**, scripts/**, shell/**, config/**, docker-bake.hcl, versions.env, .dockerignore, .github/workflows/**]
   push:
     branches: [main]
-    paths: [images/**, scripts/**, shell/**, config/**, docker-bake.hcl, versions.env, .dockerignore]
+    paths: [images/**, scripts/**, shell/**, config/**, docker-bake.hcl, versions.env, .dockerignore, .github/workflows/**]
   workflow_dispatch:
 
 permissions:
@@ -48,7 +48,7 @@ jobs:
           BEFORE: ${{ github.event.before }}
         run: |
           git show "$BEFORE:versions.env" > previous-versions.env
-          if ./scripts/release-marker changed previous-versions.env versions.env; then
+          if ./.github/workflows/release-marker changed previous-versions.env versions.env; then
             echo 'changed=true' >> "$GITHUB_OUTPUT"
           else
             status=$?
@@ -61,4 +61,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           COMMIT: ${{ github.sha }}
-        run: ./scripts/publish-release-marker "$COMMIT"
+        run: ./.github/workflows/publish-release-marker "$COMMIT"

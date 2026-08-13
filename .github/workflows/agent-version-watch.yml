@@ -25,4 +25,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: ./scripts/update-agent-versions
+        run: ./.github/workflows/update-agent-versions

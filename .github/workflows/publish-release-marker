@@ -7,7 +7,7 @@ IFS=$'\n\t'
 
 repository=${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}
 
-cd "$(dirname "$0")/.." || {
+cd "$(dirname "$0")/../.." || {
   printf '%s\n' 'error: failed to cd to repository root' >&2
   exit 1
 }
@@ -40,7 +40,7 @@ timestamp=$(date --utc +%Y-%m-%dT%H:%M:%SZ) || {
   exit 1
 }
 
-scripts/release-marker create "$marker" "$commit" \
+.github/workflows/release-marker create "$marker" "$commit" \
   "$CODEX_VERSION" "$CLAUDE_CODE_VERSION" "$timestamp" || {
   printf '%s\n' 'error: failed to create release marker' >&2
   exit 1
@@ -55,7 +55,7 @@ if gh release view "$tag" --repo "$repository" >/dev/null 2>&1; then
   }
   gh release download "$tag" --repo "$repository" \
     --pattern release.json --dir "$download_dir" || exit 1
-  scripts/release-marker validate "$download_dir/release.json" \
+  .github/workflows/release-marker validate "$download_dir/release.json" \
     "$commit" "$CODEX_VERSION" "$CLAUDE_CODE_VERSION" || exit 1
   exit 0
 fi

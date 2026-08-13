@@ -86,7 +86,7 @@ JSON
 publish() {
   env "$@" GITHUB_REPOSITORY=testowner/testrepo \
     MOCK_GH_LOG="$logfile" MOCK_CAUGHT="$caught" \
-    PATH="$mockdir/bin:$PATH" scripts/publish-release-marker "$commit"
+    PATH="$mockdir/bin:$PATH" .github/workflows/publish-release-marker "$commit"
 }
 
 # 1. Fresh release: publishes and uploads an immutable, valid marker.
@@ -147,7 +147,7 @@ fi
 
 # 5. GITHUB_REPOSITORY is required.
 if env -u GITHUB_REPOSITORY PATH="$mockdir/bin:$PATH" \
-  scripts/publish-release-marker "$commit" >/dev/null 2>&1; then
+  .github/workflows/publish-release-marker "$commit" >/dev/null 2>&1; then
   echo 'FAIL: missing GITHUB_REPOSITORY should fail' >&2
   exit 1
 fi

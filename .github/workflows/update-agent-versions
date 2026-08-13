@@ -8,7 +8,7 @@ version_pattern='^[A-Za-z0-9][A-Za-z0-9._-]*$'
 branch=automated/agent-version-update
 repository=${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}
 
-cd "$(dirname "$0")/.." || {
+cd "$(dirname "$0")/../.." || {
   printf '%s\n' 'error: failed to cd to repository root' >&2
   exit 1
 }

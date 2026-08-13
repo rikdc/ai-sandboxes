@@ -12,7 +12,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for file in scripts/build scripts/lint-dockerfiles scripts/load-msb scripts/install-fish-functions scripts/release-marker scripts/update-agent-versions scripts/publish-release-marker scripts/verify images/claude/entrypoint.sh images/codex/entrypoint.sh scripts/claude/*.sh scripts/marketplaces/*.sh scripts/tools/*.sh scripts/session/*.sh scripts/session/tests/*.sh scripts/tests/*.sh scripts/lib/*.sh; do bash -n "$file" || exit 1; done
+for file in scripts/build scripts/lint-dockerfiles scripts/load-msb scripts/install-fish-functions .github/workflows/release-marker .github/workflows/update-agent-versions .github/workflows/publish-release-marker scripts/verify images/claude/entrypoint.sh images/codex/entrypoint.sh scripts/claude/*.sh scripts/marketplaces/*.sh scripts/tools/*.sh scripts/session/*.sh scripts/session/tests/*.sh scripts/tests/*.sh scripts/lib/*.sh; do bash -n "$file" || exit 1; done
 if command -v fish >/dev/null 2>&1; then find shell/fish -type f -name '*.fish' -exec fish --no-execute {} + || exit 1; fi
 bash scripts/session/tests/test-validate-profile.sh || exit 1
 bash scripts/session/tests/test-render-dockerfile.sh || exit 1
@@ -30,12 +30,12 @@ if git grep -nEi '(api[_-]?key|access[_-]?token|secret)[[:space:]]*=[[:space:]]*
   exit 1
 fi
 
-./scripts/release-marker create "$release_marker_test" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0.145.0 2.1.224 2026-08-09T20:00:00Z
-./scripts/release-marker validate "$release_marker_test" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0.145.0 2.1.224
+./.github/workflows/release-marker create "$release_marker_test" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0.145.0 2.1.224 2026-08-09T20:00:00Z
+./.github/workflows/release-marker validate "$release_marker_test" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0.145.0 2.1.224
 printf '%s\n' 'CODEX_VERSION=0.144.0' 'CLAUDE_CODE_VERSION=2.1.224' >"$release_marker_previous"
 printf '%s\n' 'CODEX_VERSION=0.145.0' 'CLAUDE_CODE_VERSION=2.1.224' >"$release_marker_next"
-./scripts/release-marker changed "$release_marker_previous" "$release_marker_next"
-if ./scripts/release-marker changed versions.env versions.env; then
+./.github/workflows/release-marker changed "$release_marker_previous" "$release_marker_next"
+if ./.github/workflows/release-marker changed versions.env versions.env; then
   echo 'release marker reported an unchanged versions.env as changed' >&2
   exit 1
 fi
