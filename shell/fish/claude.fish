@@ -1,11 +1,13 @@
-source (dirname (realpath (status filename)))/lib/ai-sandbox.fish
-
-function __ai_sandbox_impl_claude --description 'Run Claude Code in a hardened Microsandbox VM'
-    set -l image ai-sandboxes-claude:local
-    if not type -q msb
-        echo 'claude: msb is not installed or is not on PATH' >&2
-        return 127
-    end
-    set -l shared_state_args (__ai_sandbox_prepare_shared_state claude "$image"); or return $status
-    __ai_sandbox_run_claude (status filename) "$image" (count $shared_state_args) $shared_state_args $argv
+# Installed by ai-sandboxes' scripts/install-fish-functions. This wrapper is a
+# copy, not a symlink, and lives outside the ai-sandboxes checkout on purpose:
+# it is the trust boundary that runs before any checkout-provided code, so a
+# guest agent with write access to a mounted ai-sandboxes checkout cannot
+# tamper with it. Re-run scripts/install-fish-functions after updating
+# ai-sandboxes to refresh it.
+function claude --description 'ai-sandboxes: claude (installed wrapper)'
+    source '/Users/rdchome/.config/ai-sandboxes/trusted/guard.fish'
+    __ai_sandbox_trusted_refuse_overlap claude '/Users/rdchome/repositories/ai-sandboxes' '/Users/rdchome/.config/fish/functions' '/Users/rdchome/.config/ai-sandboxes/trusted'; or return $status
+    source '/Users/rdchome/repositories/ai-sandboxes/shell/fish/lib/ai-sandbox.fish'
+    source '/Users/rdchome/repositories/ai-sandboxes/shell/fish/claude.fish'
+    __ai_sandbox_impl_claude $argv
 end

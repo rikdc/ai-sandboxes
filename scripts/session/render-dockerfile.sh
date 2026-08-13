@@ -31,6 +31,10 @@ if test "$apt_count" -eq 0 && test "$npm_count" -eq 0 && test "$tools_count" -eq
 # syntax=docker/dockerfile:1.7
 FROM $base_image_ref
 USER root
+# --chmod=0444 on the COPY would otherwise be applied to the auto-created
+# parent /opt/session-profile too (BuildKit gives it the requested mode),
+# leaving the directory without execute bits and thus unreadable by node.
+RUN install -d -o root -g root -m 0755 /opt/session-profile
 COPY --chown=root:root --chmod=0444 resolved.json /opt/session-profile/resolved.json
 USER node
 EOF
@@ -135,6 +139,10 @@ fi
 
 if test "$apt_count" -eq 0; then
   cat >>"$dockerfile" <<EOF || die "could not write $dockerfile"
+# --chmod=0444 on the COPY would otherwise be applied to the auto-created
+# parent /opt/session-profile too (BuildKit gives it the requested mode),
+# leaving the directory without execute bits and thus unreadable by node.
+RUN install -d -o root -g root -m 0755 /opt/session-profile
 COPY --chown=root:root --chmod=0444 resolved.json /opt/session-profile/resolved.json
 EOF
 else

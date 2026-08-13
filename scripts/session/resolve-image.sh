@@ -127,7 +127,7 @@ jq -n \
       apt: ($request.apt // []),
       npm: ($request.npm // []),
       python: (($request.python // {}).packages // []),
-      tools: (($request.tools // []) | map(. as $t | $t + {binary: ($catalog[0].tools[] | select(.id == $t.id) | .binary)}))
+      tools: (($request.tools // []) | map(. as $t | $t + {binary: (($catalog[0].tools[] | select(.id == $t.id) | .binary) // error("resolve-image: unknown tool id: " + $t.id))}))
     },
     claude_marketplaces: ($request.claude_marketplaces // []),
     shared_state: ($request.shared_state // null),

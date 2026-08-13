@@ -59,7 +59,17 @@ run_probe() {
       end
       source "$AI_SANDBOX_TEST_LIB_FILE"
       __ai_sandbox_run_claude "$AI_SANDBOX_TEST_LAUNCHER_FILE" probe-image:local $argv
-    ' -- "$@"
+    ' -- "$@" >/dev/null
+  # The assertions below only inspect the capture file, so a fish crash or a
+  # failed msb invocation would otherwise surface as a misleading "wrong argv"
+  # failure. Fail loudly on the probe's own exit status instead. stderr stays
+  # visible so any FAIL message printed inside the fish script is not swallowed.
+  local probe_status=$?
+  if test "$probe_status" -ne 0; then
+    echo "FAIL: fish probe exited with status $probe_status" >&2
+    cat "$capture_file" >&2
+    exit 1
+  fi
 }
 
 # Case: shared_state_arg_count=0 -- no shared-state args, claude_argv is
@@ -68,7 +78,7 @@ run_probe() {
 # shared state), so the count=0 case is verified by asserting exactly ONE
 # `--mount-named` line (the fixed home mount, no shared-state mount got
 # spliced in), not by asserting zero.
-run_probe 0 --version >/dev/null 2>&1
+run_probe 0 --version
 grep -qFx -- '--version' "$capture_file" \
   || { echo 'FAIL: count=0 did not pass --version through to msb argv' >&2; cat "$capture_file" >&2; exit 1; }
 mount_named_count=$(grep -cFx -- '--mount-named' "$capture_file")
@@ -80,7 +90,7 @@ test "$mount_named_count" -eq 1 \
 # home volume's own --mount-named), and --version must still reach claude's
 # argv (the very last line of the captured invocation), not get absorbed
 # into the shared-state slice.
-run_probe 2 --mount-named 'agent-state-probe-v1:/var/lib/agent-state:kind=dir,quota=1G' --version >/dev/null 2>&1
+run_probe 2 --mount-named 'agent-state-probe-v1:/var/lib/agent-state:kind=dir,quota=1G' --version
 mount_named_count=$(grep -cFx -- '--mount-named' "$capture_file")
 test "$mount_named_count" -eq 2 \
   || { echo "FAIL: count=2 expected exactly 2 --mount-named (fixed home volume + shared state), got $mount_named_count" >&2; cat "$capture_file" >&2; exit 1; }

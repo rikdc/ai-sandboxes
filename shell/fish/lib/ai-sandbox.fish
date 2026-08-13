@@ -186,6 +186,43 @@ function __ai_sandbox_launch --argument-names launcher_file agent image home_vol
     return $status
 end
 
+# Validates Claude's egress allowlist and returns the network args for the
+# eventual `msb run`. Consumed both by claude (as a preflight before
+# __ai_sandbox_prepare_shared_state, so a host-side config error surfaces
+# before any shared-state VM boot) and by __ai_sandbox_run_claude (to build
+# the real argv); sharing one implementation keeps the two call sites from
+# drifting apart. When CLAUDE_MSB_PUBLIC_EGRESS=1 the public gateway is used
+# and the allowlist is never consulted.
+function __ai_sandbox_claude_egress_args --argument-names agent
+    if set -q CLAUDE_MSB_PUBLIC_EGRESS; and test "$CLAUDE_MSB_PUBLIC_EGRESS" = 1
+        printf '%s\n' --net public
+        return 0
+    end
+    # Let Microsandbox's gateway DNS follow the host resolver. An external
+    # resolver is not reachable through every public-network gateway.
+    set -l network_args --no-net --net-rule 'allow@host:udp:53' --net-rule 'allow@host:tcp:53'
+    set -l egress_file "$HOME/.config/microvms/claude-egress"
+    if not test -f "$egress_file"
+        echo "$agent: missing egress allowlist: $egress_file" >&2
+        echo "$agent: copy config/claude-egress.example there and review its hosts" >&2
+        return 1
+    end
+    while read -l egress_host
+        set egress_host (string trim -- "$egress_host")
+        if test -z "$egress_host"; or string match -q '#*' -- "$egress_host"
+            continue
+        end
+
+        # The allowlist contains hostnames only: one HTTPS destination per line.
+        if not string match -rq '^(\*\.)?[A-Za-z0-9][A-Za-z0-9.-]*$' -- "$egress_host"
+            echo "$agent: invalid hostname in $egress_file: $egress_host" >&2
+            return 1
+        end
+        set -a network_args --net-rule "allow@$egress_host:tcp:443"
+    end < "$egress_file"
+    printf '%s\n' $network_args
+end
+
 function __ai_sandbox_run_claude --argument-names launcher_file image shared_state_arg_count
     if not string match -rq '^[0-9]+$' -- "$shared_state_arg_count"
         echo "claude: internal error: invalid shared_state_arg_count" >&2
@@ -200,44 +237,15 @@ function __ai_sandbox_run_claude --argument-names launcher_file image shared_sta
         set claude_argv $argv[4..-1]
     end
     set -l profile_volume 'claude-home-hardened'
-    set -l egress_file "$HOME/.config/microvms/claude-egress"
     set -l workspace_quota '10G'
     set -l root_disk '10G'
-    # Let Microsandbox's gateway DNS follow the host resolver.  An external
-    # resolver is not reachable through every public-network gateway.
-    set -l network_args \
-        --no-net \
-        --net-rule 'allow@host:udp:53' \
-        --net-rule 'allow@host:tcp:53'
 
     if not type -q msb
         echo 'claude: msb is not installed or is not on PATH' >&2
         return 127
     end
 
-    if set -q CLAUDE_MSB_PUBLIC_EGRESS; and test "$CLAUDE_MSB_PUBLIC_EGRESS" = 1
-        set network_args --net public
-    else
-        if not test -f "$egress_file"
-            echo "claude: missing egress allowlist: $egress_file" >&2
-            echo 'claude: copy config/claude-egress.example there and review its hosts' >&2
-            return 1
-        end
-
-        while read -l egress_host
-            set egress_host (string trim -- "$egress_host")
-            if test -z "$egress_host"; or string match -q '#*' -- "$egress_host"
-                continue
-            end
-
-            # The allowlist contains hostnames only: one HTTPS destination per line.
-            if not string match -rq '^(\*\.)?[A-Za-z0-9][A-Za-z0-9.-]*$' -- "$egress_host"
-                echo "claude: invalid hostname in $egress_file: $egress_host" >&2
-                return 1
-            end
-            set -a network_args --net-rule "allow@$egress_host:tcp:443"
-        end < "$egress_file"
-    end
+    set -l network_args (__ai_sandbox_claude_egress_args claude); or return $status
 
     set -l host_workspace (command git rev-parse --show-toplevel 2>/dev/null)
     if test $status -ne 0

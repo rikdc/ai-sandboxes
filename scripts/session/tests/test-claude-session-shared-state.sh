@@ -21,19 +21,39 @@ fi
 # derive a per-run profile in a temp file with a unique shared_state.id, and
 # only ever remove the volume this run actually created.
 profile_tmp=$(mktemp) || exit 1
+volumes_list_tmp=$(mktemp) || exit 1
 unique_state_id="session-tools-verify-$$-$RANDOM"
+state_volume="agent-state-$unique_state_id-v1"
 jq --arg id "$unique_state_id" '.shared_state.id = $id' scripts/session/fixtures/valid/icm-with-shared-state.json >"$profile_tmp" || exit 1
 
+# The unique id is not a guarantee: a stale volume from a crashed earlier run,
+# or a recycled $$/$RANDOM collision, could leave a volume under this name.
+# Mounting it would reuse that volume and cleanup would then delete it, so
+# refuse to run unless the volume is verifiably absent first -- and only ever
+# remove it in cleanup when this run established that absence.
 session_tag=''
+state_volume_absent=0
 cleanup() {
   if test -n "$session_tag"; then
     docker image rm -f "$session_tag" >/dev/null 2>&1 || true
     msb image remove "$session_tag" >/dev/null 2>&1 || true
   fi
-  msb volume remove "agent-state-${state_id:-}-v1" >/dev/null 2>&1 || true
-  rm -f "$profile_tmp"
+  if test "$state_volume_absent" -eq 1; then
+    msb volume remove "$state_volume" >/dev/null 2>&1 || true
+  fi
+  rm -f "$profile_tmp" "$volumes_list_tmp"
 }
 trap cleanup EXIT
+
+if ! msb volume list --quiet >"$volumes_list_tmp" 2>/dev/null; then
+  echo "refusing to run: could not list msb volumes to verify $state_volume is absent" >&2
+  exit 1
+fi
+if grep -qFx -- "$state_volume" "$volumes_list_tmp"; then
+  echo "refusing to run: shared-state volume $state_volume already exists (cleanup would remove it)" >&2
+  exit 1
+fi
+state_volume_absent=1
 
 descriptor=$(CLAUDE_MSB_BUILD_EGRESS=1 scripts/session/resolve-image.sh "$profile_tmp") || exit 1
 session_tag=$(jq -er '.image' <<<"$descriptor") || exit 1

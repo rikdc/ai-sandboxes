@@ -78,6 +78,10 @@ function __ai_sandbox_impl_claude_session --description 'Run Claude Code in a se
     set -l state_id (printf '%s\n' $descriptor | jq -r '.shared_state.id // empty')
     set -l state_quota (printf '%s\n' $descriptor | jq -r '.shared_state.quota // empty')
     set -l shared_state_args (__ai_sandbox_shared_state_request_args claude-session "$state_id" "$state_quota"); or return $status
+    # Validate the egress allowlist before initializing shared state: that can
+    # boot a VM to initialize a shared-state volume, and a host-side config
+    # error should surface before any side-effecting boot.
+    __ai_sandbox_claude_egress_args claude-session >/dev/null; or return $status
     __ai_sandbox_initialize_shared_state claude-session "$resolved_image" $shared_state_args; or return $status
 
     __ai_sandbox_run_claude "$launcher_file" "$resolved_image" (count $shared_state_args) $shared_state_args $claude_args
