@@ -58,6 +58,12 @@ The tag and marker are immutable. A workflow rerun reuses an existing release
 only when its downloaded marker exactly matches the commit and both versions;
 otherwise it fails instead of changing a release or tag.
 
+Every six hours, the **Agent version watch** workflow reads the `latest` npm
+dist-tags for `@openai/codex` and `@anthropic-ai/claude-code`. When either pin
+has changed, it updates `versions.env` on a single automation pull request.
+Merging that pull request runs the normal ARM64 verification on `main` and then
+publishes the immutable release marker.
+
 ### Claude Code distribution
 
 `CLAUDE_CODE_VERSION` is an exact Claude Code release pin for the fixed `linux/arm64` image target. The Claude image downloads that version's `manifest.json` and detached signature from Anthropic, imports Anthropic's release key, and requires it to match the `CLAUDE_RELEASE_KEY_FINGERPRINT` pin before verifying the signature. It then downloads only the manifest's `linux-arm64` `claude` binary and verifies its SHA-256 checksum before installing it at `/usr/local/bin/claude`.
