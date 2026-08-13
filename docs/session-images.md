@@ -193,12 +193,12 @@ auto-discovered from the project mount. `claude-session --profile <value>`
 resolves `<value>` in one of two ways:
 
 - a value containing `/` is used as a literal path, exactly as today;
-- a bare name (no `/`) resolves to `~/.config/microvms/profiles/<name>.json`,
-  mirroring the existing `~/.config/microvms/claude-egress` convention.
+- a bare name (no `/`) resolves to `~/.config/ai-sandboxes/profiles/<name>.json`,
+  alongside the `~/.config/ai-sandboxes/trusted/` guard the install writes.
 
 This lets a team keep its session profiles in a private repository, synced or
-symlinked into `~/.config/microvms/profiles/`, and reference them by name. The
-profile's contents are validated identically regardless of where the file is
+symlinked into `~/.config/ai-sandboxes/profiles/`, and reference them by name.
+The profile's contents are validated identically regardless of where the file is
 stored: private storage changes who can read the file, not what the schema
 allows it to contain.
 
@@ -463,7 +463,7 @@ the tasks that must land first.
 6. **`claude-session` Fish launcher** (depends on 4, 5)
    - Parse explicit profile arguments and build-egress opt-in.
    - Resolve a bare `--profile` name against
-     `~/.config/microvms/profiles/<name>.json`; treat any value containing
+     `~/.config/ai-sandboxes/profiles/<name>.json`; treat any value containing
      `/` as a literal path.
    - Reuse the existing Claude network/mount/security construction verbatim
      after resolving the image.

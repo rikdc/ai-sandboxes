@@ -13,7 +13,7 @@ function __ai_sandbox_impl_claude_session --description 'Run Claude Code in a se
 
     set -l profile_candidate $profile_value
     if not string match -q '*/*' -- "$profile_value"
-        set profile_candidate "$HOME/.config/microvms/profiles/$profile_value.json"
+        set profile_candidate "$HOME/.config/ai-sandboxes/profiles/$profile_value.json"
     end
 
     set -l profile_path (realpath "$profile_candidate" 2>/dev/null)
