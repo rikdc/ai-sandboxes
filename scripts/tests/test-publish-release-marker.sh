@@ -2,6 +2,7 @@
 set -o pipefail
 cd "$(dirname "$0")/../.." || exit 1
 
+# shellcheck disable=SC1091 # Resolved after cd to the repository root.
 . ./versions.env
 
 mockdir=$(mktemp -d) || exit 1
