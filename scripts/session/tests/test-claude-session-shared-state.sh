@@ -15,6 +15,15 @@ if ! docker image inspect ai-sandboxes-claude:local >/dev/null 2>&1; then
   exit 0
 fi
 
+# A developer could legitimately name a real profile's shared_state.id
+# "session-tools-verify" (the fixture's literal id). Removing a volume by
+# that fixed name on cleanup would delete their real persistent data. Instead,
+# derive a per-run profile in a temp file with a unique shared_state.id, and
+# only ever remove the volume this run actually created.
+profile_tmp=$(mktemp) || exit 1
+unique_state_id="session-tools-verify-$$-$RANDOM"
+jq --arg id "$unique_state_id" '.shared_state.id = $id' scripts/session/fixtures/valid/icm-with-shared-state.json >"$profile_tmp" || exit 1
+
 session_tag=''
 cleanup() {
   if test -n "$session_tag"; then
@@ -22,10 +31,11 @@ cleanup() {
     msb image remove "$session_tag" >/dev/null 2>&1 || true
   fi
   msb volume remove "agent-state-${state_id:-}-v1" >/dev/null 2>&1 || true
+  rm -f "$profile_tmp"
 }
 trap cleanup EXIT
 
-descriptor=$(CLAUDE_MSB_BUILD_EGRESS=1 scripts/session/resolve-image.sh scripts/session/fixtures/valid/icm-with-shared-state.json) || exit 1
+descriptor=$(CLAUDE_MSB_BUILD_EGRESS=1 scripts/session/resolve-image.sh "$profile_tmp") || exit 1
 session_tag=$(jq -er '.image' <<<"$descriptor") || exit 1
 state_id=$(jq -er '.shared_state.id' <<<"$descriptor") || exit 1
 state_quota=$(jq -er '.shared_state.quota' <<<"$descriptor") || exit 1

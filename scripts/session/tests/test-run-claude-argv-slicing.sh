@@ -38,12 +38,25 @@ chmod +x "$stub_dir/msb" || exit 1
 
 run_probe() {
   : >"$capture_file"
-  MSB_STUB_CAPTURE="$capture_file" PATH="$stub_dir:$PATH" CLAUDE_MSB_PUBLIC_EGRESS=1 \
+  # Exporting PATH from bash before exec'ing fish is not reliable: fish's own
+  # startup files (config.fish, universal variables like fish_user_paths) run
+  # during initialization and can re-derive PATH, reordering entries such as
+  # /opt/homebrew/bin ahead of an inherited prefix. Prepend the stub dir from
+  # inside the fish script instead (after startup has run), and confirm `msb`
+  # actually resolves to the stub before invoking the launcher, so the test
+  # fails loudly instead of silently exercising the real msb binary.
+  MSB_STUB_CAPTURE="$capture_file" CLAUDE_MSB_PUBLIC_EGRESS=1 \
     AI_SANDBOX_TEST_LAUNCHER_FILE="$launcher_file" \
     AI_SANDBOX_TEST_LIB_FILE="$lib_file" \
     AI_SANDBOX_TEST_SCRATCH_DIR="$scratch_dir" \
+    AI_SANDBOX_TEST_STUB_DIR="$stub_dir" \
     fish -c '
       cd "$AI_SANDBOX_TEST_SCRATCH_DIR"; or exit 1
+      set -gx PATH "$AI_SANDBOX_TEST_STUB_DIR" $PATH
+      if test (command -s msb) != "$AI_SANDBOX_TEST_STUB_DIR/msb"
+          echo "FAIL: msb did not resolve to the stub" >&2
+          exit 1
+      end
       source "$AI_SANDBOX_TEST_LIB_FILE"
       __ai_sandbox_run_claude "$AI_SANDBOX_TEST_LAUNCHER_FILE" probe-image:local $argv
     ' -- "$@"
