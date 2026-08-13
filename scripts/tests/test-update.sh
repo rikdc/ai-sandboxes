@@ -30,7 +30,9 @@ sanitized_path() {
   for dir in "${dirs[@]}"; do
     test -d "$dir" || continue
     for src in "$dir"/*; do
-      test -f "$src" && test -x "$src" || continue
+      if ! test -f "$src" || ! test -x "$src"; then
+        continue
+      fi
       name=${src##*/}
       if test "$name" = docker || test "$name" = msb; then
         continue
