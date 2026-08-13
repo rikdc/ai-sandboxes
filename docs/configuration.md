@@ -8,8 +8,14 @@ Configuration lives in `config/`. Rebuild, verify, and reload Microsandbox after
 ./scripts/load-msb
 ```
 
-For a reproducible personal or team configuration that remains separate from
-the public runtime, see [private profiles](private-profiles.md).
+The checked-in configuration controls the neutral base images. Changes to it
+require rebuilding, verifying, and reloading those images. For additional
+Claude-only software or marketplaces that should remain separate from the
+public runtime, keep an explicit JSON session profile in a personal or team
+repository and run `claude-session --profile /absolute/path/to/session.json`.
+Session profiles are validated host-side, are never discovered from the mounted
+project, and build a cached derived image locally; see
+[session images](session-images.md).
 
 ## Marketplaces and skills
 
