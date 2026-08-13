@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
-# Watch Codex and Claude Code npm releases, update versions.env on
-# automated/agent-version-update, and keep an open PR bumping them.
+# Watch Codex and Claude Code npm releases, update versions.env, and expose the
+# discovered versions for the create-pull-request action step to build a PR.
 set -o pipefail
 IFS=$'\n\t'
 
 version_pattern='^[A-Za-z0-9][A-Za-z0-9._-]*$'
-branch=automated/agent-version-update
-repository=${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}
 
 cd "$(dirname "$0")/../.." || {
   printf '%s\n' 'error: failed to cd to repository root' >&2
@@ -44,13 +42,6 @@ latest_version() {
 codex_version=$(latest_version '@openai%2Fcodex') || exit 1
 claude_version=$(latest_version '@anthropic-ai%2Fclaude-code') || exit 1
 
-if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
-  git fetch origin "$branch"
-  git switch -C "$branch" "origin/$branch"
-else
-  git switch -c "$branch"
-fi
-
 existing_codex=$(read_env_value CODEX_VERSION)
 existing_claude=$(read_env_value CLAUDE_CODE_VERSION)
 
@@ -63,15 +54,15 @@ fi
 if [[ -n "$existing_codex" ]] &&
   [[ "$existing_codex" != "$codex_version" ]] &&
   version_le "$codex_version" "$existing_codex"; then
-  printf '%s\n' "error: refusing to downgrade Codex on $branch" \
-    "($existing_codex -> $codex_version); an open PR may already be newer" >&2
+  printf '%s\n' "error: refusing to downgrade Codex" \
+    "($existing_codex -> $codex_version)" >&2
   exit 1
 fi
 if [[ -n "$existing_claude" ]] &&
   [[ "$existing_claude" != "$claude_version" ]] &&
   version_le "$claude_version" "$existing_claude"; then
-  printf '%s\n' "error: refusing to downgrade Claude Code on $branch" \
-    "($existing_claude -> $claude_version); an open PR may already be newer" >&2
+  printf '%s\n' "error: refusing to downgrade Claude Code" \
+    "($existing_claude -> $claude_version)" >&2
   exit 1
 fi
 
@@ -84,40 +75,14 @@ grep -q '^CLAUDE_CODE_VERSION=' versions.env || {
   exit 1
 }
 
-sed -i "s/^CODEX_VERSION=.*/CODEX_VERSION=$codex_version/" versions.env
-sed -i \
+sed -i.bak "s/^CODEX_VERSION=.*/CODEX_VERSION=$codex_version/" versions.env
+sed -i.bak \
   "s/^CLAUDE_CODE_VERSION=.*/CLAUDE_CODE_VERSION=$claude_version/" versions.env
-git diff --quiet -- versions.env && {
-  printf '%s\n' 'Agent runtime versions are current.'
-  exit 0
-}
+rm -f versions.env.bak
 
-git config user.name 'github-actions[bot]'
-git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-gh auth setup-git || {
-  printf '%s\n' 'error: failed to configure git credentials via gh' >&2
-  exit 1
-}
-git add versions.env
-git commit -m 'chore: update agent runtime versions' || {
-  printf '%s\n' 'error: failed to commit version update' >&2
-  exit 1
-}
-git push --set-upstream origin "$branch" || {
-  printf '%s\n' 'error: failed to push version update to origin' >&2
-  exit 1
-}
-
-pr_body="Updates Codex to $codex_version and Claude Code to $claude_version."
-pr_body+=" Merging this pull request runs ARM64 verification and publishes"
-pr_body+=" the immutable release marker."
-
-if ! gh pr list --repo "$repository" --base main --head "$branch" \
-  --state open --json number --jq '.[0].number' | grep -q .; then
-  gh pr create --repo "$repository" --base main --head "$branch" \
-    --title 'chore: update agent runtime versions' \
-    --body "$pr_body" || {
-    printf '%s\n' 'error: failed to open pull request' >&2
-    exit 1
-  }
+if test -n "${GITHUB_ENV:-}"; then
+  {
+    printf 'CODEX_VERSION=%s\n' "$codex_version"
+    printf 'CLAUDE_CODE_VERSION=%s\n' "$claude_version"
+  } >>"$GITHUB_ENV"
 fi
