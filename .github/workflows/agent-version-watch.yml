@@ -33,6 +33,4 @@ jobs:
           delete-branch: true
           commit-message: 'chore: update agent runtime versions'
           title: 'chore: update agent runtime versions'
-          body: |
-            Updates Codex to ${{ env.CODEX_VERSION }} and Claude Code to ${{ env.CLAUDE_CODE_VERSION }}.
-            Merging this pull request runs ARM64 verification and publishes the immutable release marker.
+          body-path: ${{ env.PR_BODY_PATH }}

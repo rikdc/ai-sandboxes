@@ -86,3 +86,16 @@ if test -n "${GITHUB_ENV:-}"; then
     printf 'CLAUDE_CODE_VERSION=%s\n' "$claude_version"
   } >>"$GITHUB_ENV"
 fi
+
+body_file=$(mktemp)
+{
+  if [[ "$existing_codex" != "$codex_version" ]]; then
+    printf 'Updates Codex to %s.\n' "$codex_version"
+  fi
+  if [[ "$existing_claude" != "$claude_version" ]]; then
+    printf 'Updates Claude Code to %s.\n' "$claude_version"
+  fi
+  printf '%s\n' \
+    'Merging this pull request runs ARM64 verification and publishes the immutable release marker.'
+} >"$body_file"
+printf 'PR_BODY_PATH=%s\n' "$body_file" >>"$GITHUB_ENV"
