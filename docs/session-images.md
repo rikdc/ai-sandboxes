@@ -13,12 +13,10 @@ preserving the runtime boundary: the Claude process still runs as `node` in the
 `restricted` security profile, receives no `sudo`, and cannot modify the
 system toolchain at runtime.
 
-This design replaces the private-profile repository mechanism previously
-documented in `docs/private-profiles.md` (scheduled for removal once this
-mechanism lands; see Implementation task 12). Personal and team
-customization moves entirely to session profiles: a small, publicly validated
-JSON file that can itself be kept in a private repository, rather than a full
-repository overlay that rebuilds the base image from a pinned upstream commit.
+This design replaces the former private-profile image-overlay mechanism.
+Personal and team customization is an explicit, publicly validated JSON file
+that can itself be kept in a private repository, rather than a repository
+overlay that rebuilds the neutral base image from a pinned upstream commit.
 
 ## Non-goals
 
@@ -428,13 +426,11 @@ Derived images are imported into msb under their exact session tag. The loader
 must not overwrite or remove `ai-sandboxes-claude:local`; it skips import when
 the matching session image is already present.
 
-`claude-session gc` removes only labeled session images according to a default
-14-day last-used TTL and a configurable total-size budget. Deletion requires an
-explicit `--apply`; base, tools, Claude, and Codex images are never candidates.
-Last-used metadata is host-local — at `~/.cache/ai-sandboxes/session-images.json`,
-keyed by image tag — and is never stored in the agent home volume. Each
-successful `claude-session` launch updates that file's entry for the image it
-ran.
+There is no automatic session-image garbage collector yet. Derived images stay
+in the local Docker and msb image stores until the host user removes a known
+session tag; the base, tools, Claude, and Codex image tags must never be used
+as cleanup targets. Automatic, dry-run-first garbage collection and host-local
+last-used metadata remain future work.
 
 ## Implementation tasks
 
@@ -500,18 +496,18 @@ the tasks that must land first.
       recursively (covering `extraKnownMarketplaces` alongside
       `enabledPlugins`) instead of only a single hardcoded key.
 
-11. **Image GC and host-local metadata** (depends on 4, 5, 6)
+11. **Image GC and host-local metadata** (future work; depends on 4, 5, 6)
     - Implement discovery, dry-run output, `--apply`, TTL/size policy, and
       safety tests.
     - Store last-used metadata at `~/.cache/ai-sandboxes/session-images.json`,
       updated on every launch.
 
-12. **Documentation, verification, and rollout** (depends on 7-11)
-    - Remove `docs/private-profiles.md`; migrate its still-relevant guidance
-      (keeping org policy out of the public repo, no credentials in
-      configuration) into this document. Update README, `docs/configuration.md`,
-      `docs/claude-security.md`, and issue #27 to describe session profiles as
-      the customization mechanism.
+12. **Documentation, verification, and rollout** (completed except for the
+    future GC work in task 11)
+    - Keep organization policy in a private session-profile repository when
+      appropriate, but keep credentials out of profiles and configuration.
+      README, `docs/configuration.md`, and `docs/claude-security.md` describe
+      session profiles as the customization mechanism.
     - Add shell/fish checks and networked integration-test policy.
     - Document rollback: use `claude` with the base image and delete only
       labeled session images.

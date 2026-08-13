@@ -22,6 +22,23 @@ CLAUDE_MSB_PUBLIC_EGRESS=1 claude
 
 This enables public Internet access but does not make arbitrary public destinations safe. Treat it as a per-session exception.
 
+## Session-image builds
+
+`claude-session --profile /absolute/path/to/session.json` can build a cached,
+derived Claude image with validated apt, npm, curated-tool, and marketplace
+selections. On a cache miss, the **host-side build** needs its own explicit
+opt-in:
+
+```fish
+CLAUDE_MSB_BUILD_EGRESS=1 claude-session --profile /absolute/path/to/session.json
+```
+
+This does not grant the guest VM public egress; its runtime policy remains the
+allowlist above unless `CLAUDE_MSB_PUBLIC_EGRESS=1` is also set. Keep profiles
+outside the mounted project and do not put credentials, private registry URLs,
+or arbitrary installer commands in them. See [session images](session-images.md)
+for the supported schema and shared-state behavior.
+
 ## Working safely
 
 The project mount is writable. Claude can change or delete every file in it, including ignored files. Keep secrets outside the project, commit or stash important work before autonomous sessions, and review the resulting Git diff. Authenticate with narrowly scoped credentials where possible.
