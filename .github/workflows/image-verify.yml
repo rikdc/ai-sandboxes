@@ -2,10 +2,10 @@ name: ARM64 image verification
 
 on:
   pull_request:
-    paths: [images/**, scripts/**, shell/**, config/**, docker-bake.hcl, versions.env, .dockerignore]
+    paths: [images/**, scripts/**, shell/**, config/**, docker-bake.hcl, versions.env, .dockerignore, .github/workflows/**]
   push:
     branches: [main]
-    paths: [images/**, scripts/**, shell/**, config/**, docker-bake.hcl, versions.env, .dockerignore]
+    paths: [images/**, scripts/**, shell/**, config/**, docker-bake.hcl, versions.env, .dockerignore, .github/workflows/**]
   workflow_dispatch:
 
 permissions:
@@ -30,3 +30,35 @@ jobs:
         run: ./scripts/build
       - name: Run image verification
         run: ./scripts/verify
+
+  publish-release-marker:
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.before != '0000000000000000000000000000000000000000'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Detect agent runtime version changes
+        id: versions
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          git show "$BEFORE:versions.env" > previous-versions.env
+          if ./.github/workflows/release-marker changed previous-versions.env versions.env; then
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          else
+            status=$?
+            test "$status" = 1 || exit "$status"
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Publish immutable release marker
+        if: steps.versions.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          COMMIT: ${{ github.sha }}
+        run: ./.github/workflows/publish-release-marker "$COMMIT"

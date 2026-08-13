@@ -3,12 +3,16 @@ set -o pipefail
 cd "$(dirname "$0")/.." || exit 1
 
 marketplace_test_image=ai-sandboxes-claude-marketplace-test:local
-cleanup_marketplace_test_image() {
+release_marker_test=$(mktemp)
+release_marker_previous=$(mktemp)
+release_marker_next=$(mktemp)
+cleanup() {
+  rm -f "$release_marker_test" "$release_marker_previous" "$release_marker_next"
   docker image rm -f "$marketplace_test_image" >/dev/null 2>&1 || true
 }
-trap cleanup_marketplace_test_image EXIT
+trap cleanup EXIT
 
-for file in scripts/build scripts/lint-dockerfiles scripts/load-msb scripts/install-fish-functions scripts/verify images/claude/entrypoint.sh images/codex/entrypoint.sh scripts/claude/*.sh scripts/marketplaces/*.sh scripts/tools/*.sh scripts/session/*.sh scripts/session/tests/*.sh scripts/lib/*.sh; do bash -n "$file" || exit 1; done
+for file in scripts/build scripts/lint-dockerfiles scripts/load-msb scripts/install-fish-functions .github/workflows/release-marker .github/workflows/update-agent-versions .github/workflows/publish-release-marker scripts/verify images/claude/entrypoint.sh images/codex/entrypoint.sh scripts/claude/*.sh scripts/marketplaces/*.sh scripts/tools/*.sh scripts/session/*.sh scripts/session/tests/*.sh scripts/tests/*.sh scripts/lib/*.sh; do bash -n "$file" || exit 1; done
 if command -v fish >/dev/null 2>&1; then find shell/fish -type f -name '*.fish' -exec fish --no-execute {} + || exit 1; fi
 bash scripts/session/tests/test-validate-profile.sh || exit 1
 bash scripts/session/tests/test-render-dockerfile.sh || exit 1
@@ -21,7 +25,18 @@ bash scripts/session/tests/test-claude-session-args.sh || exit 1
 bash scripts/session/tests/test-run-claude-argv-slicing.sh || exit 1
 bash scripts/session/tests/test-install-fish-functions.sh || exit 1
 bash scripts/session/tests/test-claude-entrypoint-seed-merge.sh || exit 1
+bash scripts/tests/test-publish-release-marker.sh || exit 1
 if git grep -nEi '(api[_-]?key|access[_-]?token|secret)[[:space:]]*=[[:space:]]*[^[:space:]]+' -- ':!README.md' ':!scripts/verify'; then
+  exit 1
+fi
+
+./.github/workflows/release-marker create "$release_marker_test" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0.145.0 2.1.224 2026-08-09T20:00:00Z
+./.github/workflows/release-marker validate "$release_marker_test" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0.145.0 2.1.224
+printf '%s\n' 'CODEX_VERSION=0.144.0' 'CLAUDE_CODE_VERSION=2.1.224' >"$release_marker_previous"
+printf '%s\n' 'CODEX_VERSION=0.145.0' 'CLAUDE_CODE_VERSION=2.1.224' >"$release_marker_next"
+./.github/workflows/release-marker changed "$release_marker_previous" "$release_marker_next"
+if ./.github/workflows/release-marker changed versions.env versions.env; then
+  echo 'release marker reported an unchanged versions.env as changed' >&2
   exit 1
 fi
 
