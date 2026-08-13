@@ -15,8 +15,10 @@ bash scripts/session/tests/test-render-dockerfile.sh || exit 1
 bash scripts/session/tests/test-resolve-image.sh || exit 1
 bash scripts/session/tests/test-session-marketplace.sh || exit 1
 bash scripts/session/tests/test-session-apt-npm.sh || exit 1
+bash scripts/session/tests/test-session-tools.sh || exit 1
 bash scripts/session/tests/test-load-image.sh || exit 1
 bash scripts/session/tests/test-claude-session-args.sh || exit 1
+bash scripts/session/tests/test-run-claude-argv-slicing.sh || exit 1
 bash scripts/session/tests/test-install-fish-functions.sh || exit 1
 bash scripts/session/tests/test-claude-entrypoint-seed-merge.sh || exit 1
 if git grep -nEi '(api[_-]?key|access[_-]?token|secret)[[:space:]]*=[[:space:]]*[^[:space:]]+' -- ':!README.md' ':!scripts/verify'; then
@@ -86,9 +88,10 @@ if command -v msb >/dev/null 2>&1; then
   msb run --pull never --no-tty --user node --mount-named verify-home:/home/node:rw ai-sandboxes-codex:local -- bash -lc 'touch "$HOME/.survives"' || exit 1
   msb run --pull never --no-tty --user node --mount-named verify-home:/home/node:rw ai-sandboxes-codex:local -- test -f /home/node/.survives || exit 1
   msb volume remove verify-home || exit 1
-  session_tag_first=$(CLAUDE_MSB_BUILD_EGRESS=1 ./scripts/session/resolve-image.sh config/session-profile.example.json) || exit 1
-  session_tag_second=$(./scripts/session/resolve-image.sh config/session-profile.example.json) || exit 1
-  test "$session_tag_first" = "$session_tag_second" || exit 1
+  session_descriptor_first=$(CLAUDE_MSB_BUILD_EGRESS=1 ./scripts/session/resolve-image.sh config/session-profile.example.json) || exit 1
+  session_descriptor_second=$(./scripts/session/resolve-image.sh config/session-profile.example.json) || exit 1
+  test "$session_descriptor_first" = "$session_descriptor_second" || exit 1
+  session_tag_first=$(jq -er '.image' <<<"$session_descriptor_first") || exit 1
 
   ./scripts/session/load-image.sh "$session_tag_first" || exit 1
   msb image list --quiet | grep -Fxq "$session_tag_first" || exit 1
@@ -100,4 +103,8 @@ if command -v msb >/dev/null 2>&1; then
 
   docker image rm "$session_tag_first" >/dev/null 2>&1 || true
   msb image remove "$session_tag_first" >/dev/null 2>&1 || true
+
+  if command -v fish >/dev/null 2>&1; then
+    bash scripts/session/tests/test-claude-session-shared-state.sh || exit 1
+  fi
 fi

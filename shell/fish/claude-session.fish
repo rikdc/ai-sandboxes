@@ -40,7 +40,12 @@ function __ai_sandbox_impl_claude_session --description 'Run Claude Code in a se
     set workspace (realpath "$workspace")
     __ai_sandbox_refuse_workspace_overlap claude-session "$launcher_file" "$workspace"; or return $status
 
-    set -l resolved_image ("$repo_root/scripts/session/resolve-image.sh" "$profile_path"); or return $status
+    set -l descriptor ("$repo_root/scripts/session/resolve-image.sh" "$profile_path"); or return $status
+    set -l resolved_image (printf '%s\n' $descriptor | jq -er '.image' 2>/dev/null)
+    if test -z "$resolved_image"
+        echo 'claude-session: resolver produced an invalid image descriptor' >&2
+        return 1
+    end
     "$repo_root/scripts/session/load-image.sh" "$resolved_image"; or return $status
 
     # load-image.sh only skips loading when msb already has *a* image under
@@ -63,5 +68,21 @@ function __ai_sandbox_impl_claude_session --description 'Run Claude Code in a se
         return 1
     end
 
-    __ai_sandbox_run_claude "$launcher_file" "$resolved_image" $claude_args
+    # A session image's requested shared state travels as data in the
+    # resolver's own descriptor, computed host-side from the validated
+    # profile snapshot -- not as an OCI label read off the loaded image the
+    # way __ai_sandbox_prepare_shared_state does for the base image, because
+    # msb load drops labels (see docs/session-images.md). The descriptor's
+    # shared_state is either null or a validated {id, quota} object (Task 1),
+    # so state_id and state_quota below are either both empty or both set.
+    set -l state_id (printf '%s\n' $descriptor | jq -r '.shared_state.id // empty')
+    set -l state_quota (printf '%s\n' $descriptor | jq -r '.shared_state.quota // empty')
+    set -l shared_state_args (__ai_sandbox_shared_state_request_args claude-session "$state_id" "$state_quota"); or return $status
+    # Validate the egress allowlist before initializing shared state: that can
+    # boot a VM to initialize a shared-state volume, and a host-side config
+    # error should surface before any side-effecting boot.
+    __ai_sandbox_claude_egress_args claude-session >/dev/null; or return $status
+    __ai_sandbox_initialize_shared_state claude-session "$resolved_image" $shared_state_args; or return $status
+
+    __ai_sandbox_run_claude "$launcher_file" "$resolved_image" (count $shared_state_args) $shared_state_args $claude_args
 end

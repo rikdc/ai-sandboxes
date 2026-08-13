@@ -13,6 +13,9 @@ cleanup() {
   if test -n "${tag_empty:-}"; then
     docker image rm -f "$tag_empty" >/dev/null 2>&1 || true
   fi
+  if test -n "${tag_icm:-}"; then
+    docker image rm -f "$tag_icm" >/dev/null 2>&1 || true
+  fi
 }
 trap cleanup EXIT
 
@@ -22,10 +25,18 @@ if scripts/session/resolve-image.sh scripts/session/fixtures/valid/empty.json >/
 fi
 grep -q CLAUDE_MSB_BUILD_EGRESS "$stderr_file" || exit 1
 
-tag_empty=$(CLAUDE_MSB_BUILD_EGRESS=1 scripts/session/resolve-image.sh scripts/session/fixtures/valid/empty.json) || exit 1
+descriptor_empty=$(CLAUDE_MSB_BUILD_EGRESS=1 scripts/session/resolve-image.sh scripts/session/fixtures/valid/empty.json) || exit 1
+tag_empty=$(jq -er '.image' <<<"$descriptor_empty") || exit 1
 docker image inspect "$tag_empty" >/dev/null || exit 1
+jq -e '.shared_state == null' <<<"$descriptor_empty" >/dev/null \
+  || { echo 'FAIL: empty profile should have a null shared_state in its descriptor' >&2; exit 1; }
 
-tag_empty_again=$(scripts/session/resolve-image.sh scripts/session/fixtures/valid/empty.json) || exit 1
-test "$tag_empty" = "$tag_empty_again" || exit 1
+descriptor_empty_again=$(scripts/session/resolve-image.sh scripts/session/fixtures/valid/empty.json) || exit 1
+test "$descriptor_empty" = "$descriptor_empty_again" || exit 1
+
+descriptor_icm=$(CLAUDE_MSB_BUILD_EGRESS=1 scripts/session/resolve-image.sh scripts/session/fixtures/valid/icm-with-shared-state.json) || exit 1
+tag_icm=$(jq -er '.image' <<<"$descriptor_icm") || exit 1
+jq -e '.shared_state.id == "session-tools-verify" and .shared_state.quota == "2G"' <<<"$descriptor_icm" >/dev/null \
+  || { echo 'FAIL: icm-with-shared-state descriptor did not carry the requested shared_state' >&2; exit 1; }
 
 echo ok

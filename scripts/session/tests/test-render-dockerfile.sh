@@ -6,8 +6,9 @@ context_dir=$(mktemp -d) || exit 1
 marketplace_context_dir=$(mktemp -d) || exit 1
 apt_context_dir=$(mktemp -d) || exit 1
 npm_context_dir=$(mktemp -d) || exit 1
+tools_context_dir=$(mktemp -d) || exit 1
 combined_context_dir=$(mktemp -d) || exit 1
-trap 'rm -rf "$context_dir" "$marketplace_context_dir" "$apt_context_dir" "$npm_context_dir" "$combined_context_dir"' EXIT
+trap 'rm -rf "$context_dir" "$marketplace_context_dir" "$apt_context_dir" "$npm_context_dir" "$tools_context_dir" "$combined_context_dir"' EXIT
 
 if scripts/session/render-dockerfile.sh "$context_dir" 'ai-sandboxes-claude-session-base:deadbeef' '{"schema_version":1}' 2>/dev/null; then
   echo 'FAIL: should refuse a context dir with no resolved.json' >&2
@@ -108,22 +109,43 @@ fi
 jq -e '.npm | length == 1 and .[0].package == "cowsay"' "$npm_context_dir/session-npm-packages.json" >/dev/null || exit 1
 test "$(find "$npm_context_dir" -maxdepth 1 -type f | wc -l)" -eq 4 || exit 1
 
+echo '{"ok":true}' >"$tools_context_dir/resolved.json" || exit 1
+profile_with_tools='{"schema_version":1,"tools":[{"id":"rtk","version":"v0.45.0","sha256":"80a746dd305ef944ff50ef011ae4ce3878dd5ba88dfe35d859d05498191637c3"}]}'
+scripts/session/render-dockerfile.sh "$tools_context_dir" 'ai-sandboxes-claude-session-base:deadbeef' "$profile_with_tools" || exit 1
+
+test -f "$tools_context_dir/Dockerfile" || exit 1
+test -f "$tools_context_dir/session-tool-catalog.json" || exit 1
+test -f "$tools_context_dir/session-tools-selection.json" || exit 1
+test -f "$tools_context_dir/install-selected.sh" || exit 1
+test -f "$tools_context_dir/install-github-release-tar.sh" || exit 1
+# The trailing backslash is literal Dockerfile content, not a shell escape.
+grep -qFx "RUN install -d /usr/local/libexec \\" "$tools_context_dir/Dockerfile" || exit 1
+grep -qFx ' && /usr/local/lib/ai-sandboxes/install-selected.sh runtime /opt/session-tool-catalog.json /opt/session-tools-selection.json' "$tools_context_dir/Dockerfile" || exit 1
+grep -qF -- '--chmod=0444 resolved.json' "$tools_context_dir/Dockerfile" || exit 1
+diff -q "$tools_context_dir/session-tool-catalog.json" config/tool-catalog.json || exit 1
+diff -q "$tools_context_dir/install-selected.sh" scripts/tools/install-selected.sh || exit 1
+diff -q "$tools_context_dir/install-github-release-tar.sh" scripts/tools/install-github-release-tar.sh || exit 1
+jq -e '.tools | length == 1 and .[0].id == "rtk"' "$tools_context_dir/session-tools-selection.json" >/dev/null || exit 1
+test "$(find "$tools_context_dir" -maxdepth 1 -type f | wc -l)" -eq 6 || exit 1
+
 echo '{"ok":true}' >"$combined_context_dir/resolved.json" || exit 1
-profile_combined=$(cat scripts/session/fixtures/valid/apt-npm-marketplaces.json) || exit 1
+profile_combined=$(jq -c '. + {tools: [{"id":"rtk","version":"v0.45.0","sha256":"80a746dd305ef944ff50ef011ae4ce3878dd5ba88dfe35d859d05498191637c3"}]}' scripts/session/fixtures/valid/apt-npm-marketplaces.json) || exit 1
 scripts/session/render-dockerfile.sh "$combined_context_dir" 'ai-sandboxes-claude-session-base:deadbeef' "$profile_combined" || exit 1
 
 test -f "$combined_context_dir/Dockerfile" || exit 1
 # Canonical layer order regardless of profile field order: apt, then npm,
-# then the marketplace build stage's output, then resolved.json (patched and
-# locked) last of all — so its per-build-unique content never busts the
-# cache for any package-installing layer.
+# then curated tools, then the marketplace build stage's output, then
+# resolved.json (patched and locked) last of all — so its per-build-unique
+# content never busts the cache for any package-installing layer.
 apt_line=$(grep -n 'RUN /usr/local/lib/ai-sandboxes/install-session-apt-packages.sh' "$combined_context_dir/Dockerfile" | cut -d: -f1) || exit 1
 npm_line=$(grep -n 'RUN /usr/local/lib/ai-sandboxes/install-session-npm-packages.sh' "$combined_context_dir/Dockerfile" | cut -d: -f1) || exit 1
+tools_line=$(grep -n 'install-selected.sh runtime /opt/session-tool-catalog.json' "$combined_context_dir/Dockerfile" | cut -d: -f1) || exit 1
 marketplace_copy_line=$(grep -n 'COPY --from=build --chown=root:root /opt/claude-plugin-cache /opt/claude-plugin-cache' "$combined_context_dir/Dockerfile" | cut -d: -f1) || exit 1
 resolved_copy_line=$(grep -n 'COPY --chown=root:root resolved.json /opt/session-profile/resolved.json' "$combined_context_dir/Dockerfile" | cut -d: -f1) || exit 1
 patch_line=$(grep -n 'RUN /usr/local/lib/ai-sandboxes/patch-apt-provenance.sh' "$combined_context_dir/Dockerfile" | cut -d: -f1) || exit 1
 test "$apt_line" -lt "$npm_line" || exit 1
-test "$npm_line" -lt "$marketplace_copy_line" || exit 1
+test "$npm_line" -lt "$tools_line" || exit 1
+test "$tools_line" -lt "$marketplace_copy_line" || exit 1
 test "$marketplace_copy_line" -lt "$resolved_copy_line" || exit 1
 test "$resolved_copy_line" -lt "$patch_line" || exit 1
 if grep -qF -- '--chmod=0444 resolved.json' "$combined_context_dir/Dockerfile"; then
@@ -132,6 +154,6 @@ if grep -qF -- '--chmod=0444 resolved.json' "$combined_context_dir/Dockerfile"; 
 fi
 tail -3 "$combined_context_dir/Dockerfile" | grep -qF 'chmod 0444 /opt/session-profile/resolved.json' || exit 1
 tail -1 "$combined_context_dir/Dockerfile" | grep -qFx 'USER node' || exit 1
-test "$(find "$combined_context_dir" -maxdepth 1 -type f | wc -l)" -eq 10 || exit 1
+test "$(find "$combined_context_dir" -maxdepth 1 -type f | wc -l)" -eq 14 || exit 1
 
 echo ok

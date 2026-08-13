@@ -106,6 +106,13 @@ YAML is deferred rather than introducing a second parser dependency.
       { "package": "ruff", "version": "0.9.1" }
     ]
   },
+  "tools": [
+    { "id": "rtk", "version": "v0.45.0", "sha256": "80a746dd305ef944ff50ef011ae4ce3878dd5ba88dfe35d859d05498191637c3" }
+  ],
+  "shared_state": {
+    "id": "personal",
+    "quota": "2G"
+  },
   "claude_marketplaces": [
     {
       "url": "https://github.com/org/plugins.git",
@@ -123,6 +130,31 @@ changes, malformed package names/versions, and duplicate package names within
 `apt` or within `npm`. Marketplace entries reuse the existing public-GitHub,
 full-commit-SHA, safe-path, and plugin-name constraints. Profiles also have
 package-count, field-length, and estimated-size limits.
+
+`tools` selects zero or more curated, pinned binary tools from the
+repository-controlled `config/tool-catalog.json` — this is not arbitrary
+binary download support; a profile can only select a catalog `id` that
+already exists, and can only pin a `version` and `sha256`, never a
+repository, release asset name, archive path, adapter, or install command.
+Generic Python packages, arbitrary GitHub releases outside the catalog,
+private registries, and a new package manager are explicitly out of scope.
+Each `tools` entry is validated by *delegating* to
+`scripts/tools/validate-selection.sh` — the same script the base image's own
+`config/tools.json`/`config/runtime.json` mechanism already uses (see
+`images/tools/Dockerfile`) — rather than re-implementing its id/version/
+sha256/shared-state regexes a second time in `validate-profile.sh`, which
+would risk the two mechanisms drifting apart. `shared_state` reuses
+`runtime.json`'s validation rules exactly: `id` matches
+`^[a-z0-9][a-z0-9-]{0,62}$`, `quota` matches `^[1-9][0-9]*[KMGT]$`. A
+catalog tool with `state_wrapper` (currently: `icm`) requires a non-null
+`shared_state` in the same profile — this direction is enforced by
+`scripts/tools/validate-selection.sh` itself. The reverse is *not* something
+`scripts/tools/validate-selection.sh` enforces (the base-image mechanism has
+no notion of "unused" shared state, since a host deliberately maintains
+`config/runtime.json`), but a session profile is per-invocation, host-supplied
+data, so `validate-profile.sh` adds a session-specific rule on top: a
+`shared_state` request with no selected tool that actually needs it is
+rejected, rather than silently provisioning an unused host-side volume.
 
 Direct npm and Python package versions are mandatory and must be an exact
 semantic version (optionally with a pre-release or build-metadata suffix,
@@ -195,6 +227,23 @@ generic loader also used for non-session images) only checks whether *a*
 image exists under the tag, not whether it is the right one. `msb load`
 does not retain OCI labels, so this second check compares the preserved OCI
 config digest reported by msb with Docker's image ID instead.
+
+The same label-stripping behavior means `msb load` cannot carry a session
+image's `shared_state` request the way the base image carries its own (fixed,
+build-arg-derived) shared-state labels for `__ai_sandbox_shared_state_mount_args`
+to read. Instead, `resolve-image.sh` prints a small JSON descriptor —
+`{"image": "<tag>", "shared_state": {"id": "...", "quota": "..."}|null}` —
+computed entirely from the already-validated, host-side canonical profile
+snapshot, never from anything guest-controlled or re-read from disk after
+validation. `claude-session` parses this descriptor and calls
+`__ai_sandbox_shared_state_request_args` (a narrow, standalone helper that
+validates the id/quota shape and builds the same `--mount-named
+agent-state-<id>-v1:/var/lib/agent-state:kind=dir,quota=<quota>` argument the
+label-based path produces) followed by the existing, unmodified
+`__ai_sandbox_initialize_shared_state`. The base image's own
+`claude`/`codex` launchers are unaffected: they still derive shared state from
+msb image labels via `__ai_sandbox_shared_state_mount_args`, which this
+mechanism does not touch.
 
 Otherwise, the resolver creates a temporary build context that contains only
 generated files and trusted installer scripts; it must never use the project
@@ -269,6 +318,42 @@ and venv support through apt, creates an image-local virtual environment at
 `/opt/claude-session/python`, and installs validated Python dependencies there.
 The final virtual environment is root-owned and read-only, and its bin directory
 is added to `PATH`.
+
+### Curated tools
+
+`tools` entries install via the exact same trusted chain the base image's
+`config/tools.json`/`config/runtime.json` mechanism already uses:
+`scripts/tools/install-selected.sh` (phase `runtime`) and
+`scripts/tools/install-github-release-tar.sh`, both copied into the build
+context unmodified, alongside a copy of the trusted
+`config/tool-catalog.json` and a profile-derived selection document. This
+layer runs after npm and before the marketplace layer, under `USER root` in
+the final stage (not a discarded build stage, since a tool's installed
+footprint under `/usr/local/bin`/`/usr/local/libexec` isn't confined to one
+copyable directory the way npm's prefix is) — unlike npm's registry
+installs, a github-release-tar install runs no third-party lifecycle hooks
+and downloads only a fixed, catalog-pinned URL whose SHA-256 is verified
+before extraction, so it carries none of npm's "arbitrary install-time code"
+risk and does not need npm's node-then-relock privilege dance.
+
+Installed binaries land under root-owned, non-writable paths exactly as the
+base image's runtime tool mechanism already does: a tool with no
+`state_wrapper` (`rtk`) installs directly to `/usr/local/bin/<binary>`,
+runnable by `node`. A tool with `state_wrapper` (`icm`) installs its real
+binary to `/usr/local/libexec/<binary>` and a launcher symlink at
+`/usr/local/bin/<binary>` pointing at the shared
+`/usr/local/libexec/ai-sandboxes-state-wrapper`, which — except for a
+`--version` bypass — refuses to run unless `/var/lib/agent-state` is
+present and writable, then exports the tool's configured environment
+variable (`ICM_DB_PATH` for `icm`) pointing under
+`/var/lib/agent-state/<state directory>/`, and only then execs the real
+binary. Direct use of `icm` therefore fails safely with no shared-state
+mount, and only `/var/lib/agent-state` is ever writable for its state —
+`/usr/local/bin` and `/usr/local/libexec` themselves are never made
+writable to `node`. `resolved.json` records each selected tool's exact
+`id`/`version`/`sha256`, the catalog's `binary` name for it
+(`packages.tools`), a `tool_catalog_sha256` identifying the exact catalog
+content used, and the requested `shared_state` (or `null`).
 
 ### Claude marketplaces and plugins
 

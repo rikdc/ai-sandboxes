@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -o pipefail
 
+repo_root=$(cd "$(dirname "$0")/../.." && pwd) || exit 1
+
 profile_path=${1:?usage: validate-profile.sh PROFILE_PATH}
 
 die() {
@@ -71,7 +73,7 @@ jq -e --argjson max_len "$max_field_length" --argjson max_pkgs "$max_packages" '
       (($p | length) == ($p | unique | length)));
 
   (type == "object") and
-  ((keys - ["schema_version","apt","npm","python","claude_marketplaces"]) == []) and
+  ((keys - ["schema_version","apt","npm","python","claude_marketplaces","tools","shared_state"]) == []) and
   (.schema_version == 1) and
   ((.apt // []) as $apt | ($apt | type == "array") and all($apt[]; valid_apt_entry) and (($apt | map(.name) | length) == ($apt | map(.name) | unique | length))) and
   ((.npm // []) as $npm | ($npm | type == "array") and all($npm[]; valid_pkg_entry) and (($npm | map(.package) | length) == ($npm | map(.package) | unique | length))) and
@@ -83,5 +85,47 @@ jq -e --argjson max_len "$max_field_length" --argjson max_pkgs "$max_packages" '
   ((.claude_marketplaces // []) as $mp | ($mp | type == "array") and all($mp[]; valid_marketplace_entry)) and
   ((((.apt // []) | length) + ((.npm // []) | length) + (((.python.packages) // []) | length)) <= $max_pkgs)
 ' "$snapshot" >/dev/null || die 'invalid session profile'
+
+# Ensure tools/shared_state have the correct JSON types before delegating validation.
+# This catches cases like {"tools":false} or {"shared_state":false}, which would
+# silently become {"tools":[]} or {"shared_state":null} via the // operator below,
+# but we must reject to avoid passing invalid data to downstream consumers.
+jq -e '
+  (if has("tools") then (.tools | type) == "array" else true end) and
+  (if has("shared_state") then (.shared_state | type) == "object" else true end)
+' "$snapshot" >/dev/null 2>&1 \
+  || die 'tools must be an array and shared_state must be an object or omitted'
+
+# tools/shared_state reuse the exact structural and semantic checks
+# scripts/tools/validate-selection.sh already enforces for the base-image
+# tool-selection mechanism (config/tools.json + config/runtime.json), rather
+# than re-implementing the id/version/sha256/shared-state regexes a second
+# time and risking the two copies drifting apart. Only config/tool-catalog.json
+# (repository-controlled, never modified by a profile) is ever passed as the
+# catalog; a profile can select an id already in it, never define a new one.
+tools_selection=$(jq -c '{tools: (.tools // [])}' "$snapshot") || die 'could not read tools selection from profile'
+tools_runtime=$(jq -c '{shared_state: (.shared_state // null)}' "$snapshot") || die 'could not read shared_state from profile'
+
+tools_selection_tmp=$(mktemp) || die 'could not create a scratch file for the tools selection'
+tools_runtime_tmp=$(mktemp) || die 'could not create a scratch file for the shared-state request'
+trap 'rm -f "$snapshot" "$tools_selection_tmp" "$tools_runtime_tmp"' EXIT
+printf '%s\n' "$tools_selection" >"$tools_selection_tmp" || die 'could not write tools selection scratch file'
+printf '%s\n' "$tools_runtime" >"$tools_runtime_tmp" || die 'could not write shared-state scratch file'
+
+"$repo_root/scripts/tools/validate-selection.sh" "$repo_root/config/tool-catalog.json" "$tools_selection_tmp" "$tools_runtime_tmp" >/dev/null 2>&1 \
+  || die 'invalid tools or shared_state; see docs/session-images.md'
+
+# scripts/tools/validate-selection.sh only enforces the direction a
+# state_wrapper tool requires shared_state, not the reverse. A session
+# profile is per-invocation, host-supplied data (unlike the base image's
+# config/runtime.json, which a host maintains deliberately for its own
+# fixed set of runtime-selected tools), so reject a shared_state request
+# that no selected tool would actually consume, rather than silently
+# provisioning an unused host-side volume. See docs/session-images.md.
+jq -e --slurpfile catalog "$repo_root/config/tool-catalog.json" '
+  (.shared_state // null) == null or
+  ((.tools // []) as $selected |
+    any($catalog[0].tools[]; (.id as $id | $selected | any(.id == $id)) and (.state_wrapper != null)))
+' "$snapshot" >/dev/null 2>&1 || die 'shared_state is set but no selected tool requires shared state'
 
 jq -Sc . "$snapshot"

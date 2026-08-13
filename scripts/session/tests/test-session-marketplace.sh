@@ -15,7 +15,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-session_tag=$(CLAUDE_MSB_BUILD_EGRESS=1 scripts/session/resolve-image.sh scripts/session/fixtures/valid/claude-marketplaces.json) || exit 1
+session_tag=$(CLAUDE_MSB_BUILD_EGRESS=1 scripts/session/resolve-image.sh scripts/session/fixtures/valid/claude-marketplaces.json | jq -er '.image') || exit 1
 
 # Marketplace registration and code reachability are two different failures:
 # a marketplace can show as enabled in `claude plugin list` (settings.json

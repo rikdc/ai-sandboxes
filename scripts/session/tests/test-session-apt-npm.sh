@@ -15,7 +15,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-session_tag=$(CLAUDE_MSB_BUILD_EGRESS=1 scripts/session/resolve-image.sh scripts/session/fixtures/valid/apt-npm-packages.json) || exit 1
+session_tag=$(CLAUDE_MSB_BUILD_EGRESS=1 scripts/session/resolve-image.sh scripts/session/fixtures/valid/apt-npm-packages.json | jq -er '.image') || exit 1
 
 docker run --rm --user node "$session_tag" tree --version >/dev/null \
   || { echo 'apt-installed tree binary does not run' >&2; exit 1; }
