@@ -118,8 +118,8 @@ test -f "$tools_context_dir/session-tool-catalog.json" || exit 1
 test -f "$tools_context_dir/session-tools-selection.json" || exit 1
 test -f "$tools_context_dir/install-selected.sh" || exit 1
 test -f "$tools_context_dir/install-github-release-tar.sh" || exit 1
-grep -qFx 'RUN install -d /usr/local/libexec \' "$tools_context_dir/Dockerfile" || exit 1
-# shellcheck disable=SC1003 # trailing backslash is literal content being matched, not an escape
+# The trailing backslash is literal Dockerfile content, not a shell escape.
+grep -qFx "RUN install -d /usr/local/libexec \\" "$tools_context_dir/Dockerfile" || exit 1
 grep -qFx ' && /usr/local/lib/ai-sandboxes/install-selected.sh runtime /opt/session-tool-catalog.json /opt/session-tools-selection.json' "$tools_context_dir/Dockerfile" || exit 1
 grep -qF -- '--chmod=0444 resolved.json' "$tools_context_dir/Dockerfile" || exit 1
 diff -q "$tools_context_dir/session-tool-catalog.json" config/tool-catalog.json || exit 1

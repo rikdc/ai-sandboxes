@@ -63,6 +63,8 @@ state_quota=$(jq -er '.shared_state.quota' <<<"$descriptor") || exit 1
 scripts/session/load-image.sh "$session_tag" || exit 1
 
 fish_status=0
+# The Fish program intentionally owns its variable expansion.
+# shellcheck disable=SC2016
 fish_output=$(fish -c '
   source shell/fish/lib/ai-sandbox.fish
   set -l tag $argv[1]

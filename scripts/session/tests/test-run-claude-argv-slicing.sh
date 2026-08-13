@@ -45,6 +45,9 @@ run_probe() {
   # inside the fish script instead (after startup has run), and confirm `msb`
   # actually resolves to the stub before invoking the launcher, so the test
   # fails loudly instead of silently exercising the real msb binary.
+  # These variables are consumed by the external Fish process below; its
+  # single-quoted program deliberately owns its own variable expansion.
+  # shellcheck disable=SC2034,SC2016
   MSB_STUB_CAPTURE="$capture_file" CLAUDE_MSB_PUBLIC_EGRESS=1 \
     AI_SANDBOX_TEST_LAUNCHER_FILE="$launcher_file" \
     AI_SANDBOX_TEST_LIB_FILE="$lib_file" \
