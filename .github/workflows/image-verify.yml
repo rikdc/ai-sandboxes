@@ -2,10 +2,10 @@ name: ARM64 image verification
 
 on:
   pull_request:
-    paths: [images/**, scripts/**, shell/**, config/**, docker-bake.hcl, versions.env, .dockerignore, .github/workflows/**]
+    paths: [images/**, scripts/**, shell/**, config/**, docker-bake.hcl, versions.env, .dockerignore]
   push:
     branches: [main]
-    paths: [images/**, scripts/**, shell/**, config/**, docker-bake.hcl, versions.env, .dockerignore, .github/workflows/**]
+    paths: [images/**, scripts/**, shell/**, config/**, docker-bake.hcl, versions.env, .dockerignore]
   workflow_dispatch:
 
 permissions:
