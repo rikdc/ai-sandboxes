@@ -209,6 +209,27 @@ printf 'verify\n' >>"$MOCK_UPDATE_LOG"
 SH
 chmod +x "$repo/scripts/verify"
 
+# The scripts above run under `scripts/update`'s sanitized PATH, which drops
+# any directory that holds a real docker/msb. On Linux CI bash and docker share
+# /usr/bin, so `env bash` would not be able to rediscover bash through that
+# PATH. Pin every executed script to an absolute interpreter instead.
+bash_bin=$(command -v bash) || bash_bin=/bin/bash
+fix_shebag() {
+  sed -e "1s|^#!.*|#!$bash_bin|" "$1" >"$1.ts" && mv "$1.ts" "$1" && chmod +x "$1"
+}
+for script in \
+  "$repo/scripts/update" \
+  "$repo/.github/workflows/release-marker" \
+  "$repo/scripts/build" \
+  "$repo/scripts/install-fish-functions" \
+  "$repo/scripts/load-msb" \
+  "$repo/scripts/verify" \
+  "$mockdir/gitbin/git" \
+  "$mockdir/extras/bin/msb" \
+  "$mockdir/extras/bin/docker"; do
+  fix_shebag "$script"
+done
+
 gitpath="$mockdir/gitbin"
 allpath="$mockdir/gitbin:$mockdir/extras/bin"
 
