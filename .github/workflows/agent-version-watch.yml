@@ -22,7 +22,15 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - name: Update agent runtime versions
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
         run: ./.github/workflows/update-agent-versions
+      - name: Create or update pull request
+        id: cpr
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          add-paths: versions.env
+          base: main
+          branch: automated/agent-version-update
+          delete-branch: true
+          commit-message: 'chore: update agent runtime versions'
+          title: 'chore: update agent runtime versions'
+          body-path: ${{ env.PR_BODY_PATH }}
