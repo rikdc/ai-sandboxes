@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Publish the immutable agent-runtime release marker, or verify an existing
+# one idempotently: re-publishing the same tag/commit succeeds as a no-op
+# after validating the published marker.
+set -o pipefail
+IFS=$'\n\t'
+
+repository=${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}
+
+cd "$(dirname "$0")/.." || {
+  printf '%s\n' 'error: failed to cd to repository root' >&2
+  exit 1
+}
+
+usage() {
+  cat >&2 <<'EOF'
+usage:
+  publish-release-marker COMMIT
+EOF
+  exit 64
+}
+
+test "$#" = 1 || usage
+commit=$1
+
+# shellcheck disable=SC1091 # Resolved from the repository root above.
+source ./versions.env || {
+  printf '%s\n' 'error: failed to source versions.env' >&2
+  exit 1
+}
+
+marker_dir=$(mktemp -d) || exit 1
+download_dir=$(mktemp -d) || exit 1
+trap 'rm -rf -- "$marker_dir" "$download_dir"' EXIT
+marker="$marker_dir/release.json"
+
+tag="agent-versions-codex-${CODEX_VERSION}-claude-${CLAUDE_CODE_VERSION}"
+timestamp=$(date --utc +%Y-%m-%dT%H:%M:%SZ) || {
+  printf '%s\n' 'error: could not compute release timestamp' >&2
+  exit 1
+}
+
+scripts/release-marker create "$marker" "$commit" \
+  "$CODEX_VERSION" "$CLAUDE_CODE_VERSION" "$timestamp" || {
+  printf '%s\n' 'error: failed to create release marker' >&2
+  exit 1
+}
+
+if gh release view "$tag" --repo "$repository" >/dev/null 2>&1; then
+  release_commit=$(gh release view "$tag" --repo "$repository" \
+    --json targetCommitish --jq .targetCommitish) || exit 1
+  test "$release_commit" = "$commit" || {
+    printf '%s\n' "error: existing release points to $release_commit, expected $commit" >&2
+    exit 1
+  }
+  gh release download "$tag" --repo "$repository" \
+    --pattern release.json --dir "$download_dir" || exit 1
+  scripts/release-marker validate "$download_dir/release.json" \
+    "$commit" "$CODEX_VERSION" "$CLAUDE_CODE_VERSION" || exit 1
+  exit 0
+fi
+
+if gh api "repos/$repository/git/ref/tags/$tag" >/dev/null 2>&1; then
+  printf '%s\n' "error: tag already exists without a release: $tag" >&2
+  exit 1
+fi
+
+gh release create "$tag" --repo "$repository" --target "$commit" \
+  --title "Agent versions: Codex ${CODEX_VERSION}, Claude Code ${CLAUDE_CODE_VERSION}" \
+  --notes "Machine-readable agent runtime release marker for ${commit}." \
+  "$marker" || {
+  printf '%s\n' 'error: failed to publish release marker' >&2
+  exit 1
+}

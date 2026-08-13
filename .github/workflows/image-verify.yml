@@ -48,47 +48,17 @@ jobs:
           BEFORE: ${{ github.event.before }}
         run: |
           git show "$BEFORE:versions.env" > previous-versions.env
-          set +e
-          ./scripts/release-marker changed previous-versions.env versions.env
-          status=$?
-          set -e
-          case "$status" in
-            0) echo 'changed=true' >> "$GITHUB_OUTPUT" ;;
-            1) echo 'changed=false' >> "$GITHUB_OUTPUT" ;;
-            *) exit "$status" ;;
-          esac
+          if ./scripts/release-marker changed previous-versions.env versions.env; then
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          else
+            status=$?
+            test "$status" = 1 || exit "$status"
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          fi
       - name: Publish immutable release marker
         if: steps.versions.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           COMMIT: ${{ github.sha }}
-        run: |
-          set -a
-          source versions.env
-          set +a
-          tag="agent-versions-codex-${CODEX_VERSION}-claude-${CLAUDE_CODE_VERSION}"
-          timestamp=$(date --utc +%Y-%m-%dT%H:%M:%SZ)
-          ./scripts/release-marker create release.json "$COMMIT" "$CODEX_VERSION" "$CLAUDE_CODE_VERSION" "$timestamp"
-
-          if gh release view "$tag" --repo "$REPOSITORY" >/dev/null 2>&1; then
-            release_commit=$(gh release view "$tag" --repo "$REPOSITORY" --json targetCommitish --jq .targetCommitish)
-            test "$release_commit" = "$COMMIT" || {
-              printf '%s\n' "error: existing release points to $release_commit, expected $COMMIT" >&2
-              exit 1
-            }
-            mkdir existing-marker
-            gh release download "$tag" --repo "$REPOSITORY" --pattern release.json --dir existing-marker
-            ./scripts/release-marker validate existing-marker/release.json "$COMMIT" "$CODEX_VERSION" "$CLAUDE_CODE_VERSION"
-            exit 0
-          fi
-
-          if gh api "repos/$REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
-            printf '%s\n' "error: tag already exists without a release: $tag" >&2
-            exit 1
-          fi
-
-          gh release create "$tag" --repo "$REPOSITORY" --target "$COMMIT" \
-            --title "Agent versions: Codex ${CODEX_VERSION}, Claude Code ${CLAUDE_CODE_VERSION}" \
-            --notes "Machine-readable agent runtime release marker for ${COMMIT}." \
-            release.json
+        run: ./scripts/publish-release-marker "$COMMIT"
