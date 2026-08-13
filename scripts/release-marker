@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# Immutable release-marker CLI for agent runtime versions.
+# Exit contract: 0 changed/valid, 1 unchanged/invalid, 2 error, 64 usage.
+set -o pipefail
+IFS=$'\n\t'
 
 version_pattern='^[A-Za-z0-9][A-Za-z0-9._-]*$'
 commit_pattern='^[0-9a-f]{40}$'
 timestamp_pattern='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
 
 usage() {
-  printf '%s\n' 'usage:' >&2
-  printf '%s\n' '  release-marker changed OLD_VERSIONS_ENV NEW_VERSIONS_ENV' >&2
-  printf '%s\n' '  release-marker create OUTPUT COMMIT CODEX_VERSION CLAUDE_CODE_VERSION CREATED_AT' >&2
-  printf '%s\n' '  release-marker validate FILE COMMIT CODEX_VERSION CLAUDE_CODE_VERSION' >&2
+  cat >&2 <<'EOF'
+usage:
+  release-marker changed OLD_VERSIONS_ENV NEW_VERSIONS_ENV
+  release-marker create OUTPUT COMMIT CODEX_VERSION CLAUDE_CODE_VERSION CREATED_AT
+  release-marker validate FILE COMMIT CODEX_VERSION CLAUDE_CODE_VERSION
+EOF
   exit 64
 }
 
@@ -18,8 +23,12 @@ valid_version() {
 }
 
 read_version() {
-  local file=$1 key=$2
-  local line value='' matches=0 prefix="${key}="
+  local file=$1 key=$2 line value='' matches=0
+  local prefix="${key}="
+  test -r "$file" || {
+    printf '%s\n' "error: cannot read $file" >&2
+    return 2
+  }
   while IFS= read -r line || test -n "$line"; do
     if [[ "$line" == "$prefix"* ]]; then
       value=${line#"$prefix"}
@@ -51,43 +60,62 @@ validate_inputs() {
   done
 }
 
-case "${1:-}" in
-  changed)
-    test "$#" = 3 || usage
-    old_codex=$(read_version "$2" CODEX_VERSION)
-    old_claude=$(read_version "$2" CLAUDE_CODE_VERSION)
-    new_codex=$(read_version "$3" CODEX_VERSION)
-    new_claude=$(read_version "$3" CLAUDE_CODE_VERSION)
-    if test "$old_codex" != "$new_codex" || test "$old_claude" != "$new_claude"; then
-      exit 0
-    fi
-    exit 1
-    ;;
-  create)
-    test "$#" = 6 || usage
-    output=$2
-    validate_inputs "$3" "$4" "$5"
-    [[ "$6" =~ $timestamp_pattern ]] || {
-      printf '%s\n' 'error: created_at must be an RFC 3339 UTC timestamp' >&2
-      exit 1
-    }
-    jq --null-input --arg commit "$3" --arg codex "$4" --arg claude "$5" --arg created_at "$6" \
-      '{schema_version: 1, upstream_commit: $commit, codex_version: $codex, claude_code_version: $claude, created_at: $created_at}' >"$output"
-    ;;
-  validate)
-    test "$#" = 5 || usage
-    validate_inputs "$3" "$4" "$5"
-    jq --exit-status \
-      --arg commit "$3" \
-      --arg codex "$4" \
-      --arg claude "$5" \
-      'type == "object" and
-       (keys | sort) == ["claude_code_version", "codex_version", "created_at", "schema_version", "upstream_commit"] and
-       .schema_version == 1 and
-       .upstream_commit == $commit and
-       .codex_version == $codex and
-       .claude_code_version == $claude and
-       (.created_at | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))' "$2" >/dev/null
-    ;;
-  *) usage ;;
-esac
+main() {
+  case "${1:-}" in
+    changed)
+      test "$#" = 3 || usage
+      old_codex=$(read_version "$2" CODEX_VERSION) || return 2
+      old_claude=$(read_version "$2" CLAUDE_CODE_VERSION) || return 2
+      new_codex=$(read_version "$3" CODEX_VERSION) || return 2
+      new_claude=$(read_version "$3" CLAUDE_CODE_VERSION) || return 2
+      if [[ "$old_codex" != "$new_codex" ]] ||
+        [[ "$old_claude" != "$new_claude" ]]; then
+        return 0
+      fi
+      return 1
+      ;;
+    create)
+      test "$#" = 6 || usage
+      output=$2
+      validate_inputs "$3" "$4" "$5" || return 1
+      if ! [[ "$6" =~ $timestamp_pattern ]] ||
+        ! jq --null-input --arg created_at "$6" \
+          '($created_at | fromdateiso8601 != null)' >/dev/null; then
+        printf '%s\n' 'error: created_at must be an RFC 3339 UTC timestamp' >&2
+        return 1
+      fi
+      jq --null-input \
+        --arg commit "$3" \
+        --arg codex "$4" \
+        --arg claude "$5" \
+        --arg created_at "$6" \
+        '{schema_version: 1,
+          upstream_commit: $commit,
+          codex_version: $codex,
+          claude_code_version: $claude,
+          created_at: $created_at}' >"$output" || return 1
+      ;;
+    validate)
+      test "$#" = 5 || usage
+      validate_inputs "$3" "$4" "$5" || return 1
+      jq --exit-status \
+        --arg commit "$3" \
+        --arg codex "$4" \
+        --arg claude "$5" \
+        'type == "object" and
+         (keys | sort) == [
+           "claude_code_version", "codex_version", "created_at",
+           "schema_version", "upstream_commit"] and
+         .schema_version == 1 and
+         .upstream_commit == $commit and
+         .codex_version == $codex and
+         .claude_code_version == $claude and
+         (.created_at | type == "string" and
+          test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$") and
+          (fromdateiso8601 != null))' "$2" >/dev/null || return 1
+      ;;
+    *) usage ;;
+  esac
+}
+
+main "$@"

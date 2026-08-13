@@ -1,14 +1,39 @@
 #!/usr/bin/env bash
-set -euo pipefail
-cd "$(dirname "$0")/.."
+# Watch Codex and Claude Code npm releases, update versions.env on
+# automated/agent-version-update, and keep an open PR bumping them.
+set -o pipefail
+IFS=$'\n\t'
 
 version_pattern='^[A-Za-z0-9][A-Za-z0-9._-]*$'
 branch=automated/agent-version-update
 repository=${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}
 
+cd "$(dirname "$0")/.." || {
+  printf '%s\n' 'error: failed to cd to repository root' >&2
+  exit 1
+}
+
+read_env_value() {
+  local key=$1 value='' line
+  while IFS= read -r line; do
+    [[ "$line" == "$key="* ]] && value=${line#"$key="}
+  done <versions.env
+  printf '%s\n' "$value"
+}
+
+version_le() {
+  # 0 if $1 sorts at or below $2 (GNU version sort; Ubuntu runners).
+  test "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n 1)" = "$1"
+}
+
 latest_version() {
   local package=$1 version
-  version=$(curl --fail --location --silent --show-error --retry 3 "https://registry.npmjs.org/${package}/latest" | jq --raw-output --exit-status .version)
+  version=$(curl --fail --location --silent --show-error --retry 3 \
+    "https://registry.npmjs.org/${package}/latest" |
+    jq --raw-output --exit-status .version) || {
+    printf '%s\n' "error: could not fetch latest $package version" >&2
+    return 1
+  }
   [[ "$version" =~ $version_pattern && "$version" != *..* ]] || {
     printf '%s\n' "error: invalid discovered version for $package: $version" >&2
     return 1
@@ -16,8 +41,8 @@ latest_version() {
   printf '%s\n' "$version"
 }
 
-codex_version=$(latest_version '@openai%2Fcodex')
-claude_version=$(latest_version '@anthropic-ai%2Fclaude-code')
+codex_version=$(latest_version '@openai%2Fcodex') || exit 1
+claude_version=$(latest_version '@anthropic-ai%2Fclaude-code') || exit 1
 
 if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
   git fetch origin "$branch"
@@ -26,8 +51,42 @@ else
   git switch -c "$branch"
 fi
 
+existing_codex=$(read_env_value CODEX_VERSION)
+existing_claude=$(read_env_value CLAUDE_CODE_VERSION)
+
+if [[ "$existing_codex" = "$codex_version" ]] &&
+  [[ "$existing_claude" = "$claude_version" ]]; then
+  printf '%s\n' 'Agent runtime versions are current.'
+  exit 0
+fi
+
+if [[ -n "$existing_codex" ]] &&
+  [[ "$existing_codex" != "$codex_version" ]] &&
+  version_le "$codex_version" "$existing_codex"; then
+  printf '%s\n' "error: refusing to downgrade Codex on $branch" \
+    "($existing_codex -> $codex_version); an open PR may already be newer" >&2
+  exit 1
+fi
+if [[ -n "$existing_claude" ]] &&
+  [[ "$existing_claude" != "$claude_version" ]] &&
+  version_le "$claude_version" "$existing_claude"; then
+  printf '%s\n' "error: refusing to downgrade Claude Code on $branch" \
+    "($existing_claude -> $claude_version); an open PR may already be newer" >&2
+  exit 1
+fi
+
+grep -q '^CODEX_VERSION=' versions.env || {
+  printf '%s\n' 'error: versions.env lacks a CODEX_VERSION assignment' >&2
+  exit 1
+}
+grep -q '^CLAUDE_CODE_VERSION=' versions.env || {
+  printf '%s\n' 'error: versions.env lacks a CLAUDE_CODE_VERSION assignment' >&2
+  exit 1
+}
+
 sed -i "s/^CODEX_VERSION=.*/CODEX_VERSION=$codex_version/" versions.env
-sed -i "s/^CLAUDE_CODE_VERSION=.*/CLAUDE_CODE_VERSION=$claude_version/" versions.env
+sed -i \
+  "s/^CLAUDE_CODE_VERSION=.*/CLAUDE_CODE_VERSION=$claude_version/" versions.env
 git diff --quiet -- versions.env && {
   printf '%s\n' 'Agent runtime versions are current.'
   exit 0
@@ -35,12 +94,30 @@ git diff --quiet -- versions.env && {
 
 git config user.name 'github-actions[bot]'
 git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+gh auth setup-git || {
+  printf '%s\n' 'error: failed to configure git credentials via gh' >&2
+  exit 1
+}
 git add versions.env
-git commit -m 'chore: update agent runtime versions'
-git push --set-upstream origin "$branch"
+git commit -m 'chore: update agent runtime versions' || {
+  printf '%s\n' 'error: failed to commit version update' >&2
+  exit 1
+}
+git push --set-upstream origin "$branch" || {
+  printf '%s\n' 'error: failed to push version update to origin' >&2
+  exit 1
+}
 
-if ! gh pr list --repo "$repository" --base main --head "$branch" --state open --json number --jq '.[0].number' | grep -q .; then
+pr_body="Updates Codex to $codex_version and Claude Code to $claude_version."
+pr_body+=" Merging this pull request runs ARM64 verification and publishes"
+pr_body+=" the immutable release marker."
+
+if ! gh pr list --repo "$repository" --base main --head "$branch" \
+  --state open --json number --jq '.[0].number' | grep -q .; then
   gh pr create --repo "$repository" --base main --head "$branch" \
     --title 'chore: update agent runtime versions' \
-    --body "Updates Codex to $codex_version and Claude Code to $claude_version. Merging this pull request runs ARM64 verification and publishes the immutable release marker."
+    --body "$pr_body" || {
+    printf '%s\n' 'error: failed to open pull request' >&2
+    exit 1
+  }
 fi
