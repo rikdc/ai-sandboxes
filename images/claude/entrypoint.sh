@@ -57,16 +57,25 @@ fi
 # throwaway per-launch copy under /tmp gives Claude full write freedom in its
 # own tree while the seed stays root-owned and read-only, so a compromised
 # node process cannot unlink, rename, or replace the seeded plugins that the
-# next launch would load. Guard on the path actually existing so callers that
-# do not set CLAUDE_CODE_PLUGIN_CACHE_DIR (e.g. unit tests exercising only the
+# next launch would load. The copy deliberately outlives this entrypoint and
+# is never cleaned up: claude needs it for the whole session, `exec` cannot
+# run a cleanup trap, and the container/VM is ephemeral anyway. Guard on the
+# path actually existing so callers that do not set
+# CLAUDE_CODE_PLUGIN_CACHE_DIR (e.g. unit tests exercising only the
 # settings-merge path) still no-op cleanly.
 if [[ -d "${CLAUDE_CODE_PLUGIN_CACHE_DIR:-}" ]]; then
   seed_cache="$CLAUDE_CODE_PLUGIN_CACHE_DIR"
   writable_cache=$(mktemp -d /tmp/ai-sandboxes-plugin-cache.XXXXXX) \
     || die 'could not create writable plugin cache'
-  # Copy the whole tree, dotfiles included; flags inherited from the seed
-  # (root-owned, a-w) are re-opened below so Claude can write every path.
-  cp -a -- "$seed_cache"/. "$writable_cache" \
+  # Copy the whole tree, dotfiles and symlinks included, without attempting
+  # to preserve ownership: this runs as node over root-owned seed content, and
+  # GNU's cp -a would try to preserve owner/group while other cp
+  # implementations differ (BusyBox has no --no-preserve). -R -P never follows
+  # symlinks and makes no preservation attempts; the restrictive modes
+  # inherited from the a-w seed are re-opened below so Claude can write every
+  # path. Hardlink pairs are treated as independent files, which only
+  # duplicates a few bytes in this throwaway copy.
+  cp -RP -- "$seed_cache"/. "$writable_cache" \
     || die "could not seed writable plugin cache from $seed_cache"
   chmod -R u+w "$writable_cache" \
     || die 'could not make writable plugin cache writable'
