@@ -219,6 +219,17 @@ func (e execEnv) protectedRoots(checkout string) []string {
 		filepath.Join(e.home, ".config", "fish", "functions"),
 		filepath.Join(e.home, ".config", "ai-sandboxes", "trusted"),
 		filepath.Join(e.home, ".config", "microvms"),
+		aiSandboxInstallDir(e.home, e.getenv),
+	}
+	// Also protect the directory the running binary itself lives in when it
+	// resolves outside the checkout. An attacker who replaced the executable
+	// there would run as host on the next invocation.
+	if exe, err := os.Executable(); err == nil {
+		if resolved, rerr := filepath.EvalSymlinks(exe); rerr == nil {
+			candidates = append(candidates, filepath.Dir(resolved))
+		} else {
+			candidates = append(candidates, filepath.Dir(exe))
+		}
 	}
 	for _, p := range candidates {
 		if p == "" {
@@ -421,6 +432,18 @@ func doctorCommand(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// aiSandboxInstallDir returns the directory scripts/install-ai-sandbox writes
+// the binary to. Kept in one place so both the installer's default and the
+// guard's protected root agree.
+func aiSandboxInstallDir(home string, getenv func(string) string) string {
+	if getenv != nil {
+		if v := getenv("AI_SANDBOX_INSTALL_DIR"); v != "" {
+			return v
+		}
+	}
+	return filepath.Join(home, ".local", "libexec", "ai-sandboxes")
 }
 
 // findCheckout walks upward from several anchors looking for the ai-sandboxes

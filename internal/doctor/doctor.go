@@ -221,10 +221,15 @@ func (e *Env) checkLauncher(add func(Check)) {
 		add(Check{Name: "launcher placement", Status: statusFail, Detail: "cannot determine home directory"})
 		return
 	}
-	if path, err := e.Runner.LookPath("ai-sandbox"); err != nil {
-		add(Check{Name: "ai-sandbox on PATH", Status: statusFail, Detail: "not found; build it with scripts/build-ai-sandbox and put it on PATH"})
+	installedBin := filepath.Join(e.Home, ".local", "libexec", "ai-sandboxes", "ai-sandbox")
+	if _, err := os.Stat(installedBin); err == nil {
+		add(Check{Name: "ai-sandbox binary", Status: statusOK, Detail: installedBin})
+	} else if path, lerr := e.Runner.LookPath("ai-sandbox"); lerr == nil {
+		add(Check{Name: "ai-sandbox binary", Status: statusWarn,
+			Detail: "installed copy missing at " + installedBin + "; the Fish wrapper invokes it by absolute path. Falling back to PATH copy at " + path + ". Re-run scripts/install-ai-sandbox to restore the trusted install."})
 	} else {
-		add(Check{Name: "ai-sandbox on PATH", Status: statusOK, Detail: path})
+		add(Check{Name: "ai-sandbox binary", Status: statusFail,
+			Detail: "not found; run scripts/install-ai-sandbox to build and install it to " + installedBin})
 	}
 	functionsDir := filepath.Join(e.Home, ".config", "fish", "functions")
 	trustedDir := filepath.Join(e.Home, ".config", "ai-sandboxes", "trusted")

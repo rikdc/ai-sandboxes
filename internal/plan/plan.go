@@ -63,11 +63,6 @@ type RuntimePlan struct {
 	Environment    []string     `json:"environment,omitempty"`
 	Command        []string     `json:"command"`
 	AgentArgs      []string     `json:"agent_args,omitempty"`
-
-	// Flags is the ordered per-agent msb flags that follow --user and precede
-	// the mounts (resources, security, network), computed by Resolve so the
-	// exact argv is policy, not adapter guesswork.
-	Flags []string `json:"-"`
 }
 
 // Input to Resolve. Workspace must already be canonical and validated by the
@@ -112,7 +107,6 @@ func Resolve(cfg config.Agent, in Input) (*RuntimePlan, error) {
 	}
 
 	resources := Resources{CPUs: cfg.CPUs, Memory: cfg.Memory, RootDisk: rootDisk}
-	flags := buildFlags(cfg, in.Network, rootDisk)
 
 	workspaceMount := fmt.Sprintf("%s:%s:%s", in.Workspace, guest, cfg.WorkspaceMount)
 	homeMount := fmt.Sprintf("%s:%s:%s", cfg.HomeVolume, cfg.HomePath, cfg.HomeMount)
@@ -134,33 +128,23 @@ func Resolve(cfg config.Agent, in Input) (*RuntimePlan, error) {
 		Environment:    cfg.Environment,
 		Command:        cfg.Command,
 		AgentArgs:      in.AgentArgs,
-		Flags:          flags,
 	}, nil
 }
 
-// buildFlags emits the ordered msb flags after --user, matching the fixed
-// layout the launchers used so golden argv parity is preserved.
-func buildFlags(cfg config.Agent, net Network, rootDisk string) []string {
+// resourceFlags emits the msb resource/security flags in a fixed order,
+// independent of agent name. Anything unset (CPUs == 0, empty Memory or
+// Security) is omitted.
+func resourceFlags(r Resources, security string) []string {
 	var flags []string
-	switch cfg.Name {
-	case "claude":
-		if cfg.CPUs > 0 {
-			flags = append(flags, "--cpus", fmt.Sprintf("%d", cfg.CPUs))
-		}
-		if cfg.Memory != "" {
-			flags = append(flags, "--memory", cfg.Memory)
-		}
-		flags = append(flags, "--root-disk", rootDisk)
-		if cfg.Security != "" {
-			flags = append(flags, "--security", cfg.Security)
-		}
-		flags = append(flags, networkFlags(net)...)
-	case "codex":
-		flags = append(flags, networkFlags(net)...)
-		flags = append(flags, "--root-disk", rootDisk)
-	default:
-		flags = append(flags, "--root-disk", rootDisk)
-		flags = append(flags, networkFlags(net)...)
+	if r.CPUs > 0 {
+		flags = append(flags, "--cpus", fmt.Sprintf("%d", r.CPUs))
+	}
+	if r.Memory != "" {
+		flags = append(flags, "--memory", r.Memory)
+	}
+	flags = append(flags, "--root-disk", r.RootDisk)
+	if security != "" {
+		flags = append(flags, "--security", security)
 	}
 	return flags
 }
@@ -191,7 +175,8 @@ func (p *RuntimePlan) MsbArgv() []string {
 		argv = append(argv, "--tty")
 	}
 	argv = append(argv, "--pull", "never", "--user", p.User)
-	argv = append(argv, p.Flags...)
+	argv = append(argv, resourceFlags(p.Resources, p.Security)...)
+	argv = append(argv, networkFlags(p.Network)...)
 	argv = append(argv, "--mount-dir", p.WorkspaceMount)
 	argv = append(argv, "--mount-named", p.HomeMount)
 	if p.SharedState != nil {

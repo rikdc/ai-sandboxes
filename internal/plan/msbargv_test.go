@@ -113,7 +113,8 @@ func TestCodexMsbArgvGolden(t *testing.T) {
 	}
 	want := []string{
 		"run", "--tty", "--pull", "never", "--user", "node",
-		"--net", "public", "--root-disk", "20G",
+		"--root-disk", "20G",
+		"--net", "public",
 		"--mount-dir", "/Users/me/dev/my-project:/workspace/my-project-2d3837f6cd02:rw",
 		"--mount-named", "codex-home:/home/node:rw",
 		"--workdir", "/workspace/my-project-2d3837f6cd02",
@@ -141,7 +142,8 @@ func TestCodexMsbArgvWithSharedStateAndArgs(t *testing.T) {
 	}
 	want := []string{
 		"run", "--tty", "--pull", "never", "--user", "node",
-		"--net", "public", "--root-disk", "20G",
+		"--root-disk", "20G",
+		"--net", "public",
 		"--mount-dir", "/Users/me/dev/my-project:/workspace/my-project-2d3837f6cd02:rw",
 		"--mount-named", "codex-home:/home/node:rw",
 		"--mount-named", "agent-state-work-v1:/var/lib/agent-state:kind=dir,quota=4G",

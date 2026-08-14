@@ -102,8 +102,43 @@ func TestDoctorDetectsFailures(t *testing.T) {
 	if s := checkStatus(checks, "claude egress"); s != statusFail {
 		t.Errorf("claude egress = %s, want fail", s)
 	}
-	if s := checkStatus(checks, "ai-sandbox on PATH"); s != statusOK {
-		t.Errorf("ai-sandbox on PATH = %s", s)
+	// PATH-only fallback: the installed binary is missing, but LookPath finds
+	// an ai-sandbox on PATH. Doctor should warn (not fail) and tell the user
+	// to run scripts/install-ai-sandbox.
+	if s := checkStatus(checks, "ai-sandbox binary"); s != statusWarn {
+		t.Errorf("ai-sandbox binary = %s, want warn (PATH fallback)", s)
+	}
+}
+
+func TestDoctorReportsBinaryInstalled(t *testing.T) {
+	env, home := fakeEnv(t, true, true)
+	installDir := filepath.Join(home, ".local", "libexec", "ai-sandboxes")
+	if err := os.MkdirAll(installDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(installDir, "ai-sandbox"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	checks := env.Run()
+	if s := checkStatus(checks, "ai-sandbox binary"); s != statusOK {
+		t.Errorf("ai-sandbox binary = %s, want ok when installed", s)
+	}
+}
+
+func TestDoctorFailsWhenBinaryMissing(t *testing.T) {
+	env, _ := fakeEnv(t, true, true)
+	// No install file present, and drop the PATH stub for ai-sandbox so the
+	// fallback also fails.
+	prev := env.Runner.LookPath
+	env.Runner.LookPath = func(name string) (string, error) {
+		if name == "ai-sandbox" {
+			return "", errors.New("not found")
+		}
+		return prev(name)
+	}
+	checks := env.Run()
+	if s := checkStatus(checks, "ai-sandbox binary"); s != statusFail {
+		t.Errorf("ai-sandbox binary = %s, want fail when missing everywhere", s)
 	}
 }
 
