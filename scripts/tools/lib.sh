@@ -1,4 +1,7 @@
-# Shared helpers for the tool-install adapters.
+# shellcheck shell=bash
+# Shared helpers for the tool-install adapters. Sourced by every
+# scripts/tools/install-*.sh, so no shebang -- the `shell=bash` directive
+# above is for shellcheck's benefit only.
 #
 # path_is_absent: true iff $1 refers to nothing on disk, including no
 # dangling symlink. `test ! -e` alone succeeds for a symlink whose target

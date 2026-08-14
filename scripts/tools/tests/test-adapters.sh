@@ -105,7 +105,7 @@ run_https_tar() {
   # Every test starts from a clean prefix; the prefix-overwrite guard is
   # exercised by the destination-collision test on $destination, not by
   # leftover state between test cases.
-  rm -rf "$prefix_root/$tool_id"
+  rm -rf "${prefix_root:?}/${tool_id:?}"
   FIXTURE_ARCHIVE=$1 PATH="$shim:$PATH" \
     AI_SANDBOXES_TOOLS_PREFIX_ROOT="$prefix_root" \
     bash "$repo/scripts/tools/install-https-tar.sh" \
