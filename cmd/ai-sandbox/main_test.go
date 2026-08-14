@@ -145,12 +145,32 @@ func TestExecuteRunClaude(t *testing.T) {
 
 func TestExecuteRunCodexCreatesVolumeAndInitsSharedState(t *testing.T) {
 	e, _ := testEnv(t)
+	// Create a checkout with runtime.json that configures shared state.
+	checkout := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(checkout, "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(checkout, "versions.env"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(checkout, "docker-bake.hcl"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(checkout, "config", "runtime.json"), []byte(`{"shared_state":{"id":"work","quota":"4G"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.checkout = checkout
+	e.run = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		switch {
+		case name == "docker" && len(args) > 1 && args[0] == "image" && args[1] == "inspect":
+			return []byte("sha256:abc"), nil
+		case name == "msb" && len(args) > 1 && args[0] == "image" && args[1] == "inspect":
+			return []byte(`{"config":{"digest":"sha256:abc"}}`), nil
+		}
+		return nil, fmt.Errorf("unexpected command %s %v", name, args)
+	}
 	client := newFakeMsb()
 	client.volumes = map[string]bool{"claude-home-hardened": true} // codex-home missing
-	client.labels = map[string]string{
-		"io.ai-sandboxes.shared-state.id":    "work",
-		"io.ai-sandboxes.shared-state.quota": "4G",
-	}
 	var launched []string
 	code := executeRun(context.Background(), runOptions{agent: "codex"}, e, &bytes.Buffer{}, client,
 		func(argv []string) error { launched = argv; return nil })
@@ -271,13 +291,27 @@ func TestExecutePlanEgressSymlinkedHome(t *testing.T) {
 	})
 }
 
-func TestExecuteRunInvalidLabels(t *testing.T) {
+func TestExecuteRunInvalidRuntimeJSON(t *testing.T) {
 	e, _ := testEnv(t)
+	// Create a checkout with an invalid runtime.json.
+	checkout := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(checkout, "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(checkout, "versions.env"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(checkout, "docker-bake.hcl"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(checkout, "config", "runtime.json"), []byte(`{"shared_state":{"id":"bad id","quota":"4G"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.checkout = checkout
 	client := newFakeMsb()
-	client.labels = map[string]string{"io.ai-sandboxes.shared-state.id": "x"}
 	code := executeRun(context.Background(), runOptions{agent: "claude"}, e, &bytes.Buffer{}, client, func([]string) error { return nil })
 	if code != 2 {
-		t.Fatalf("exit code = %d, want 2 (inconsistent labels)", code)
+		t.Fatalf("exit code = %d, want 2 (invalid runtime.json)", code)
 	}
 }
 

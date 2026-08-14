@@ -109,6 +109,7 @@ Profiles are JSON. YAML is not supported — see
 }
 ```
 
+<<<<<<< HEAD
 ### Field reference
 
 | Field | Required | Constraints |
@@ -188,10 +189,12 @@ is skipped when the matching session image is already present.
 `msb load` strips OCI labels, so `claude-session` performs a second
 verification after loading: it compares the preserved OCI config digest
 reported by msb with Docker's image ID. This is why shared-state can't
-piggyback on msb image labels; instead, `resolve-image.sh` prints a small
-JSON descriptor with the shared-state request, computed from the
-already-validated host-side profile snapshot, and `claude-session` builds
-the shared-state mount args from that.
+piggyback on msb image labels. For session images, `resolve-image.sh`
+prints a small JSON descriptor with the shared-state request, computed from
+the already-validated host-side profile snapshot, and `claude-session`
+builds the shared-state mount args from that. For base `claude`/`codex`
+images, the launcher reads shared state from the trusted checkout's
+`config/runtime.json` and verifies the digest match before applying it.
 
 ### 4. Run
 

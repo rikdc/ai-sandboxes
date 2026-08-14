@@ -9,7 +9,6 @@ package session
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -149,34 +148,11 @@ func (r *Resolver) verifyLoaded(ctx context.Context, tag string) error {
 	if err != nil {
 		return fmt.Errorf("cannot parse msb image metadata for %s: %w", tag, err)
 	}
-	dockerDigest, err := normalizeDigest(string(dockerOut))
-	if err != nil {
-		return fmt.Errorf("cannot read the digest of Docker image %s: %w", tag, err)
-	}
-	msbDigest, err := normalizeDigest(meta.ConfigDigest)
-	if err != nil {
-		return fmt.Errorf("msb image %s has no usable config digest: %w", tag, err)
-	}
-	if dockerDigest != msbDigest {
-		return fmt.Errorf("msb image %s does not match Docker image %s; remove it (msb image remove %s) before retrying",
-			tag, tag, tag)
+	if err := microsandbox.MatchDigests(string(dockerOut), meta.ConfigDigest); err != nil {
+		return fmt.Errorf("msb image %s does not match Docker image %s; remove it (msb image remove %s) before retrying: %w",
+			tag, tag, tag, err)
 	}
 	return nil
-}
-
-// normalizeDigest makes a digest string comparable regardless of case or an
-// optional sha256: prefix. It fails closed on either side being empty: an
-// empty-vs-empty comparison would otherwise silently accept the identity of a
-// tag whose content could not be read at all.
-func normalizeDigest(s string) (string, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return "", errors.New("empty digest")
-	}
-	if strings.HasPrefix(strings.ToLower(s), "sha256:") {
-		s = s[len("sha256:"):]
-	}
-	return strings.ToLower(s), nil
 }
 
 func runError(err error, out []byte) error {

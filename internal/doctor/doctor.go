@@ -169,32 +169,35 @@ func (e *Env) checkSharedState(add func(Check), imageTags []string) {
 	}
 	for _, tag := range []string{"ai-sandboxes-claude:local", "ai-sandboxes-codex:local"} {
 		if !contains(imageTags, tag) {
-			add(Check{Name: "shared state " + tag, Status: statusSkip, Detail: "image not loaded in msb"})
+			add(Check{Name: "image identity " + tag, Status: statusSkip, Detail: "image not loaded in msb"})
 			continue
 		}
 		out, err := e.Runner.Run("msb", "image", "inspect", "--format", "json", tag)
 		if err != nil {
-			add(Check{Name: "shared state " + tag, Status: statusSkip, Detail: "cannot inspect: " + err.Error()})
+			add(Check{Name: "image identity " + tag, Status: statusSkip, Detail: "cannot inspect: " + err.Error()})
 			continue
 		}
 		meta, err := microsandbox.ParseImageMetadata(out)
 		if err != nil {
-			add(Check{Name: "shared state " + tag, Status: statusFail, Detail: "cannot parse metadata: " + err.Error()})
+			add(Check{Name: "image identity " + tag, Status: statusFail, Detail: "cannot parse metadata: " + err.Error()})
 			continue
 		}
-		st, err := plan.SharedStateFromLabels(meta.Labels)
+		dockerOut, err := e.Runner.Run("docker", "image", "inspect", "--format", "{{.Id}}", tag)
 		if err != nil {
-			add(Check{Name: "shared state " + tag, Status: statusFail, Detail: err.Error()})
+			add(Check{Name: "image identity " + tag, Status: statusFail, Detail: "cannot inspect Docker image: " + err.Error()})
 			continue
 		}
-		actualID, actualQuota := "", ""
-		if st != nil {
-			actualID, actualQuota = st.ID, st.Quota
+		if err := microsandbox.MatchDigests(string(dockerOut), meta.ConfigDigest); err != nil {
+			add(Check{Name: "image identity " + tag, Status: statusFail, Detail: "digest mismatch; run ./scripts/load-msb: " + err.Error()})
+			continue
 		}
-		if actualID != expectedID || actualQuota != expectedQuota {
-			add(Check{Name: "shared state " + tag, Status: statusFail,
-				Detail: fmt.Sprintf("image carries %q/%q but config/runtime.json wants %q/%q; rebuild with ./scripts/build", actualID, actualQuota, expectedID, expectedQuota)})
-		} else if st != nil {
+		add(Check{Name: "image identity " + tag, Status: statusOK, Detail: "verified"})
+		if expectedID != "" && expectedQuota != "" {
+			st, err := plan.ParseSharedStateRequest(expectedID, expectedQuota)
+			if err != nil {
+				add(Check{Name: "shared state " + tag, Status: statusFail, Detail: err.Error()})
+				continue
+			}
 			add(Check{Name: "shared state " + tag, Status: statusOK, Detail: st.Mount})
 		} else {
 			add(Check{Name: "shared state " + tag, Status: statusOK, Detail: "none"})

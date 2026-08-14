@@ -416,10 +416,25 @@ func resolvePlan(ctx context.Context, opts runOptions, e execEnv, stderr io.Writ
 			fmt.Fprintf(stderr, "ai-sandbox: %s\n", err)
 			return nil, 1
 		}
-		shared, err = plan.SharedStateFromLabels(meta.Labels)
+		shared, err = sharedStateFromCheckout(root)
 		if err != nil {
 			fmt.Fprintf(stderr, "%s: %s\n", opts.agent, err)
 			return nil, 2
+		}
+		if shared != nil {
+			if e.run == nil {
+				fmt.Fprintf(stderr, "%s: cannot verify image identity: no command runner configured\n", opts.agent)
+				return nil, 1
+			}
+			dockerOut, err := e.run(ctx, "docker", "image", "inspect", "--format", "{{.Id}}", agentCfg.Image)
+			if err != nil {
+				fmt.Fprintf(stderr, "%s: could not verify image identity: %v\n", opts.agent, err)
+				return nil, 1
+			}
+			if err := microsandbox.MatchDigests(string(dockerOut), meta.ConfigDigest); err != nil {
+				fmt.Fprintf(stderr, "%s: loaded msb image does not match Docker image; run ./scripts/load-msb to reload: %v\n", opts.agent, err)
+				return nil, 1
+			}
 		}
 	}
 
@@ -558,6 +573,28 @@ func aiSandboxInstallDir(home string, getenv func(string) string) string {
 		}
 	}
 	return filepath.Join(home, ".local", "libexec", "ai-sandboxes")
+}
+
+// sharedStateFromCheckout reads config/runtime.json from the trusted checkout
+// and returns a validated SharedState mount, or nil when the checkout is empty,
+// the file is missing, or the configuration requests no shared state.
+// Callers upstream (resolvePlan) have already validated a checkout when one is
+// required, so an empty checkout here simply means "no shared state available".
+func sharedStateFromCheckout(checkout string) (*plan.SharedState, error) {
+	if checkout == "" {
+		return nil, nil
+	}
+	rt, err := config.LoadRuntime(filepath.Join(checkout, "config", "runtime.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("could not load runtime configuration: %w", err)
+	}
+	if rt.SharedState == nil {
+		return nil, nil
+	}
+	return plan.ParseSharedStateRequest(rt.SharedState.ID, rt.SharedState.Quota)
 }
 
 // findCheckout walks upward from several anchors looking for the ai-sandboxes
