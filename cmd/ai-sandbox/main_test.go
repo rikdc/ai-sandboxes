@@ -29,9 +29,13 @@ func newFakeMsb() *fakeMsb {
 	}
 }
 
-func (f *fakeMsb) ImagePresent(tag string) (bool, error)    { return f.images[tag], nil }
-func (f *fakeMsb) VolumePresent(name string) (bool, error)   { return f.volumes[name], nil }
-func (f *fakeMsb) VolumeCreate(name string) error            { f.volumes[name] = true; f.created = append(f.created, name); return nil }
+func (f *fakeMsb) ImagePresent(tag string) (bool, error)   { return f.images[tag], nil }
+func (f *fakeMsb) VolumePresent(name string) (bool, error) { return f.volumes[name], nil }
+func (f *fakeMsb) VolumeCreate(name string) error {
+	f.volumes[name] = true
+	f.created = append(f.created, name)
+	return nil
+}
 func (f *fakeMsb) InitSharedState(_ string, st *plan.SharedState) error {
 	f.initialized = append(f.initialized, st.Volume)
 	return nil
@@ -54,9 +58,9 @@ func testEnv(t *testing.T) (execEnv, string) {
 	os.MkdirAll(project, 0o755)
 
 	e := execEnv{
-		cwd:      project,
-		home:     home,
-		getenv:   func(string) string { return "" },
+		cwd:    project,
+		home:   home,
+		getenv: func(string) string { return "" },
 	}
 	return e, home
 }
@@ -291,4 +295,108 @@ func containsArg(args []string, want ...string) bool {
 		}
 	}
 	return false
+}
+
+// makeCheckout writes the marker files findCheckout's isCheckout looks for.
+func makeCheckout(t *testing.T, dir string) {
+	t.Helper()
+	for _, name := range []string{"versions.env", "config", "shell", "docker-bake.hcl"} {
+		os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644)
+	}
+}
+
+func TestProtectedRootsSymlinkedBinary(t *testing.T) {
+	home := t.TempDir()
+	target := filepath.Join(t.TempDir(), "ai-sandbox")
+	os.WriteFile(target, []byte("#!/bin/sh\n"), 0o755)
+	link := filepath.Join(t.TempDir(), "ai-sandbox")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	// EvalSymlinks may canonicalize firmlinks (e.g. /var -> /private/var), so
+	// assert the resolved parent as the code itself computes it.
+	resolved, err := filepath.EvalSymlinks(link)
+	if err != nil {
+		t.Fatalf("resolving symlink: %v", err)
+	}
+	if filepath.Dir(resolved) == filepath.Dir(link) {
+		t.Fatalf("test needs link and target in different directories: link=%s resolved=%s", link, resolved)
+	}
+
+	e := execEnv{home: home, exe: link, getenv: func(string) string { return "" }}
+	roots := e.protectedRoots("")
+
+	for _, want := range []string{filepath.Dir(link), filepath.Dir(resolved)} {
+		if !containsArg(roots, want) {
+			t.Errorf("protected roots %v missing binary parent %q", roots, want)
+		}
+	}
+}
+
+func TestResolvedCheckout(t *testing.T) {
+	t.Setenv("AI_SANDBOXES_ROOT", "")
+	checkout := t.TempDir()
+	makeCheckout(t, checkout)
+	nested := filepath.Join(checkout, "nested-project")
+	os.MkdirAll(nested, 0o755)
+	// findCheckout resolves symlinks on the way up; compare against the same
+	// canonical form so firmlinked temp dirs cannot skew the assertion.
+	canonical := checkout
+	if resolved, err := filepath.EvalSymlinks(checkout); err == nil {
+		canonical = resolved
+	}
+
+	t.Run("uses precomputed checkout without re-lookup", func(t *testing.T) {
+		// cwd sits inside a real checkout, so a re-run of findCheckout would
+		// resolve to it. The set field must win verbatim.
+		e := execEnv{cwd: nested, exe: "/nonexistent/launcher", checkout: "override-root"}
+		if got := e.resolvedCheckout(); got != "override-root" {
+			t.Errorf("resolvedCheckout() = %q, want the precomputed %q", got, "override-root")
+		}
+	})
+
+	t.Run("falls back to deriving from cwd", func(t *testing.T) {
+		e := execEnv{cwd: nested}
+		if got := e.resolvedCheckout(); got != canonical {
+			t.Errorf("resolvedCheckout() = %q, want checkout %q", got, canonical)
+		}
+	})
+
+	t.Run("prefers the exe-resolved checkout over a different cwd checkout", func(t *testing.T) {
+		// Regression test for the guard's authority: when the binary lives in
+		// checkout A and cwd sits inside a different checkout B, the guard must
+		// protect A (the checkout providing the running binary's code), not B.
+		exeCheckout := t.TempDir()
+		makeCheckout(t, exeCheckout)
+		binDir := filepath.Join(exeCheckout, "bin")
+		os.MkdirAll(binDir, 0o755)
+		exe := filepath.Join(binDir, "ai-sandbox")
+		os.WriteFile(exe, []byte("x"), 0o755)
+
+		cwdCheckout := t.TempDir()
+		makeCheckout(t, cwdCheckout)
+		project := filepath.Join(cwdCheckout, "project")
+		os.MkdirAll(project, 0o755)
+
+		canonical := func(p string) string {
+			if resolved, err := filepath.EvalSymlinks(p); err == nil {
+				return resolved
+			}
+			return p
+		}
+		exeCanonical := canonical(exeCheckout)
+		cwdCanonical := canonical(cwdCheckout)
+
+		e := execEnv{cwd: project, exe: exe}
+		if got := e.resolvedCheckout(); got != exeCanonical {
+			t.Errorf("resolvedCheckout() = %q, want the exe-resolved checkout %q", got, exeCanonical)
+		}
+		roots := e.protectedRoots(e.resolvedCheckout())
+		if !containsArg(roots, exeCanonical) {
+			t.Errorf("protected roots %v missing exe-resolved checkout %q", roots, exeCanonical)
+		}
+		if containsArg(roots, cwdCanonical) {
+			t.Errorf("protected roots %v should not protect the cwd checkout %q", roots, cwdCanonical)
+		}
+	})
 }
