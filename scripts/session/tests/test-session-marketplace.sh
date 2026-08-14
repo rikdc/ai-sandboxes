@@ -53,29 +53,43 @@ if ! printf '%s\n' "$plugin_output" | awk '
   exit 1
 fi
 
-# The base image deliberately keeps /opt/claude-plugin-cache/data
-# node-owned/writable for Claude's own runtime plugin state, even though the
-# rest of the cache is locked read-only. The session build stage's own
-# relock swept that subdirectory back to read-only since it already existed
-# there (copied in from the base image); this asserts the final stage
-# actually restores it, not just that read-only operations like `claude
-# plugin list` still succeed.
-docker run --rm --user node "$session_tag" sh -c 'touch /opt/claude-plugin-cache/data/.runtime-write-test' \
-  || { echo 'Session image runtime data directory is not writable' >&2; exit 1; }
-
-# Claude also writes into /opt/claude-plugin-cache/marketplaces at runtime when
-# initialising the plugin cache in a fresh home — a missing carveout there
-# produces `EACCES: permission denied, mkdir '/opt/claude-plugin-cache/marketplaces'`
-# during `claude` startup even though `claude plugin list` (read-only) succeeds.
-docker run --rm --user node "$session_tag" sh -c 'touch /opt/claude-plugin-cache/marketplaces/.runtime-write-test' \
-  || { echo 'Session image runtime marketplaces directory is not writable' >&2; exit 1; }
-
-# Claude rewrites known_marketplaces.json atomically at the cache root at
-# startup (open+rename via known_marketplaces.json.tmp.XXX). That needs write
-# on the cache root directory itself, not just carved-out subdirs — otherwise
-# `claude` fails with `EACCES: permission denied, open
-# '/opt/claude-plugin-cache/known_marketplaces.json.tmp.XXXXXX'`.
-docker run --rm --user node "$session_tag" sh -c 'touch /opt/claude-plugin-cache/.runtime-write-test' \
-  || { echo 'Session image plugin cache root is not writable' >&2; exit 1; }
+# The seeded cache under /opt/claude-plugin-cache is immutable: the entrypoint
+# (inherited from the base image) materialises a fresh, fully writable
+# per-session copy under /tmp and repoints CLAUDE_CODE_PLUGIN_CACHE_DIR at it
+# before exec'ing claude, so none of the seed's paths may ever be writable by
+# node. The old carve-out assertions (data/, marketplaces/, and the root each
+# writable) are gone — this test instead asserts the seed can't be modified and
+# that claude still lists the seeded marketplaces/plugins via the materialised
+# copy. Without claude's actual runtime writes landing somewhere writable, the
+# startup would hit `EACCES: permission denied, open
+# '/opt/claude-plugin-cache/known_marketplaces.json.tmp.XXXXXX'`; the
+# marketplace/plugin checks above cover that end-to-end.
+if docker run --rm --user node "$session_tag" sh -c 'touch /opt/claude-plugin-cache/data/.runtime-write-test 2>/dev/null'; then
+  echo 'FAIL: session image seeded plugin cache data/ is writable by node' >&2
+  exit 1
+fi
+if docker run --rm --user node "$session_tag" sh -c 'touch /opt/claude-plugin-cache/marketplaces/.runtime-write-test 2>/dev/null'; then
+  echo 'FAIL: session image seeded plugin cache marketplaces/ is writable by node' >&2
+  exit 1
+fi
+if docker run --rm --user node "$session_tag" sh -c 'touch /opt/claude-plugin-cache/.runtime-write-test 2>/dev/null'; then
+  echo 'FAIL: session image seeded plugin cache root is writable by node' >&2
+  exit 1
+fi
+# Top-level seeded entries must not be replaceable by node.
+if docker run --rm --user node "$session_tag" sh -c 'rm -f /opt/claude-plugin-cache/known_marketplaces.json 2>/dev/null'; then
+  echo 'FAIL: session image seeded known_marketplaces.json is replaceable by node' >&2
+  exit 1
+fi
+if docker run --rm --user node "$session_tag" sh -c 'mv /opt/claude-plugin-cache/installed_plugins.json /tmp/session-renamed.json 2>/dev/null'; then
+  echo 'FAIL: session image seeded installed_plugins.json is replaceable by node' >&2
+  exit 1
+fi
+# The entrypoint must actually have materialised a writable per-session cache
+# under /tmp for the claude invocations above.
+if ! docker run --rm --user node "$session_tag" sh -c 'test -n "$(find /tmp -maxdepth 1 -type d -name "ai-sandboxes-plugin-cache.*" 2>/dev/null | head -n 1)"'; then
+  echo 'FAIL: session image entrypoint did not materialise a per-session plugin cache' >&2
+  exit 1
+fi
 
 echo ok
