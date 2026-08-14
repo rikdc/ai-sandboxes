@@ -74,11 +74,16 @@ only manages the `main` branch and refuses to run on a dirty tree.
 ~/opt/ai-sandboxes/scripts/update --check   # is there an update? read-only
 ~/opt/ai-sandboxes/scripts/update           # fast-forward and refresh
 ~/opt/ai-sandboxes/scripts/update --verify  # also run the full ./scripts/verify
+~/opt/ai-sandboxes/scripts/update --repair  # force full reinstall even if up to date
 ```
 
 Exit codes for `--check`: `0` up to date, `1` an update is available, `2` an
 error (no upstream, not on `main`, dirty tree, diverged history, network
 failure). `--check` only fetches; it never modifies the checkout.
+
+`--repair` rebuilds and reinstalls everything unconditionally. Use it after
+migrating an existing checkout, deleting the state directory, or if you suspect
+the installed artifacts are out of sync with the marker.
 
 The default update fast-forwards to `origin/main`, then, based on which files
 actually changed, rebuilds the images, re-installs the fish wrappers (when
