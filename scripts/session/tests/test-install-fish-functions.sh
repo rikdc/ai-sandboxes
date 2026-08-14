@@ -15,7 +15,27 @@ fake_home_apostrophe=$(mktemp -d) || exit 1
 apostrophe_checkout="$fake_home/o'brien-checkout"
 trap 'rm -rf "$fake_home" "$fake_home_symlinked" "$real_config_target" "$fake_home_apostrophe"' EXIT
 
-env HOME="$fake_home" ./scripts/install-fish-functions >/dev/null || exit 1
+# The wrapper invokes ai-sandbox by absolute path (a wrapper that instead
+# relied on PATH lookup would let a workspace-mounted stub in ~/.local/bin
+# hijack the next launch). Install a stub at the location the wrapper bakes
+# in so assert_allows can prove the wrapper actually reached the binary
+# rather than silently failing because it was missing.
+ai_sandbox_stub_dir="$fake_home/.local/libexec/ai-sandboxes"
+mkdir -p "$ai_sandbox_stub_dir" || exit 1
+ai_sandbox_stub_log="$fake_home/ai-sandbox-stub.log"
+cat >"$ai_sandbox_stub_dir/ai-sandbox" <<STUB
+#!/usr/bin/env bash
+printf 'invoked: %s\n' "\$*" >>"$ai_sandbox_stub_log"
+exit 0
+STUB
+chmod +x "$ai_sandbox_stub_dir/ai-sandbox" || exit 1
+
+env HOME="$fake_home" AI_SANDBOX_INSTALL_DIR="$ai_sandbox_stub_dir" \
+  ./scripts/install-fish-functions >/dev/null || exit 1
+
+# The wrapper must bake the absolute install path, not rely on PATH lookup.
+grep -Fq "$ai_sandbox_stub_dir/ai-sandbox" "$fake_home/.config/fish/functions/claude.fish" \
+  || { echo 'FAIL: claude wrapper does not bake absolute ai-sandbox path' >&2; exit 1; }
 
 fish_functions_dir="$fake_home/.config/fish/functions"
 trusted_dir="$fake_home/.config/ai-sandboxes/trusted"
@@ -38,10 +58,16 @@ assert_refuses() {
 assert_allows() {
   local label=$1 wrapper=$2 workspace=$3
   mkdir -p "$workspace" || return 1
+  : >"$ai_sandbox_stub_log"
   local output
-  output=$(cd "$workspace" && fish -c "source '$wrapper'; claude" 2>&1) || true
+  output=$(cd "$workspace" && fish -c "source '$wrapper'; claude a-forwarded-arg" 2>&1) || true
   printf '%s\n' "$output" | grep -q 'refusing to run' \
     && { echo "FAIL ($label): unexpected refusal for workspace $workspace" >&2; exit 1; }
+  # Prove the wrapper actually reached ai-sandbox with the expected argv,
+  # rather than passing simply because it errored out before the refusal check.
+  grep -Fq 'invoked: run claude -- a-forwarded-arg' "$ai_sandbox_stub_log" \
+    || { echo "FAIL ($label): ai-sandbox stub was not invoked as expected for $workspace" >&2;
+         echo "stub log:" >&2; cat "$ai_sandbox_stub_log" >&2; exit 1; }
   return 0
 }
 
@@ -69,6 +95,18 @@ assert_refuses symlinked-config-real-target "$symlinked_fish_functions_dir/claud
 # name) must not break the generated wrapper's fish syntax.
 mkdir -p "$apostrophe_checkout" || exit 1
 cp -R scripts shell "$apostrophe_checkout/" || exit 1
+# The apostrophe run uses its own home, so the wrapper bakes a different
+# install path; put a stub there too and repoint the log so assert_allows can
+# verify that wrapper as well.
+apostrophe_stub_dir="$fake_home_apostrophe/.local/libexec/ai-sandboxes"
+mkdir -p "$apostrophe_stub_dir" || exit 1
+ai_sandbox_stub_log="$fake_home_apostrophe/ai-sandbox-stub.log"
+cat >"$apostrophe_stub_dir/ai-sandbox" <<STUB
+#!/usr/bin/env bash
+printf 'invoked: %s\n' "\$*" >>"$ai_sandbox_stub_log"
+exit 0
+STUB
+chmod +x "$apostrophe_stub_dir/ai-sandbox" || exit 1
 env HOME="$fake_home_apostrophe" "$apostrophe_checkout/scripts/install-fish-functions" >/dev/null || exit 1
 apostrophe_fish_functions_dir="$fake_home_apostrophe/.config/fish/functions"
 fish --no-execute "$apostrophe_fish_functions_dir/claude.fish" || exit 1

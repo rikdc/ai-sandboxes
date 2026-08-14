@@ -67,7 +67,7 @@ export MOCK_GIT_REMOTES MOCK_GIT_BRANCH MOCK_GIT_STATUS MOCK_GIT_FETCH_STATUS \
   MOCK_GIT_MERGE_STATUS MOCK_GIT_MERGE_BASE MOCK_GIT_BEHIND \
   MOCK_GIT_CHANGED_PATHS MOCK_GIT_OLD_ENV MOCK_GIT_NEW_ENV MOCK_GIT_OLD_HEAD \
   MOCK_GIT_NEW_HEAD MOCK_BUILD_STATUS MOCK_LOADMSB_STATUS MOCK_WRAPPER_STATUS \
-  MOCK_CLAUDE_VERSION MOCK_CODEX_VERSION
+  MOCK_BINARY_STATUS MOCK_CLAUDE_VERSION MOCK_CODEX_VERSION
 
 # Scenario defaults; individual cases override what they need.
 MOCK_GIT_REMOTES='origin'
@@ -209,6 +209,13 @@ exit "${MOCK_WRAPPER_STATUS:-0}"
 SH
 chmod +x "$repo/scripts/install-fish-functions"
 
+cat >"$repo/scripts/install-ai-sandbox" <<'SH'
+#!/usr/bin/env bash
+printf 'install-ai-sandbox\n' >>"$MOCK_UPDATE_LOG"
+exit "${MOCK_BINARY_STATUS:-0}"
+SH
+chmod +x "$repo/scripts/install-ai-sandbox"
+
 cat >"$repo/scripts/load-msb" <<'SH'
 #!/usr/bin/env bash
 printf 'load-msb\n' >>"$MOCK_UPDATE_LOG"
@@ -235,6 +242,7 @@ for script in \
   "$repo/.github/workflows/release-marker" \
   "$repo/scripts/build" \
   "$repo/scripts/install-fish-functions" \
+  "$repo/scripts/install-ai-sandbox" \
   "$repo/scripts/load-msb" \
   "$repo/scripts/verify" \
   "$mockdir/gitbin/git" \
@@ -464,6 +472,29 @@ EOF
 run_update "$allpath" --verify
 expect_status 0 'default with --verify'
 expect_op_sequence 'default with --verify operations' "$mockdir/scenario16.op"
+
+# 16b. cmd/**, internal/**, go.mod, go.sum, and scripts/install-ai-sandbox
+#      trigger the binary install; a binary install also refreshes the fish
+#      wrappers so newly generated absolute paths are baked in.
+MOCK_GIT_CHANGED_PATHS=$'cmd/ai-sandbox/main.go\ninternal/plan/plan.go\ngo.mod\ngo.sum\nscripts/install-ai-sandbox'
+cat >"$mockdir/scenario16b.op" <<'EOF'
+install-ai-sandbox
+install-fish-functions
+EOF
+run_update "$gitpath"
+expect_status 0 'go changes trigger binary install'
+expect_op_sequence 'go changes trigger binary install' "$mockdir/scenario16b.op"
+expect_stdout_contains 'reinstalled ai-sandbox binary' 'binary install summary'
+expect_stdout_contains 'reinstalled fish wrappers' 'wrappers rebaked after binary install'
+
+# 16c. A failed binary install stops before the wrappers are touched.
+MOCK_BINARY_STATUS=1
+run_update "$gitpath"
+expect_status 2 'binary install failure'
+expect_stderr_contains 'ai-sandbox binary install failed' 'binary install failure message'
+grep -Fq 'install-fish-functions' "$op_log" && fail 'wrappers must not be reinstalled after a failed binary install'
+MOCK_BINARY_STATUS=0
+MOCK_GIT_CHANGED_PATHS=$'versions.env\nshell/fish/claude.fish\nconfig/tools.json\nimages/claude/entrypoint.sh'
 
 # 17. Flag validation: --check --verify and unknown flags are usage errors.
 run_update "$gitpath" --check --verify

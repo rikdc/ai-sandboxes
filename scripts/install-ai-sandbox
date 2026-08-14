@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Build and install the ai-sandbox binary to a host-trusted location outside
+# any workspace an agent could mount. The Fish wrappers invoke this binary by
+# absolute path, and its directory is one of the protected roots the guard
+# refuses workspaces to overlap with. Re-run after any change to cmd/**,
+# internal/**, go.mod, go.sum, or this script itself.
+set -o pipefail
+IFS=$'\n\t'
+
+name=$(basename "$0")
+
+die() {
+  printf '%s: %s\n' "$name" "$*" >&2
+  exit 1
+}
+
+if ! command -v go >/dev/null 2>&1; then
+  die 'go is required to build ai-sandbox but was not found on PATH'
+fi
+
+repo_root=$(cd "$(dirname "$0")/.." && pwd) || die 'could not resolve repository root'
+cd "$repo_root" || die "could not cd to $repo_root"
+
+install_dir="${AI_SANDBOX_INSTALL_DIR:-$HOME/.local/libexec/ai-sandboxes}"
+install_path="$install_dir/ai-sandbox"
+
+mkdir -p "$install_dir" || die "could not create install directory $install_dir"
+
+tmpdir=$(mktemp -d) || die 'could not create a temporary directory'
+trap 'rm -rf -- "$tmpdir"' EXIT
+tmp_bin="$tmpdir/ai-sandbox"
+
+printf 'building ai-sandbox...\n'
+go build -o "$tmp_bin" ./cmd/ai-sandbox || die 'go build ./cmd/ai-sandbox failed'
+
+# Validate the freshly built binary before atomically swapping it in. If the
+# binary is corrupt or was built against a broken tree we want the existing
+# install to keep working.
+built_version=$("$tmp_bin" version 2>/dev/null) || die 'built binary failed to report its version'
+case "$built_version" in
+  ai-sandbox\ *) ;;
+  *) die "built binary produced unexpected version output: $built_version" ;;
+esac
+
+chmod 0755 "$tmp_bin" || die 'could not set mode on built binary'
+mv -f "$tmp_bin" "$install_path" || die "could not install to $install_path"
+
+printf 'installed %s (%s)\n' "$install_path" "$built_version"
