@@ -42,23 +42,27 @@ fi
 test -d "$extract_dir/$archive_member" || die "could not extract $archive_member for $tool_id"
 
 # Directory member: install the whole (self-contained) tree as a toolchain
-# prefix and expose every executable under its bin/ on PATH. This is what a
+# prefix and expose exactly the executables the catalog names. This is what a
 # single-binary install cannot express (e.g. go needs its GOROOT pkg/tool tree
-# beside bin/go). The prefix sits under /usr/local/libexec so /usr/local/bin
-# stays a directory of small launchers/symlinks, exactly as it does for
-# state-wrapper tools.
-member_name=${archive_member%/}
-member_name=${member_name##*/}
-test -n "$member_name" || die "archive_member is empty after normalization: $archive_member"
-prefix=/usr/local/libexec/$member_name
-rm -rf "$prefix" || die "could not clear existing prefix $prefix"
+# beside bin/go). The prefix sits under /usr/local/libexec/ai-sandboxes-tools
+# so /usr/local/bin stays a directory of small launchers/symlinks, and two
+# tools whose archives use a generic member name (bin, linux-arm64, ...)
+# cannot silently overwrite one another.
+prefix_root=/usr/local/libexec/ai-sandboxes-tools
+prefix=$prefix_root/$tool_id
+install -d "$prefix_root" || die "could not create $prefix_root"
+test ! -e "$prefix" || die "refusing to overwrite existing prefix $prefix (another tool already installed here?)"
 cp -a "$extract_dir/$archive_member" "$prefix" || die "could not install $archive_member to $prefix"
 
+readarray -t expose < <(jq -r '(.expose // [.binary])[]' <<<"$entry") \
+  || die "catalog entry has malformed expose list: $tool_id"
+test "${#expose[@]}" -gt 0 || die "catalog entry exposes no binaries: $tool_id"
 matched=
-for tool_path in "$prefix"/bin/*; do
-  test -e "$tool_path" || continue
-  test -x "$tool_path" || die "non-executable entry in $member_name bin/: $tool_path"
-  ln -sf "$tool_path" "$destination/$(basename "$tool_path")" || die "could not link $(basename "$tool_path") into $destination"
-  test "$(basename "$tool_path")" = "$binary" && matched=1
+for name in "${expose[@]}"; do
+  tool_path=$prefix/bin/$name
+  test -x "$tool_path" || die "$tool_id exposes $name but $tool_path is missing or not executable"
+  test ! -e "$destination/$name" || die "refusing to install $name into $destination: destination already exists (collision with another tool?)"
+  ln -s "$tool_path" "$destination/$name" || die "could not link $name into $destination"
+  test "$name" = "$binary" && matched=1
 done
-test "$matched" = 1 || die "$member_name has no $binary executable in its bin/ directory"
+test "$matched" = 1 || die "$tool_id expose list does not include its primary binary $binary"

@@ -27,7 +27,8 @@
       "adapter": "https-tar",
       "url_template": "https://go.dev/dl/go{{version}}.linux-arm64.tar.gz",
       "archive_member": "go",
-      "binary": "go"
+      "binary": "go",
+      "expose": ["go", "gofmt"]
     },
     {
       "id": "awscli",

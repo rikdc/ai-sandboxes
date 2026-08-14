@@ -73,21 +73,21 @@ test "$recorded_shared_state" = '{"id":"session-tools-verify","quota":"2G"}' \
 
 # golang is a https-tar adapter whose archive_member is a whole directory (the
 # go toolchain prefix). The adapter installs the directory under
-# /usr/local/libexec/go and symlinks its bin/ executables into /usr/local/bin;
+# /usr/local/libexec/ai-sandboxes-tools/golang and symlinks its bin/ executables into /usr/local/bin;
 # go must run as node and the full GOROOT tree must still be present for it to
 # build (a lone go binary would only report --version).
 golang_tag=$(CLAUDE_MSB_BUILD_EGRESS=1 scripts/session/resolve-image.sh scripts/session/fixtures/valid/golang-only.json | jq -er '.image') || exit 1
 
 docker run --rm --user node "$golang_tag" go version >/dev/null \
   || { echo 'curated tool golang does not run as node' >&2; exit 1; }
-docker run --rm --user node "$golang_tag" sh -c 'test "$(go env GOROOT)" = /usr/local/libexec/go' \
+docker run --rm --user node "$golang_tag" sh -c 'test "$(go env GOROOT)" = /usr/local/libexec/ai-sandboxes-tools/golang' \
   || { echo 'golang GOROOT does not resolve to the installed toolchain prefix' >&2; exit 1; }
 # NOTE: the GOROOT assertion above relies on Go's runtime relocating GOROOT by
 # walking up from /proc/self/exe (via the /usr/local/bin/go symlink) to find
 # its pkg/tool tree. If a future Go release changes that heuristic this check
 # can fail even though the adapter is fine; treat a failure here as "verify the
 # heuristic" before blaming the install path.
-docker run --rm --user node "$golang_tag" sh -c 'test -x /usr/local/libexec/go/pkg/tool/linux_arm64/compile' \
+docker run --rm --user node "$golang_tag" sh -c 'test -x /usr/local/libexec/ai-sandboxes-tools/golang/pkg/tool/linux_arm64/compile' \
   || { echo 'golang toolchain is incomplete (missing pkg/tool/compile)' >&2; exit 1; }
 docker run --rm --user node "$golang_tag" sh -c '! touch /usr/local/bin/.write-test 2>/dev/null' \
   || { echo '/usr/local/bin is writable by node (golang image)' >&2; exit 1; }

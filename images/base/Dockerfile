@@ -13,7 +13,7 @@ RUN test "$TARGETARCH" = arm64
 # Versions resolve from signed repositories at build time.
 # hadolint ignore=DL3008
 RUN apt-get update \
- && apt-get install -y --no-install-recommends bash ca-certificates curl git gnupg jq openssh-client ripgrep \
+ && apt-get install -y --no-install-recommends bash ca-certificates curl git gnupg jq openssh-client ripgrep unzip \
  && install -d -m 0755 /etc/apt/keyrings \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
  && gpg --show-keys --with-colons /etc/apt/keyrings/githubcli-archive-keyring.gpg > /tmp/github-cli-key.txt \
