@@ -133,7 +133,7 @@ if test "$marketplace_count" -gt 0; then
   cat >>"$dockerfile" <<EOF || die "could not write $dockerfile"
 COPY --from=build --chown=root:root /opt/claude-plugin-cache /opt/claude-plugin-cache
 COPY --from=build --chown=root:root /opt/claude-plugin-seed /opt/claude-plugin-seed
-RUN install -d -o node -g node -m 0755 /opt/claude-plugin-cache/data /opt/claude-plugin-cache/marketplaces
+RUN install -d -o node -g node -m 0755 /opt/claude-plugin-cache /opt/claude-plugin-cache/data /opt/claude-plugin-cache/marketplaces
 EOF
 fi
 

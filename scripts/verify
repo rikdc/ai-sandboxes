@@ -101,6 +101,10 @@ printf '%s\n' "$plugin_output" | awk '
 docker run --rm --user node -e HOME=/tmp/claude-permissions-test "$marketplace_test_image" sh -c 'claude plugin list >/dev/null && test "$(stat -c %a "$HOME/.claude/settings.json")" = 600' || exit 1
 docker run --rm --user node "$marketplace_test_image" sh -c 'touch /opt/claude-plugin-cache/data/.runtime-write-test' || exit 1
 docker run --rm --user node "$marketplace_test_image" sh -c 'touch /opt/claude-plugin-cache/marketplaces/.runtime-write-test' || exit 1
+# Claude rewrites known_marketplaces.json atomically at the cache root at
+# startup (open+rename via known_marketplaces.json.tmp.XXX), which needs write
+# on the directory itself — not just on carved-out subdirs.
+docker run --rm --user node "$marketplace_test_image" sh -c 'touch /opt/claude-plugin-cache/.runtime-write-test' || exit 1
 for image in ai-sandboxes-claude:local ai-sandboxes-codex:local; do
   if docker history --no-trunc "$image" | grep -Ei '(anthropic_api_key|openai_api_key|codex_access_token)'; then
     exit 1

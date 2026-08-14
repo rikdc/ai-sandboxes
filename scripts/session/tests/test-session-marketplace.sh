@@ -70,4 +70,12 @@ docker run --rm --user node "$session_tag" sh -c 'touch /opt/claude-plugin-cache
 docker run --rm --user node "$session_tag" sh -c 'touch /opt/claude-plugin-cache/marketplaces/.runtime-write-test' \
   || { echo 'Session image runtime marketplaces directory is not writable' >&2; exit 1; }
 
+# Claude rewrites known_marketplaces.json atomically at the cache root at
+# startup (open+rename via known_marketplaces.json.tmp.XXX). That needs write
+# on the cache root directory itself, not just carved-out subdirs — otherwise
+# `claude` fails with `EACCES: permission denied, open
+# '/opt/claude-plugin-cache/known_marketplaces.json.tmp.XXXXXX'`.
+docker run --rm --user node "$session_tag" sh -c 'touch /opt/claude-plugin-cache/.runtime-write-test' \
+  || { echo 'Session image plugin cache root is not writable' >&2; exit 1; }
+
 echo ok
