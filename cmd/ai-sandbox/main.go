@@ -352,8 +352,13 @@ func (e execEnv) resolveNetwork(cfg config.Agent, home string) (plan.Network, er
 		}
 		return plan.Network{}, fmt.Errorf("unsupported fixed network mode %q", cfg.Net)
 	}
-	public := e.getenv("CLAUDE_MSB_PUBLIC_EGRESS") == "1"
-	egressFile := filepath.Join(home, ".config", "microvms", "claude-egress")
+	// Both env override and allowlist path derive from the agent name, so
+	// codex and claude follow the same deny-by-default model without a
+	// per-agent branch here: CLAUDE_MSB_PUBLIC_EGRESS / claude-egress vs
+	// CODEX_MSB_PUBLIC_EGRESS / codex-egress.
+	overrideVar := strings.ToUpper(cfg.Name) + "_MSB_PUBLIC_EGRESS"
+	public := e.getenv(overrideVar) == "1"
+	egressFile := filepath.Join(home, ".config", "microvms", cfg.Name+"-egress")
 	return plan.ResolveNetwork(public, egressFile, cfg.BaseNetRules)
 }
 

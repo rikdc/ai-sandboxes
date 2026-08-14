@@ -81,7 +81,7 @@ function __ai_sandbox_impl_claude_session --description 'Run Claude Code in a se
     # Validate the egress allowlist before initializing shared state: that can
     # boot a VM to initialize a shared-state volume, and a host-side config
     # error should surface before any side-effecting boot.
-    __ai_sandbox_claude_egress_args claude-session >/dev/null; or return $status
+    __ai_sandbox_agent_egress_args claude-session "$HOME/.config/microvms/claude-egress" >/dev/null; or return $status
     __ai_sandbox_initialize_shared_state claude-session "$resolved_image" $shared_state_args; or return $status
 
     __ai_sandbox_run_claude "$launcher_file" "$resolved_image" (count $shared_state_args) $shared_state_args $claude_args

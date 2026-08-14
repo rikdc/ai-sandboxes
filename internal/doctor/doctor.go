@@ -257,14 +257,25 @@ func (e *Env) checkEgress(add func(Check)) {
 	if e.Home == "" {
 		return
 	}
-	egressFile := filepath.Join(e.Home, ".config", "microvms", "claude-egress")
-	if os.Getenv("CLAUDE_MSB_PUBLIC_EGRESS") == "1" {
-		add(Check{Name: "claude egress", Status: statusOK, Detail: "public egress (CLAUDE_MSB_PUBLIC_EGRESS=1); allowlist ignored"})
+	// Claude and Codex both run deny-by-default with per-agent allowlists.
+	// The override env var and file both derive from the agent name so the
+	// two agents share one check body.
+	for _, agent := range []string{"claude", "codex"} {
+		e.checkAgentEgress(add, agent)
+	}
+}
+
+func (e *Env) checkAgentEgress(add func(Check), agent string) {
+	label := agent + " egress"
+	envVar := strings.ToUpper(agent) + "_MSB_PUBLIC_EGRESS"
+	egressFile := filepath.Join(e.Home, ".config", "microvms", agent+"-egress")
+	if os.Getenv(envVar) == "1" {
+		add(Check{Name: label, Status: statusOK, Detail: fmt.Sprintf("public egress (%s=1); allowlist ignored", envVar)})
 		return
 	}
 	data, err := os.ReadFile(egressFile)
 	if err != nil {
-		add(Check{Name: "claude egress", Status: statusFail, Detail: "missing allowlist " + egressFile + "; copy config/claude-egress.example there"})
+		add(Check{Name: label, Status: statusFail, Detail: "missing allowlist " + egressFile + "; copy config/" + agent + "-egress.example there"})
 		return
 	}
 	hosts := 0
@@ -273,7 +284,7 @@ func (e *Env) checkEgress(add func(Check)) {
 			continue
 		}
 		if !hostnameRE.MatchString(line) {
-			add(Check{Name: "claude egress", Status: statusFail, Detail: "invalid hostname in " + egressFile + ": " + line})
+			add(Check{Name: label, Status: statusFail, Detail: "invalid hostname in " + egressFile + ": " + line})
 			return
 		}
 		hosts++
@@ -283,9 +294,9 @@ func (e *Env) checkEgress(add func(Check)) {
 		perm = fmt.Sprintf(" (mode %04o)", fi.Mode().Perm())
 	}
 	if hosts == 0 {
-		add(Check{Name: "claude egress", Status: statusWarn, Detail: "allowlist is empty; Claude will have no HTTPS egress" + perm})
+		add(Check{Name: label, Status: statusWarn, Detail: "allowlist is empty; " + agent + " will have no HTTPS egress" + perm})
 	} else {
-		add(Check{Name: "claude egress", Status: statusOK, Detail: fmt.Sprintf("%d allowlisted hosts%s", hosts, perm)})
+		add(Check{Name: label, Status: statusOK, Detail: fmt.Sprintf("%d allowlisted hosts%s", hosts, perm)})
 	}
 }
 

@@ -36,12 +36,13 @@ wrapper refuses to run whenever the mounted workspace overlaps any of those
 paths; re-run `./scripts/install-fish-functions` after updating ai-sandboxes
 to refresh the installed copies.
 
-Claude uses an HTTPS allowlist by default. Create it before its first run:
+Claude uses an HTTPS allowlist by default, and Codex now does too. Create them before first run:
 
 ```fish
 mkdir -p ~/.config/microvms
 cp /path/to/ai-sandboxes/config/claude-egress.example ~/.config/microvms/claude-egress
-chmod 600 ~/.config/microvms/claude-egress
+cp /path/to/ai-sandboxes/config/codex-egress.example ~/.config/microvms/codex-egress
+chmod 600 ~/.config/microvms/claude-egress ~/.config/microvms/codex-egress
 ```
 
 From a project directory, run `claude` or `codex`.
@@ -69,4 +70,4 @@ go test ./...               # control-plane unit tests
 ./scripts/lint-dockerfiles  # run Hadolint locally
 ```
 
-Claude's default network is intentionally restricted. Use `CLAUDE_MSB_PUBLIC_EGRESS=1 claude` only when a session needs public Internet access. The mounted project is writable, so keep secrets out of it and review agent changes with Git.
+Claude and Codex default to an intentionally restricted network. Use `CLAUDE_MSB_PUBLIC_EGRESS=1 claude` or `CODEX_MSB_PUBLIC_EGRESS=1 codex` only when a session needs public Internet access. The mounted project is writable, so keep secrets out of it and review agent changes with Git.

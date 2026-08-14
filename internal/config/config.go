@@ -102,7 +102,10 @@ var agents = map[string]Agent{
 		TTY:                  true,
 		PullNever:            true,
 		RootDisk:             "20G",
-		Net:                  "public",
+		// Codex is deny-by-default: its network is resolved from
+		// ~/.config/microvms/codex-egress, matching claude's model, with
+		// CODEX_MSB_PUBLIC_EGRESS=1 as the escape hatch.
+		BaseNetRules:         []string{"allow@host:udp:53", "allow@host:tcp:53"},
 		HomeVolume:           "codex-home",
 		HomePath:             "/home/node",
 		HomeMount:            "rw",

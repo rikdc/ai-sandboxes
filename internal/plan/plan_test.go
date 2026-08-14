@@ -22,8 +22,13 @@ func resolveInput(agent string, shared *SharedState) Input {
 		SharedState: shared,
 	}
 	if agent == "codex" {
-		in.Network = Network{Public: true}
 		in.RootDiskFromVersions = "20G"
+		in.Network = Network{NoNet: true, Rules: []string{
+			"allow@host:udp:53",
+			"allow@host:tcp:53",
+			"allow@api.openai.com:tcp:443",
+			"allow@github.com:tcp:443",
+		}}
 	} else {
 		in.Network = Network{NoNet: true, Rules: []string{
 			"allow@host:udp:53",
@@ -151,8 +156,8 @@ func TestResolveCodexPlan(t *testing.T) {
 	if p.HomeMount != "codex-home:/home/node:rw" {
 		t.Errorf("home mount = %q", p.HomeMount)
 	}
-	if p.Network.Public != true {
-		t.Errorf("codex network should be public: %+v", p.Network)
+	if p.Network.Public || !p.Network.NoNet || len(p.Network.Rules) == 0 {
+		t.Errorf("codex network should be deny-by-default allowlist: %+v", p.Network)
 	}
 	if p.Resources.RootDisk != "20G" {
 		t.Errorf("codex root-disk = %q, want 20G (from versions.env)", p.Resources.RootDisk)

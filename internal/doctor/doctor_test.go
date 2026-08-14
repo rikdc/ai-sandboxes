@@ -23,6 +23,7 @@ func fakeEnv(t *testing.T, withMsb, withEgress bool) (*Env, string) {
 		dir := filepath.Join(home, ".config", "microvms")
 		os.MkdirAll(dir, 0o755)
 		os.WriteFile(filepath.Join(dir, "claude-egress"), []byte("api.anthropic.com\ngithub.com\n"), 0o600)
+		os.WriteFile(filepath.Join(dir, "codex-egress"), []byte("api.openai.com\ngithub.com\n"), 0o600)
 	}
 
 	imageInspect := `{"config":{"digest":"sha256:abc","Labels":{}}}`

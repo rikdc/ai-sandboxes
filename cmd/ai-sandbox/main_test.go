@@ -48,6 +48,8 @@ func testEnv(t *testing.T) (execEnv, string) {
 	os.MkdirAll(filepath.Join(home, ".config", "microvms"), 0o755)
 	os.WriteFile(filepath.Join(home, ".config", "microvms", "claude-egress"),
 		[]byte("api.anthropic.com\n"), 0o600)
+	os.WriteFile(filepath.Join(home, ".config", "microvms", "codex-egress"),
+		[]byte("api.openai.com\n"), 0o600)
 	project := t.TempDir()
 	os.MkdirAll(project, 0o755)
 

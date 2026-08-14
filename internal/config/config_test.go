@@ -77,8 +77,11 @@ func TestAgentConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Net != "public" || cfg.CreateHomeVolume != true || cfg.RootDiskFromVersions != true {
+	if cfg.Net != "" || cfg.CreateHomeVolume != true || cfg.RootDiskFromVersions != true {
 		t.Errorf("unexpected codex policy: %+v", cfg)
+	}
+	if len(cfg.BaseNetRules) == 0 {
+		t.Errorf("codex should have deny-by-default base net rules: %+v", cfg.BaseNetRules)
 	}
 	if _, err := AgentConfig("nope"); err == nil {
 		t.Error("unknown agent should error")
