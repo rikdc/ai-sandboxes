@@ -15,9 +15,10 @@ die() {
 
 usage() {
   cat >&2 <<EOF
-usage: $name [--check] [--verify]
+usage: $name [--check] [--verify] [--repair]
   --check   report whether an update is available (exit 0 = current, 1 = behind)
   --verify  run the full ./scripts/verify after updating (default: light checks)
+  --repair  force full reinstall regardless of marker or changed paths
 EOF
   exit 64
 }
@@ -26,15 +27,20 @@ cd "$(dirname "$0")/.." || die 'could not cd to repository root'
 
 check_mode=0
 verify_full=0
+repair_mode=0
 while test "$#" -gt 0; do
   case "$1" in
     --check) check_mode=1 ;;
     --verify) verify_full=1 ;;
+    --repair) repair_mode=1 ;;
     *) usage ;;
   esac
   shift
 done
 if test "$check_mode" = 1 && test "$verify_full" = 1; then
+  usage
+fi
+if test "$check_mode" = 1 && test "$repair_mode" = 1; then
   usage
 fi
 
@@ -79,20 +85,29 @@ if test -n "$installed_head" \
 fi
 
 if test "$old_head" = "$new_head"; then
-  if test -z "$installed_head" || test "$installed_head" = "$new_head"; then
+  if test "$repair_mode" = 1; then
+    printf 'repairing: forcing full reinstall at %s\n' "${new_head:0:7}"
+  elif test -z "$installed_head"; then
+    if test "$check_mode" = 1; then
+      printf 'marker missing: install state unknown at %s\n' "${new_head:0:7}"
+      exit 1
+    fi
+    printf 'marker missing: reconciling install state at %s\n' "${new_head:0:7}"
+  elif test "$installed_head" = "$new_head"; then
     printf 'up to date\n'
     exit 0
+  else
+    # Git is up to date, but the last successful install lags behind HEAD.
+    # --check reports that as a pending install (exit 1); the default mode
+    # falls through and reconciles from the marker.
+    if test "$check_mode" = 1; then
+      printf 'install incomplete: last completed %s, HEAD at %s\n' \
+        "${installed_head:0:7}" "${new_head:0:7}"
+      exit 1
+    fi
+    printf 'up to date with origin/main; reconciling incomplete install (last completed %s)\n' \
+      "${installed_head:0:7}"
   fi
-  # Git is up to date, but the last successful install lags behind HEAD.
-  # --check reports that as a pending install (exit 1); the default mode
-  # falls through and reconciles from the marker.
-  if test "$check_mode" = 1; then
-    printf 'install incomplete: last completed %s, HEAD at %s\n' \
-      "${installed_head:0:7}" "${new_head:0:7}"
-    exit 1
-  fi
-  printf 'up to date with origin/main; reconciling incomplete install (last completed %s)\n' \
-    "${installed_head:0:7}"
 elif ! git merge-base --is-ancestor "$old_head" "$new_head"; then
   die 'history diverged from origin/main; cannot fast-forward (rebase or start from a fresh clone)'
 fi
@@ -116,11 +131,15 @@ read_value() {
 # before install steps run) or $new_head (advance after every step
 # succeeded); never any other value.
 record_installed_head() {
-  local sha=$1
+  local sha=$1 tmp
   mkdir -p "$state_dir" \
     || die "could not create state directory $state_dir"
-  printf '%s\n' "$sha" >"$marker_file" \
-    || die "could not update reconciliation marker $marker_file"
+  tmp=$(mktemp "$marker_file.XXXXXX") \
+    || die "could not create temporary marker file"
+  printf '%s\n' "$sha" >"$tmp" \
+    || { rm -f "$tmp"; die "could not write temporary marker file"; }
+  mv -f "$tmp" "$marker_file" \
+    || { rm -f "$tmp"; die "could not update reconciliation marker $marker_file"; }
 }
 
 version_change_summary() {
@@ -174,16 +193,31 @@ if test "$old_head" != "$new_head"; then
   git merge --ff-only origin/main \
     || die 'git merge --ff-only origin/main failed; inspect the output above'
 fi
+
+# Determine whether we must run every install step regardless of diff.
+force_all=0
+if test "$repair_mode" = 1 || test -z "$installed_head"; then
+  force_all=1
+fi
+
 # Determine the diff base for pending work. If a marker exists it is
 # authoritative — it may reach further back than old_head when a prior run
 # fast-forwarded but did not complete installation.
 diff_from=${installed_head:-$old_head}
+
 # Pin the pre-install baseline on disk before running any install step. If a
 # subsequent install fails and this script dies, the marker keeps pointing at
 # diff_from so the next run recomputes the same pending work — even after
 # HEAD has already been fast-forwarded and git reports "up to date".
-record_installed_head "$diff_from"
-if test "$diff_from" = "$new_head"; then
+# Skip this write when force_all is set and the tree is already at HEAD:
+# writing HEAD would make a failed install look complete on the next run.
+if test "$force_all" = 0 || test "$old_head" != "$new_head"; then
+  record_installed_head "$diff_from"
+fi
+
+if test "$force_all" = 1; then
+  changed_paths=''
+elif test "$diff_from" = "$new_head"; then
   changed_paths=''
 else
   changed_paths=$(git diff --name-only --end-of-options "$diff_from" "$new_head")
@@ -201,6 +235,12 @@ while IFS= read -r p; do
     versions.env|.dockerignore|docker-bake.hcl|images/*|config/*|scripts/*) need_build=1 ;;
   esac
 done <<<"$changed_paths"
+
+if test "$force_all" = 1; then
+  need_build=1
+  need_install=1
+  need_binary=1
+fi
 
 if test "$need_binary" = 1; then
   printf 'reinstalling ai-sandbox binary...\n'
@@ -241,7 +281,11 @@ fi
 record_installed_head "$new_head"
 
 if test "$old_head" = "$new_head"; then
-  status="reconciled install to ${new_head:0:7}"
+  if test "$repair_mode" = 1; then
+    status="repaired install at ${new_head:0:7}"
+  else
+    status="reconciled install to ${new_head:0:7}"
+  fi
 else
   status="fast-forwarded $commits_behind commits to ${new_head:0:7}"
 fi

@@ -86,6 +86,7 @@ MOCK_GIT_OLD_HEAD="$old_head"
 MOCK_GIT_NEW_HEAD="$new_head"
 MOCK_CLAUDE_VERSION="$CLAUDE_CODE_VERSION"
 MOCK_CODEX_VERSION="$CODEX_VERSION"
+MOCK_SEED_MARKER="$old_head"
 
 cat >"$mockdir/old-changed.env" <<'EOF'
 CODEX_VERSION=0.145.0
@@ -267,6 +268,10 @@ run_update() {
   # explicitly seeds one first (see the recovery scenarios below).
   if test "${MOCK_KEEP_MARKER:-0}" != 1; then
     rm -f "$state_dir/ai-sandboxes/installed-head"
+  fi
+  if test -n "${MOCK_SEED_MARKER:-}"; then
+    mkdir -p "$state_dir/ai-sandboxes"
+    printf '%s\n' "$MOCK_SEED_MARKER" >"$state_dir/ai-sandboxes/installed-head"
   fi
   printf '%s\n' "$MOCK_GIT_OLD_HEAD" >"$MOCK_GIT_HEAD_STATE"
   PATH="$extra_path:$base_sanitized" "$repo/scripts/update" "$@" >"$out_log" 2>"$err_log"
@@ -533,5 +538,67 @@ expect_stderr_contains 'usage' 'check plus verify usage message'
 run_update "$gitpath" --frobnicate
 expect_status 64 'unknown flag usage'
 expect_stderr_contains 'usage' 'unknown flag usage message'
+
+# 18. Missing marker with HEAD already at origin/main: reconcile everything.
+MOCK_GIT_NEW_HEAD="$old_head"
+MOCK_SEED_MARKER=''
+cat >"$mockdir/scenario18.op" <<'EOF'
+install-ai-sandbox
+build
+install-fish-functions
+EOF
+run_update "$gitpath"
+expect_status 0 'missing marker reconciles all'
+expect_op_sequence 'missing marker reconciles all' "$mockdir/scenario18.op"
+expect_stdout_contains 'marker missing: reconciling install state' 'missing marker notice'
+expect_stdout_contains 'reconciled install to' 'missing marker summary'
+expect_stderr_contains 'docker not found' 'missing marker missing docker warning'
+MOCK_GIT_NEW_HEAD="$new_head"
+
+# 19. Invalid marker (non-hex) with HEAD at origin/main: treated as missing.
+MOCK_GIT_NEW_HEAD="$old_head"
+MOCK_SEED_MARKER='not-a-valid-sha'
+cat >"$mockdir/scenario19.op" <<'EOF'
+install-ai-sandbox
+build
+install-fish-functions
+EOF
+run_update "$gitpath"
+expect_status 0 'invalid marker reconciles all'
+expect_op_sequence 'invalid marker reconciles all' "$mockdir/scenario19.op"
+expect_stdout_contains 'marker missing: reconciling install state' 'invalid marker notice'
+MOCK_GIT_NEW_HEAD="$new_head"
+MOCK_SEED_MARKER=''
+
+# 20. --repair when already up to date: force all install steps.
+MOCK_GIT_NEW_HEAD="$old_head"
+MOCK_SEED_MARKER="$old_head"
+cat >"$mockdir/scenario20.op" <<'EOF'
+install-ai-sandbox
+build
+install-fish-functions
+EOF
+run_update "$gitpath" --repair
+expect_status 0 'repair forces all steps'
+expect_op_sequence 'repair forces all steps' "$mockdir/scenario20.op"
+expect_stdout_contains 'repairing: forcing full reinstall' 'repair notice'
+expect_stdout_contains 'repaired install at' 'repair summary'
+expect_stderr_contains 'docker not found' 'repair missing docker warning'
+MOCK_GIT_NEW_HEAD="$new_head"
+MOCK_SEED_MARKER=''
+
+# 21. --check with missing marker: report unknown state (exit 1).
+MOCK_GIT_NEW_HEAD="$old_head"
+MOCK_SEED_MARKER=''
+run_update "$gitpath" --check
+expect_status 1 'check missing marker'
+expect_stdout_contains 'marker missing: install state unknown' 'check missing marker notice'
+grep -Fq 'git merge' "$git_log" && fail 'check missing marker should not merge'
+MOCK_GIT_NEW_HEAD="$new_head"
+
+# 22. --check --repair together is a usage error.
+run_update "$gitpath" --check --repair
+expect_status 64 'check plus repair usage'
+expect_stderr_contains 'usage' 'check plus repair usage message'
 
 echo ok
