@@ -4,13 +4,16 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/rikdc/ai-sandboxes/internal/config"
 	"github.com/rikdc/ai-sandboxes/internal/doctor"
@@ -164,7 +167,9 @@ func runCommand(args []string, verbose bool, stdout, stderr io.Writer) int {
 	e := currentEnv()
 	client := &microsandbox.Client{Out: stderr}
 	launch := func(argv []string) error { return microsandbox.Launch(msbPath, argv) }
-	return executeRun(opts, e, stderr, client, launch)
+	ctx, cancel := signalContext()
+	defer cancel()
+	return executeRun(ctx, opts, e, stderr, client, launch)
 }
 
 func planCommand(args []string, verbose bool, stdout, stderr io.Writer) int {
@@ -187,7 +192,9 @@ func planCommand(args []string, verbose bool, stdout, stderr io.Writer) int {
 	}
 	e := currentEnv()
 	client := &microsandbox.Client{Out: stderr}
-	return executePlan(opts, e, stdout, stderr, client)
+	ctx, cancel := signalContext()
+	defer cancel()
+	return executePlan(ctx, opts, e, stdout, stderr, client)
 }
 
 func usageCommand(name string, w io.Writer) {
@@ -202,14 +209,30 @@ type execEnv struct {
 	exe      string
 	checkout string
 	getenv   func(string) string
-	// run executes a host program and returns its combined output. It backs
-	// the session-image orchestration (scripts/session/resolve-image.sh,
-	// load-image.sh, docker, msb) and is injectable so tests can fake it.
-	run func(name string, args ...string) ([]byte, error)
+	// run executes a host program and returns its stdout, streaming stderr to
+	// the terminal. It backs the session-image orchestration
+	// (scripts/session/resolve-image.sh, load-image.sh, docker, msb) and is
+	// injectable so tests can fake it.
+	run func(ctx context.Context, name string, args ...string) ([]byte, error)
 }
 
-func execCapture(name string, args ...string) ([]byte, error) {
-	return exec.Command(name, args...).CombinedOutput()
+// execCapture runs name with ctx cancellation and returns its stdout. stderr
+// streams straight to the terminal: resolve-image.sh and load-image.sh can
+// take minutes on a cold cache, and buffering their progress until
+// (non-)failure would leave the user staring at a blank screen. Only stdout is
+// captured, because that is what carries the descriptor and digests the
+// session resolver parses.
+func execCapture(ctx context.Context, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stderr = os.Stderr
+	return cmd.Output()
+}
+
+// signalContext returns a context canceled on the usual termination signals,
+// so a hung host subprocess (image build, network fetch) is killed when the
+// user presses Ctrl-C instead of leaving ai-sandbox blocked forever.
+func signalContext() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 
 func currentEnv() execEnv {
@@ -310,14 +333,17 @@ type msbClient interface {
 	InitSharedState(image string, st *plan.SharedState) error
 }
 
-func resolvePlan(opts runOptions, e execEnv, stderr io.Writer, client msbClient, forRun bool) (*plan.RuntimePlan, int) {
+func resolvePlan(ctx context.Context, opts runOptions, e execEnv, stderr io.Writer, client msbClient, loadSessionImage bool) (*plan.RuntimePlan, int) {
+	// Reject a session profile for any agent other than claude before anything
+	// else, so `run codex --profile foo` fails with the reason, not a generic
+	// unknown-option error.
+	if opts.profile != "" && opts.agent != "claude" {
+		fmt.Fprintf(stderr, "ai-sandbox: --profile is only supported for claude (claude-session); got agent %q\n", opts.agent)
+		return nil, 2
+	}
 	agentCfg, err := config.AgentConfig(opts.agent)
 	if err != nil {
 		fmt.Fprintf(stderr, "ai-sandbox: %s\n", err)
-		return nil, 2
-	}
-	if opts.profile != "" && opts.agent != "claude" {
-		fmt.Fprintf(stderr, "ai-sandbox: --profile is only supported for claude (claude-session); got agent %q\n", opts.agent)
 		return nil, 2
 	}
 
@@ -347,18 +373,18 @@ func resolvePlan(opts runOptions, e execEnv, stderr io.Writer, client msbClient,
 	// derived image. The image build (resolve-image.sh) and transport
 	// (load-image.sh) stay in Bash; everything downstream is the same plan
 	// resolution the base agents use, so network, security, mounts, and argv
-	// cannot drift between Claude and claude-session.
-	image := agentCfg.Image
+	// cannot drift between Claude and claude-session. imageOverride is non-empty
+	// exactly when a profile was given, so it is the single gate for the
+	// base-image-only checks below.
 	imageOverride := ""
 	var shared *plan.SharedState
 	if opts.profile != "" {
 		resolver := session.Resolver{Checkout: root, Home: e.home, Run: e.run}
-		desc, rerr := resolver.Resolve(opts.profile, forRun)
+		desc, rerr := resolver.Resolve(ctx, opts.profile, loadSessionImage)
 		if rerr != nil {
 			fmt.Fprintf(stderr, "%s: %s\n", opts.agent, rerr)
 			return nil, 1
 		}
-		image = desc.Image
 		imageOverride = desc.Image
 		if desc.SharedState != nil {
 			shared, err = plan.ParseSharedStateRequest(desc.SharedState.ID, desc.SharedState.Quota)
@@ -388,19 +414,19 @@ func resolvePlan(opts runOptions, e execEnv, stderr io.Writer, client msbClient,
 	// and digest-verified by the resolver moments ago, and `plan` must not
 	// require a load it deliberately skipped. Gate the default image path only.
 	if imageOverride == "" {
-		present, err := client.ImagePresent(image)
+		present, err := client.ImagePresent(agentCfg.Image)
 		if err != nil {
 			fmt.Fprintf(stderr, "ai-sandbox: %s\n", err)
 			return nil, 1
 		}
 		if !present {
-			fmt.Fprintf(stderr, "%s: image %s is not loaded in Microsandbox; run ./scripts/load-msb first\n", opts.agent, image)
+			fmt.Fprintf(stderr, "%s: image %s is not loaded in Microsandbox; run ./scripts/load-msb first\n", opts.agent, agentCfg.Image)
 			return nil, 1
 		}
 	}
 
 	if imageOverride == "" {
-		meta, err := client.ImageMetadata(image)
+		meta, err := client.ImageMetadata(agentCfg.Image)
 		if err != nil {
 			fmt.Fprintf(stderr, "ai-sandbox: %s\n", err)
 			return nil, 1
@@ -456,8 +482,8 @@ func (e execEnv) resolveNetwork(cfg config.Agent, home string) (plan.Network, er
 	return plan.ResolveNetwork(public, egressFile, cfg.BaseNetRules)
 }
 
-func executeRun(opts runOptions, e execEnv, stderr io.Writer, client msbClient, launch func([]string) error) int {
-	p, code := resolvePlan(opts, e, stderr, client, true)
+func executeRun(ctx context.Context, opts runOptions, e execEnv, stderr io.Writer, client msbClient, launch func([]string) error) int {
+	p, code := resolvePlan(ctx, opts, e, stderr, client, true)
 	if code != 0 {
 		return code
 	}
@@ -505,8 +531,8 @@ func executeRun(opts runOptions, e execEnv, stderr io.Writer, client msbClient, 
 	return 0
 }
 
-func executePlan(opts runOptions, e execEnv, stdout, stderr io.Writer, client msbClient) int {
-	p, code := resolvePlan(opts, e, stderr, client, false)
+func executePlan(ctx context.Context, opts runOptions, e execEnv, stdout, stderr io.Writer, client msbClient) int {
+	p, code := resolvePlan(ctx, opts, e, stderr, client, false)
 	if code != 0 {
 		return code
 	}

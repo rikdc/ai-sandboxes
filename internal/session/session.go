@@ -7,9 +7,12 @@
 package session
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -43,8 +46,12 @@ func ResolveProfilePath(home, value string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("profile not found: %s", p)
 	}
-	if fi, err := os.Stat(resolved); err != nil || fi.IsDir() {
+	fi, err := os.Stat(resolved)
+	if err != nil {
 		return "", fmt.Errorf("profile not found: %s", p)
+	}
+	if fi.IsDir() {
+		return "", fmt.Errorf("profile path is a directory, not a profile JSON file: %s", p)
 	}
 	return resolved, nil
 }
@@ -72,17 +79,19 @@ func ParseDescriptor(data []byte) (*Descriptor, error) {
 // Resolver drives the host-side session-image steps. Checkout is the
 // ai-sandboxes checkout providing scripts/session/{resolve-image,load-image}.sh;
 // Home is the literal $HOME used to resolve bare profile names. Run executes
-// host programs and returns their combined output.
+// host programs and returns their stdout, streaming stderr to the terminal.
 type Resolver struct {
 	Checkout string
 	Home     string
-	Run      func(name string, args ...string) ([]byte, error)
+	Run      func(ctx context.Context, name string, args ...string) ([]byte, error)
 }
 
 // Resolve builds (or cache-loads) the session image named by profileValue,
 // loads it into msb when load is true, and verifies the msb-side image is the
 // same content Docker holds. It returns the descriptor (image + shared state).
-func (r *Resolver) Resolve(profileValue string, load bool) (*Descriptor, error) {
+// ctx bounds each host subprocess, so a hung build or network fetch is killed
+// when the caller cancels (e.g. the user's Ctrl-C).
+func (r *Resolver) Resolve(ctx context.Context, profileValue string, load bool) (*Descriptor, error) {
 	if r.Home == "" {
 		return nil, fmt.Errorf("cannot resolve a session profile without HOME")
 	}
@@ -100,7 +109,7 @@ func (r *Resolver) Resolve(profileValue string, load bool) (*Descriptor, error) 
 	if _, err := os.Stat(resolveCmd); err != nil {
 		return nil, fmt.Errorf("session image resolver not found at %s; claude-session requires the ai-sandboxes checkout", resolveCmd)
 	}
-	out, err := r.Run(resolveCmd, profile)
+	out, err := r.Run(ctx, resolveCmd, profile)
 	if err != nil {
 		return nil, fmt.Errorf("session image resolution failed: %w", runError(err, out))
 	}
@@ -115,10 +124,10 @@ func (r *Resolver) Resolve(profileValue string, load bool) (*Descriptor, error) 
 	if _, err := os.Stat(loadCmd); err != nil {
 		return nil, fmt.Errorf("session image loader not found at %s; claude-session requires the ai-sandboxes checkout", loadCmd)
 	}
-	if out, err = r.Run(loadCmd, d.Image); err != nil {
+	if out, err = r.Run(ctx, loadCmd, d.Image); err != nil {
 		return nil, fmt.Errorf("session image load failed: %w", runError(err, out))
 	}
-	if err := r.verifyLoaded(d.Image); err != nil {
+	if err := r.verifyLoaded(ctx, d.Image); err != nil {
 		return nil, err
 	}
 	return d, nil
@@ -127,12 +136,12 @@ func (r *Resolver) Resolve(profileValue string, load bool) (*Descriptor, error) 
 // verifyLoaded cross-checks the msb-side image against Docker's. msb load
 // does not verify an image's identity and drops OCI labels, so a tag with the
 // same name but different content must not be trusted.
-func (r *Resolver) verifyLoaded(tag string) error {
-	dockerOut, err := r.Run("docker", "image", "inspect", "--format", "{{.Id}}", tag)
+func (r *Resolver) verifyLoaded(ctx context.Context, tag string) error {
+	dockerOut, err := r.Run(ctx, "docker", "image", "inspect", "--format", "{{.Id}}", tag)
 	if err != nil {
 		return fmt.Errorf("cannot inspect Docker image %s: %w", tag, runError(err, dockerOut))
 	}
-	msbOut, err := r.Run("msb", "image", "inspect", "--format", "json", tag)
+	msbOut, err := r.Run(ctx, "msb", "image", "inspect", "--format", "json", tag)
 	if err != nil {
 		return fmt.Errorf("cannot inspect msb image %s: %w", tag, runError(err, msbOut))
 	}
@@ -140,14 +149,43 @@ func (r *Resolver) verifyLoaded(tag string) error {
 	if err != nil {
 		return fmt.Errorf("cannot parse msb image metadata for %s: %w", tag, err)
 	}
-	if strings.TrimSpace(string(dockerOut)) != meta.ConfigDigest {
+	dockerDigest, err := normalizeDigest(string(dockerOut))
+	if err != nil {
+		return fmt.Errorf("cannot read the digest of Docker image %s: %w", tag, err)
+	}
+	msbDigest, err := normalizeDigest(meta.ConfigDigest)
+	if err != nil {
+		return fmt.Errorf("msb image %s has no usable config digest: %w", tag, err)
+	}
+	if dockerDigest != msbDigest {
 		return fmt.Errorf("msb image %s does not match Docker image %s; remove it (msb image remove %s) before retrying",
 			tag, tag, tag)
 	}
 	return nil
 }
 
+// normalizeDigest makes a digest string comparable regardless of case or an
+// optional sha256: prefix. It fails closed on either side being empty: an
+// empty-vs-empty comparison would otherwise silently accept the identity of a
+// tag whose content could not be read at all.
+func normalizeDigest(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", errors.New("empty digest")
+	}
+	if strings.HasPrefix(strings.ToLower(s), "sha256:") {
+		s = s[len("sha256:"):]
+	}
+	return strings.ToLower(s), nil
+}
+
 func runError(err error, out []byte) error {
+	if ee, ok := err.(*exec.ExitError); ok {
+		if txt := strings.TrimSpace(string(out)); txt != "" {
+			return fmt.Errorf("exited with status %d: %w: %s", ee.ExitCode(), err, txt)
+		}
+		return fmt.Errorf("exited with status %d: %w", ee.ExitCode(), err)
+	}
 	if txt := strings.TrimSpace(string(out)); txt != "" {
 		return fmt.Errorf("%w: %s", err, txt)
 	}

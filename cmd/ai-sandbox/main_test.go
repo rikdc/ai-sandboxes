@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -122,7 +123,7 @@ func TestExecuteRunClaude(t *testing.T) {
 	e, _ := testEnv(t)
 	client := newFakeMsb()
 	var launched []string
-	code := executeRun(runOptions{agent: "claude", agentArgs: []string{"--version"}}, e, &bytes.Buffer{}, client,
+	code := executeRun(context.Background(), runOptions{agent: "claude", agentArgs: []string{"--version"}}, e, &bytes.Buffer{}, client,
 		func(argv []string) error { launched = argv; return nil })
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
@@ -151,7 +152,7 @@ func TestExecuteRunCodexCreatesVolumeAndInitsSharedState(t *testing.T) {
 		"io.ai-sandboxes.shared-state.quota": "4G",
 	}
 	var launched []string
-	code := executeRun(runOptions{agent: "codex"}, e, &bytes.Buffer{}, client,
+	code := executeRun(context.Background(), runOptions{agent: "codex"}, e, &bytes.Buffer{}, client,
 		func(argv []string) error { launched = argv; return nil })
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
@@ -182,7 +183,7 @@ func TestExecuteRunRejectsOverlappingCheckout(t *testing.T) {
 	e := execEnv{cwd: nested, home: home, getenv: func(string) string { return "" }}
 	client := newFakeMsb()
 	var launched []string
-	code := executeRun(runOptions{agent: "claude"}, e, &bytes.Buffer{}, client,
+	code := executeRun(context.Background(), runOptions{agent: "claude"}, e, &bytes.Buffer{}, client,
 		func(argv []string) error { launched = argv; return nil })
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1 (protected overlap)", code)
@@ -196,7 +197,7 @@ func TestExecuteRunImageMissing(t *testing.T) {
 	e, _ := testEnv(t)
 	client := newFakeMsb()
 	client.images = map[string]bool{}
-	code := executeRun(runOptions{agent: "claude"}, e, &bytes.Buffer{}, client, func([]string) error { return nil })
+	code := executeRun(context.Background(), runOptions{agent: "claude"}, e, &bytes.Buffer{}, client, func([]string) error { return nil })
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1", code)
 	}
@@ -207,7 +208,7 @@ func TestExecuteRunMissingEgress(t *testing.T) {
 	project := t.TempDir()
 	e := execEnv{cwd: project, home: home, getenv: func(string) string { return "" }}
 	client := newFakeMsb()
-	code := executeRun(runOptions{agent: "claude"}, e, &bytes.Buffer{}, client, func([]string) error { return nil })
+	code := executeRun(context.Background(), runOptions{agent: "claude"}, e, &bytes.Buffer{}, client, func([]string) error { return nil })
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1 (missing egress allowlist)", code)
 	}
@@ -235,7 +236,7 @@ func TestExecutePlanEgressSymlinkedHome(t *testing.T) {
 	t.Run("resolves through the symlinked home", func(t *testing.T) {
 		e := execEnv{cwd: project, home: link, getenv: func(string) string { return "" }}
 		var out bytes.Buffer
-		code := executePlan(runOptions{agent: "claude"}, e, &out, &bytes.Buffer{}, newFakeMsb())
+		code := executePlan(context.Background(), runOptions{agent: "claude"}, e, &out, &bytes.Buffer{}, newFakeMsb())
 		if code != 0 {
 			t.Fatalf("exit code = %d, want 0 (allowlist exists at $HOME)", code)
 		}
@@ -256,7 +257,7 @@ func TestExecutePlanEgressSymlinkedHome(t *testing.T) {
 
 		e := execEnv{cwd: project, home: link, getenv: func(string) string { return "" }}
 		var errb bytes.Buffer
-		code := executePlan(runOptions{agent: "claude"}, e, &bytes.Buffer{}, &errb, newFakeMsb())
+		code := executePlan(context.Background(), runOptions{agent: "claude"}, e, &bytes.Buffer{}, &errb, newFakeMsb())
 		if code != 1 {
 			t.Fatalf("exit code = %d, want 1 (missing egress allowlist)", code)
 		}
@@ -274,7 +275,7 @@ func TestExecuteRunInvalidLabels(t *testing.T) {
 	e, _ := testEnv(t)
 	client := newFakeMsb()
 	client.labels = map[string]string{"io.ai-sandboxes.shared-state.id": "x"}
-	code := executeRun(runOptions{agent: "claude"}, e, &bytes.Buffer{}, client, func([]string) error { return nil })
+	code := executeRun(context.Background(), runOptions{agent: "claude"}, e, &bytes.Buffer{}, client, func([]string) error { return nil })
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2 (inconsistent labels)", code)
 	}
@@ -284,7 +285,7 @@ func TestExecutePlanPrints(t *testing.T) {
 	e, _ := testEnv(t)
 	client := newFakeMsb()
 	var out, err bytes.Buffer
-	code := executePlan(runOptions{agent: "claude", agentArgs: []string{"-p", "hi"}}, e, &out, &err, client)
+	code := executePlan(context.Background(), runOptions{agent: "claude", agentArgs: []string{"-p", "hi"}}, e, &out, &err, client)
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
@@ -297,7 +298,7 @@ func TestExecutePlanPrints(t *testing.T) {
 
 func TestExecutePlanRejectsUnknownAgent(t *testing.T) {
 	e, _ := testEnv(t)
-	code := executePlan(runOptions{agent: "bogus"}, e, &bytes.Buffer{}, &bytes.Buffer{}, newFakeMsb())
+	code := executePlan(context.Background(), runOptions{agent: "bogus"}, e, &bytes.Buffer{}, &bytes.Buffer{}, newFakeMsb())
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
@@ -483,7 +484,7 @@ func sessionTestEnv(t *testing.T) (execEnv, string) {
 	}
 
 	e := execEnv{cwd: t.TempDir(), home: home, getenv: func(string) string { return "" }}
-	e.run = func(name string, _ ...string) ([]byte, error) {
+	e.run = func(_ context.Context, name string, _ ...string) ([]byte, error) {
 		switch {
 		case strings.Contains(name, "resolve-image.sh"):
 			return []byte(`{"image":"ai-sandboxes-claude-session:sha-abc","shared_state":{"id":"demo","quota":"2G"}}`), nil
@@ -505,7 +506,7 @@ func TestExecuteRunClaudeSession(t *testing.T) {
 	e, _ := sessionTestEnv(t)
 	client := newFakeMsb()
 	var launched []string
-	code := executeRun(runOptions{agent: "claude", profile: "demo", agentArgs: []string{"--model", "sonnet"}},
+	code := executeRun(context.Background(), runOptions{agent: "claude", profile: "demo", agentArgs: []string{"--model", "sonnet"}},
 		e, &bytes.Buffer{}, client, func(argv []string) error { launched = argv; return nil })
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
@@ -530,7 +531,7 @@ func TestExecuteRunClaudeSession(t *testing.T) {
 func TestExecutePlanClaudeSessionSkipsLoad(t *testing.T) {
 	e, _ := sessionTestEnv(t)
 	var out, errb bytes.Buffer
-	code := executePlan(runOptions{agent: "claude", profile: "demo"}, e, &out, &errb, newFakeMsb())
+	code := executePlan(context.Background(), runOptions{agent: "claude", profile: "demo"}, e, &out, &errb, newFakeMsb())
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (plan must not require a loaded image): %s", code, errb.String())
 	}
@@ -542,7 +543,7 @@ func TestExecutePlanClaudeSessionSkipsLoad(t *testing.T) {
 func TestExecuteRunClaudeSessionProfileNotForCodex(t *testing.T) {
 	e, _ := sessionTestEnv(t)
 	var errb bytes.Buffer
-	code := executeRun(runOptions{agent: "codex", profile: "demo"}, e, &errb, newFakeMsb(),
+	code := executeRun(context.Background(), runOptions{agent: "codex", profile: "demo"}, e, &errb, newFakeMsb(),
 		func([]string) error { return nil })
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
@@ -556,7 +557,7 @@ func TestExecuteRunClaudeSessionProfileNotFound(t *testing.T) {
 	e, _ := sessionTestEnv(t)
 	e.checkout = t.TempDir()
 	var errb bytes.Buffer
-	code := executeRun(runOptions{agent: "claude", profile: "nope"}, e, &errb, newFakeMsb(),
+	code := executeRun(context.Background(), runOptions{agent: "claude", profile: "nope"}, e, &errb, newFakeMsb(),
 		func([]string) error { return nil })
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1", code)

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -50,9 +51,12 @@ func TestResolveProfilePathMissing(t *testing.T) {
 
 func TestResolveProfilePathDirectory(t *testing.T) {
 	home := t.TempDir()
-	dir := t.TempDir()
-	if _, err := ResolveProfilePath(home, dir); err == nil {
-		t.Error("a directory should not be accepted as a profile")
+	_, err := ResolveProfilePath(home, t.TempDir())
+	if err == nil {
+		t.Fatal("a directory should not be accepted as a profile")
+	}
+	if !strings.Contains(err.Error(), "directory") {
+		t.Errorf("directory error should say so: %v", err)
 	}
 }
 
@@ -110,7 +114,7 @@ func TestResolverResolveLoadsAndVerifies(t *testing.T) {
 		"msb":              `{"config":{"digest":"sha256:deadbeef"}}`,
 	})}
 
-	d, err := r.Resolve("demo", true)
+	d, err := r.Resolve(context.Background(), "demo", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +137,7 @@ func TestResolverResolveSkipsLoadWhenNotLoading(t *testing.T) {
 	os.WriteFile(filepath.Join(profiles, "demo.json"), []byte(`{"schema_version":1}`), 0o644)
 
 	called := false
-	r := &Resolver{Checkout: checkout, Home: home, Run: func(name string, _ ...string) ([]byte, error) {
+	r := &Resolver{Checkout: checkout, Home: home, Run: func(ctx context.Context, name string, _ ...string) ([]byte, error) {
 		// load-image.sh, docker, and msb must not be invoked for a plan.
 		base := filepath.Base(name)
 		if base != "resolve-image.sh" {
@@ -141,7 +145,7 @@ func TestResolverResolveSkipsLoadWhenNotLoading(t *testing.T) {
 		}
 		return []byte(`{"image":"ai-sandboxes-claude-session:sha-abc","shared_state":null}`), nil
 	}}
-	d, err := r.Resolve("demo", false)
+	d, err := r.Resolve(context.Background(), "demo", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,11 +172,63 @@ func TestResolverResolveDigestMismatch(t *testing.T) {
 		"msb":              `{"config":{"digest":"sha256:different"}}`,
 	})}
 
-	if _, err := r.Resolve("demo", true); err == nil {
+	if _, err := r.Resolve(context.Background(), "demo", true); err == nil {
 		t.Fatalf("digest mismatch should fail")
 	} else if !strings.Contains(err.Error(), "does not match Docker image") {
 		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+func TestResolverResolveDigestNormalized(t *testing.T) {
+	// Digests compare case-insensitively and ignoring an optional sha256:
+	// prefix, so a plausible msb-side format change (bare hex, uppercased)
+	// cannot false-negative the identity check.
+	r := resolverFixture(t, map[string]string{
+		"resolve-image.sh": `{"image":"ai-sandboxes-claude-session:sha-abc","shared_state":null}`,
+		"load-image.sh":    "",
+		"docker":           "SHA256:DEADBEEF\n",
+		"msb":              `{"config":{"digest":"deadbeef"}}`,
+	})
+	if _, err := r.Resolve(context.Background(), "demo", true); err != nil {
+		t.Fatalf("normalized-equal digests should match: %v", err)
+	}
+}
+
+func TestResolverResolveEmptyDigestFailsClosed(t *testing.T) {
+	// An empty digest on either side must fail the identity check rather than
+	// compare equal to an empty digest on the other side.
+	for name, canned := range map[string]map[string]string{
+		"docker empty": {
+			"resolve-image.sh": `{"image":"ai-sandboxes-claude-session:sha-abc","shared_state":null}`,
+			"load-image.sh":    "",
+			"docker":           "",
+			"msb":              `{"config":{"digest":"sha256:deadbeef"}}`,
+		},
+		"msb empty": {
+			"resolve-image.sh": `{"image":"ai-sandboxes-claude-session:sha-abc","shared_state":null}`,
+			"load-image.sh":    "",
+			"docker":           "sha256:deadbeef",
+			"msb":              `{"config":{"digest":""}}`,
+		},
+	} {
+		if _, err := resolverFixture(t, canned).Resolve(context.Background(), "demo", true); err == nil {
+			t.Errorf("%s: an empty digest should fail the identity check", name)
+		}
+	}
+}
+
+func resolverFixture(t *testing.T, canned map[string]string) *Resolver {
+	t.Helper()
+	checkout := t.TempDir()
+	for _, p := range []string{"scripts/session/resolve-image.sh", "scripts/session/load-image.sh"} {
+		os.MkdirAll(filepath.Dir(filepath.Join(checkout, p)), 0o755)
+		os.WriteFile(filepath.Join(checkout, p), []byte("#!/bin/sh\n"), 0o755)
+	}
+	home := t.TempDir()
+	profiles := filepath.Join(home, ".config", "ai-sandboxes", "profiles")
+	os.MkdirAll(profiles, 0o755)
+	os.WriteFile(filepath.Join(profiles, "demo.json"), []byte(`{"schema_version":1}`), 0o644)
+	return &Resolver{Checkout: checkout, Home: home, Run: fakeRun(t, canned)}
 }
 
 func TestResolverResolveScriptFailure(t *testing.T) {
@@ -186,10 +242,10 @@ func TestResolverResolveScriptFailure(t *testing.T) {
 	os.WriteFile(filepath.Join(profiles, "demo.json"), []byte(`{"schema_version":1}`), 0o644)
 
 	bootErr := errors.New("cache miss requires CLAUDE_MSB_BUILD_EGRESS=1")
-	r := &Resolver{Checkout: checkout, Home: home, Run: func(_ string, _ ...string) ([]byte, error) {
+	r := &Resolver{Checkout: checkout, Home: home, Run: func(_ context.Context, _ string, _ ...string) ([]byte, error) {
 		return []byte("resolve-image: cache miss requires CLAUDE_MSB_BUILD_EGRESS=1"), bootErr
 	}}
-	_, err := r.Resolve("demo", false)
+	_, err := r.Resolve(context.Background(), "demo", false)
 	if err == nil {
 		t.Fatal("resolver failure should propagate")
 	}
@@ -198,9 +254,9 @@ func TestResolverResolveScriptFailure(t *testing.T) {
 	}
 }
 
-func fakeRun(t *testing.T, canned map[string]string) func(string, ...string) ([]byte, error) {
+func fakeRun(t *testing.T, canned map[string]string) func(context.Context, string, ...string) ([]byte, error) {
 	t.Helper()
-	return func(name string, _ ...string) ([]byte, error) {
+	return func(_ context.Context, name string, _ ...string) ([]byte, error) {
 		base := filepath.Base(name)
 		if base == "docker" || base == "msb" {
 			if out, ok := canned[base]; ok {
