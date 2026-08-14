@@ -81,6 +81,7 @@ type runOptions struct {
 	agentArgs []string
 	profile   string
 	verbose   bool
+	help      bool
 }
 
 var errProfileNotImplemented = errors.New("--profile is not yet implemented in this version (planned for a later milestone)")
@@ -90,6 +91,10 @@ func parseAgentArgs(args []string) (runOptions, error) {
 	if len(args) == 0 {
 		return opts, errors.New("missing agent name")
 	}
+	if args[0] == "-h" || args[0] == "--help" {
+		opts.help = true
+		return opts, nil
+	}
 	opts.agent = args[0]
 	args = args[1:]
 	for len(args) > 0 {
@@ -97,6 +102,9 @@ func parseAgentArgs(args []string) (runOptions, error) {
 		switch {
 		case a == "--":
 			opts.agentArgs = args[1:]
+			return opts, nil
+		case a == "-h" || a == "--help":
+			opts.help = true
 			return opts, nil
 		case a == "--profile" || a == "-p":
 			if len(args) < 2 {
@@ -127,6 +135,10 @@ func runCommand(args []string, verbose bool, stdout, stderr io.Writer) int {
 		usageCommand("run", stderr)
 		return 2
 	}
+	if opts.help {
+		usageCommand("run", stdout)
+		return 0
+	}
 	if verbose {
 		opts.verbose = true
 	}
@@ -151,6 +163,10 @@ func planCommand(args []string, verbose bool, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "ai-sandbox plan: %s\n", err)
 		usageCommand("plan", stderr)
 		return 2
+	}
+	if opts.help {
+		usageCommand("plan", stdout)
+		return 0
 	}
 	if verbose {
 		opts.verbose = true
@@ -434,6 +450,10 @@ func executePlan(opts runOptions, e execEnv, stdout, stderr io.Writer, client ms
 }
 
 func doctorCommand(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
+		fmt.Fprintln(stdout, "usage: ai-sandbox doctor")
+		return 0
+	}
 	if len(args) > 0 {
 		fmt.Fprintf(stderr, "ai-sandbox doctor: unexpected argument %q\n", args[0])
 		fmt.Fprintln(stderr, "usage: ai-sandbox doctor")

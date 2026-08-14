@@ -72,6 +72,7 @@ func TestParseAgentArgs(t *testing.T) {
 		agent     string
 		agentArgs []string
 		profile   string
+		help      bool
 		wantErr   bool
 	}{
 		{name: "bare", args: []string{"claude"}, agent: "claude"},
@@ -82,6 +83,10 @@ func TestParseAgentArgs(t *testing.T) {
 		{name: "empty agent", args: []string{}, wantErr: true},
 		{name: "unknown flag", args: []string{"claude", "--bogus", "x"}, wantErr: true},
 		{name: "dashed arg needs separator", args: []string{"claude", "--version"}, wantErr: true},
+		{name: "help bare", args: []string{"--help"}, help: true},
+		{name: "help short", args: []string{"-h"}, help: true},
+		{name: "help after agent", args: []string{"claude", "--help"}, agent: "claude", help: true},
+		{name: "help needs separator", args: []string{"claude", "--", "--help"}, agent: "claude", agentArgs: []string{"--help"}},
 	}
 	for _, c := range cases {
 		opts, err := parseAgentArgs(c.args)
@@ -103,6 +108,9 @@ func TestParseAgentArgs(t *testing.T) {
 		}
 		if opts.profile != c.profile {
 			t.Errorf("%s: profile = %q, want %q", c.name, opts.profile, c.profile)
+		}
+		if opts.help != c.help {
+			t.Errorf("%s: help = %v, want %v", c.name, opts.help, c.help)
 		}
 	}
 }
@@ -247,6 +255,18 @@ func TestDispatch(t *testing.T) {
 	out.Reset()
 	if code := run([]string{"bogus"}, &out, &err); code != 2 {
 		t.Fatalf("unknown command: code=%d", code)
+	}
+	out.Reset()
+	if code := run([]string{"run", "--help"}, &out, &err); code != 0 || !strings.Contains(out.String(), "usage:") {
+		t.Fatalf("run --help: code=%d out=%q", code, out.String())
+	}
+	out.Reset()
+	if code := run([]string{"plan", "-h"}, &out, &err); code != 0 || !strings.Contains(out.String(), "usage:") {
+		t.Fatalf("plan -h: code=%d out=%q", code, out.String())
+	}
+	out.Reset()
+	if code := run([]string{"doctor", "--help"}, &out, &err); code != 0 || !strings.Contains(out.String(), "usage:") {
+		t.Fatalf("doctor --help: code=%d out=%q", code, out.String())
 	}
 	out.Reset()
 	if code := run([]string{"-v", "plan", "claude"}, &out, &err); code != 0 {
