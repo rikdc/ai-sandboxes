@@ -45,7 +45,10 @@ fish_quote() {
 # plan (including, for claude-session, the --profile image), validates the
 # workspace, and execs the Microsandbox. Anything fish-specific (egress args,
 # shared-state handoff, workspace hashing) now lives in Go, so the wrappers
-# stay minimal and never source checkout code.
+# stay minimal and never source checkout code. The binary is installed outside
+# the checkout (a guest workspace could not mount it otherwise), so each
+# wrapper passes the checkout it already knows as AI_SANDBOXES_ROOT; without it
+# the Go binary cannot resolve the checkout from its own location or the cwd.
 
 # The wrapper bodies below are expanded by bash at write time, so any value
 # interpolated as a fish string must go through fish_quote. The function name
@@ -76,7 +79,7 @@ write_pass_through_wrapper() {
 function $agent --description $q_desc
     source $q_guard
     __ai_sandbox_trusted_refuse_overlap $q_agent $q_repo_root $q_fish_functions_dir $q_trusted_dir $q_ai_sandbox_install_dir; or return \$status
-    command $q_ai_sandbox_bin run $q_agent -- \$argv
+    command env AI_SANDBOXES_ROOT=$q_repo_root $q_ai_sandbox_bin run $q_agent -- \$argv
 end
 EOF
   chmod 0644 "$out_file" || return 1
@@ -100,7 +103,7 @@ write_claude_session_wrapper() {
 function claude-session --description $q_desc
     source $q_guard
     __ai_sandbox_trusted_refuse_overlap claude-session $q_repo_root $q_fish_functions_dir $q_trusted_dir $q_ai_sandbox_install_dir; or return \$status
-    command $q_ai_sandbox_bin run claude \$argv
+    command env AI_SANDBOXES_ROOT=$q_repo_root $q_ai_sandbox_bin run claude \$argv
 end
 EOF
   chmod 0644 "$out_file" || return 1

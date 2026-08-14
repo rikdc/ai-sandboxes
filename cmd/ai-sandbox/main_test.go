@@ -423,6 +423,27 @@ func TestResolvedCheckout(t *testing.T) {
 		}
 	})
 
+	t.Run("honors AI_SANDBOXES_ROOT over exe and cwd anchors", func(t *testing.T) {
+		// The installed Fish wrappers set AI_SANDBOXES_ROOT to the checkout they
+		// were installed from. That anchor must win over a binary installed
+		// outside any checkout and a cwd that is an unrelated project, which is
+		// exactly the setup claude-session needs resolve-image.sh for.
+		envCheckout := t.TempDir()
+		makeCheckout(t, envCheckout)
+		t.Setenv("AI_SANDBOXES_ROOT", envCheckout)
+		canonical := envCheckout
+		if resolved, err := filepath.EvalSymlinks(envCheckout); err == nil {
+			canonical = resolved
+		}
+		e := execEnv{
+			cwd: filepath.Join(t.TempDir(), "unrelated-project"),
+			exe: filepath.Join(t.TempDir(), "libexec", "ai-sandboxes", "ai-sandbox"),
+		}
+		if got := e.resolvedCheckout(); got != canonical {
+			t.Errorf("resolvedCheckout() = %q, want the AI_SANDBOXES_ROOT checkout %q", got, canonical)
+		}
+	})
+
 	t.Run("prefers the exe-resolved checkout over a different cwd checkout", func(t *testing.T) {
 		// Regression test for the guard's authority: when the binary lives in
 		// checkout A and cwd sits inside a different checkout B, the guard must
