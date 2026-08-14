@@ -50,7 +50,7 @@ validate_catalog_entry() {
       jq -e '
         (.id | type == "string" and test("^[a-z][a-z0-9-]*$")) and
         (.adapter == "https-tar") and
-        (.archive_member | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._/-]*$") and (contains("..") | not)) and
+        (.archive_member | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._/-]*$") and (contains("..") | not) and (endswith("/") | not)) and
         (.binary | type == "string" and test("^[a-z][a-z0-9-]*$")) and
         ((keys | sort) == ["adapter", "archive_member", "binary", "id", "url_template"])
       ' <<<"$entry" >/dev/null || fail "invalid catalog entry: $id"

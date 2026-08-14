@@ -82,6 +82,11 @@ docker run --rm --user node "$golang_tag" go version >/dev/null \
   || { echo 'curated tool golang does not run as node' >&2; exit 1; }
 docker run --rm --user node "$golang_tag" sh -c 'test "$(go env GOROOT)" = /usr/local/libexec/go' \
   || { echo 'golang GOROOT does not resolve to the installed toolchain prefix' >&2; exit 1; }
+# NOTE: the GOROOT assertion above relies on Go's runtime relocating GOROOT by
+# walking up from /proc/self/exe (via the /usr/local/bin/go symlink) to find
+# its pkg/tool tree. If a future Go release changes that heuristic this check
+# can fail even though the adapter is fine; treat a failure here as "verify the
+# heuristic" before blaming the install path.
 docker run --rm --user node "$golang_tag" sh -c 'test -x /usr/local/libexec/go/pkg/tool/linux_arm64/compile' \
   || { echo 'golang toolchain is incomplete (missing pkg/tool/compile)' >&2; exit 1; }
 docker run --rm --user node "$golang_tag" sh -c '! touch /usr/local/bin/.write-test 2>/dev/null' \

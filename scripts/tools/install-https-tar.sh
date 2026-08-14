@@ -47,7 +47,9 @@ test -d "$extract_dir/$archive_member" || die "could not extract $archive_member
 # beside bin/go). The prefix sits under /usr/local/libexec so /usr/local/bin
 # stays a directory of small launchers/symlinks, exactly as it does for
 # state-wrapper tools.
-member_name=${archive_member##*/}
+member_name=${archive_member%/}
+member_name=${member_name##*/}
+test -n "$member_name" || die "archive_member is empty after normalization: $archive_member"
 prefix=/usr/local/libexec/$member_name
 rm -rf "$prefix" || die "could not clear existing prefix $prefix"
 cp -a "$extract_dir/$archive_member" "$prefix" || die "could not install $archive_member to $prefix"
