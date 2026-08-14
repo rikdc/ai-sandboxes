@@ -430,7 +430,8 @@ func doctorCommand(args []string, stdout, stderr io.Writer) int {
 	cwd, _ := os.Getwd()
 	home := os.Getenv("HOME")
 	checkout := findCheckout(exe, cwd)
-	env := doctor.New(home, checkout)
+	installDir := aiSandboxInstallDir(home, os.Getenv)
+	env := doctor.New(home, checkout, installDir)
 	checks := env.Run()
 	hadFailures := doctor.Report(stdout, checks)
 	if hadFailures {

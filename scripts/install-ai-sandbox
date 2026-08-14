@@ -23,10 +23,19 @@ cd "$repo_root" || die "could not cd to $repo_root"
 
 install_dir="${AI_SANDBOX_INSTALL_DIR:-$HOME/.local/libexec/ai-sandboxes}"
 install_path="$install_dir/ai-sandbox"
+# Every use of $install_dir below is quoted, so spaces are fine, but a
+# newline in the path would break the mktemp template and the mv target.
+# Reject that explicitly rather than corrupting the install location.
+case $install_dir in
+  *$'\n'*) die 'AI_SANDBOX_INSTALL_DIR must not contain a newline' ;;
+esac
 
 mkdir -p "$install_dir" || die "could not create install directory $install_dir"
 
-tmpdir=$(mktemp -d) || die 'could not create a temporary directory'
+# The temporary binary must live on the same filesystem as $install_path so the
+# final `mv` is a rename (atomic swap). /tmp is often a separate filesystem, so
+# stage inside $install_dir itself.
+tmpdir=$(mktemp -d "$install_dir/.install.XXXXXX") || die 'could not create a staging directory inside install dir'
 trap 'rm -rf -- "$tmpdir"' EXIT
 tmp_bin="$tmpdir/ai-sandbox"
 
