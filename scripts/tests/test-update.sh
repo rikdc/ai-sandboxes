@@ -62,6 +62,10 @@ out_log="$mockdir/out.log"
 err_log="$mockdir/err.log"
 head_state="$mockdir/head"
 
+state_dir="$mockdir/state"
+mkdir -p "$state_dir"
+export XDG_STATE_HOME="$state_dir"
+
 export MOCK_GIT_LOG="$git_log" MOCK_UPDATE_LOG="$op_log" MOCK_GIT_HEAD_STATE="$head_state"
 export MOCK_GIT_REMOTES MOCK_GIT_BRANCH MOCK_GIT_STATUS MOCK_GIT_FETCH_STATUS \
   MOCK_GIT_MERGE_STATUS MOCK_GIT_MERGE_BASE MOCK_GIT_BEHIND \
@@ -259,6 +263,11 @@ run_update() {
   shift
   : >"$git_log"
   : >"$op_log"
+  # Each scenario runs against a clean reconciliation marker unless the test
+  # explicitly seeds one first (see the recovery scenarios below).
+  if test "${MOCK_KEEP_MARKER:-0}" != 1; then
+    rm -f "$state_dir/ai-sandboxes/installed-head"
+  fi
   printf '%s\n' "$MOCK_GIT_OLD_HEAD" >"$MOCK_GIT_HEAD_STATE"
   PATH="$extra_path:$base_sanitized" "$repo/scripts/update" "$@" >"$out_log" 2>"$err_log"
   rc=$?
@@ -488,12 +497,33 @@ expect_stdout_contains 'reinstalled ai-sandbox binary' 'binary install summary'
 expect_stdout_contains 'reinstalled fish wrappers' 'wrappers rebaked after binary install'
 
 # 16c. A failed binary install stops before the wrappers are touched.
+MOCK_GIT_CHANGED_PATHS=$'cmd/ai-sandbox/main.go\ninternal/plan/plan.go\ngo.mod\ngo.sum\nscripts/install-ai-sandbox'
 MOCK_BINARY_STATUS=1
 run_update "$gitpath"
 expect_status 2 'binary install failure'
 expect_stderr_contains 'ai-sandbox binary install failed' 'binary install failure message'
 grep -Fq 'install-fish-functions' "$op_log" && fail 'wrappers must not be reinstalled after a failed binary install'
+
+# 16d. After a failed install, git has already fast-forwarded and reports
+#      "up to date". The reconciliation marker written pre-install lets a
+#      subsequent run redo the pending work anyway.
 MOCK_BINARY_STATUS=0
+MOCK_GIT_OLD_HEAD="$new_head"
+MOCK_GIT_NEW_HEAD="$new_head"
+MOCK_KEEP_MARKER=1
+cat >"$mockdir/scenario16d.op" <<'EOF'
+install-ai-sandbox
+install-fish-functions
+EOF
+run_update "$gitpath"
+MOCK_KEEP_MARKER=0
+MOCK_GIT_OLD_HEAD="$old_head"
+MOCK_GIT_NEW_HEAD="$new_head"
+expect_status 0 'recovery reconciles pending install'
+expect_op_sequence 'recovery reconciliation operations' "$mockdir/scenario16d.op"
+expect_stdout_contains 'reconciling incomplete install' 'recovery reconciliation notice'
+expect_stdout_contains 'reconciled install to' 'recovery reconciliation summary'
+
 MOCK_GIT_CHANGED_PATHS=$'versions.env\nshell/fish/claude.fish\nconfig/tools.json\nimages/claude/entrypoint.sh'
 
 # 17. Flag validation: --check --verify and unknown flags are usage errors.

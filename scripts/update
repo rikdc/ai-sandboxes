@@ -49,11 +49,40 @@ git fetch origin main --quiet || die 'could not fetch origin/main'
 old_head=$(git rev-parse HEAD) || die 'could not resolve HEAD'
 new_head=$(git rev-parse origin/main) || die 'could not resolve origin/main after fetch'
 
-if test "$old_head" = "$new_head"; then
-  printf 'up to date\n'
-  exit 0
+# Reconciliation marker: the SHA of the last commit for which a full update
+# completed successfully (binary + build + wrappers, as required). If a prior
+# run fast-forwarded the tree but died before installing (e.g. install-ai-sandbox
+# failed), the marker still points at the pre-merge SHA, so the next run can
+# redo the pending work even though git already reports "up to date".
+state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/ai-sandboxes"
+marker_file="$state_dir/installed-head"
+installed_head=''
+if test -r "$marker_file"; then
+  installed_head=$(cat "$marker_file" 2>/dev/null || :)
 fi
-if ! git merge-base --is-ancestor "$old_head" "$new_head"; then
+# Only trust the marker if it points at a commit git still knows about; a
+# marker from a discarded branch would otherwise poison every future run.
+if test -n "$installed_head" \
+  && ! git rev-parse --verify --quiet "$installed_head^{commit}" >/dev/null 2>&1; then
+  installed_head=''
+fi
+
+if test "$old_head" = "$new_head"; then
+  if test -z "$installed_head" || test "$installed_head" = "$new_head"; then
+    printf 'up to date\n'
+    exit 0
+  fi
+  # Git is up to date, but the last successful install lags behind HEAD.
+  # --check reports that as a pending install (exit 1); the default mode
+  # falls through and reconciles from the marker.
+  if test "$check_mode" = 1; then
+    printf 'install incomplete: last completed %s, HEAD at %s\n' \
+      "${installed_head:0:7}" "${new_head:0:7}"
+    exit 1
+  fi
+  printf 'up to date with origin/main; reconciling incomplete install (last completed %s)\n' \
+    "${installed_head:0:7}"
+elif ! git merge-base --is-ancestor "$old_head" "$new_head"; then
   die 'history diverged from origin/main; cannot fast-forward (rebase or start from a fresh clone)'
 fi
 
@@ -101,19 +130,43 @@ light_verify() {
     || printf 'WARNING: built Codex is %s, expected %s\n' "$codex_v" "$CODEX_VERSION" >&2
 }
 
-commits_behind=$(git rev-list --count "$old_head..$new_head")
-printf 'update available: %s commits behind origin/main' "$commits_behind"
-summary=$(version_change_summary)
-if test -n "$summary"; then printf '; %s' "$summary"; fi
-printf '\n'
+commits_behind=0
+if test "$old_head" != "$new_head"; then
+  commits_behind=$(git rev-list --count "$old_head..$new_head")
+  printf 'update available: %s commits behind origin/main' "$commits_behind"
+  summary=$(version_change_summary)
+  if test -n "$summary"; then printf '; %s' "$summary"; fi
+  printf '\n'
+fi
 if test "$check_mode" = 1; then
+  if test "$old_head" = "$new_head"; then
+    exit 0
+  fi
   exit 1
 fi
 
-printf 'updating %s -> %s\n' "$old_head" "$new_head"
-git merge --ff-only origin/main \
-  || die 'git merge --ff-only origin/main failed; inspect the output above'
-changed_paths=$(git diff --name-only "$old_head" "$new_head")
+if test "$old_head" != "$new_head"; then
+  printf 'updating %s -> %s\n' "$old_head" "$new_head"
+  git merge --ff-only origin/main \
+    || die 'git merge --ff-only origin/main failed; inspect the output above'
+fi
+# Determine the diff base for pending work. If a marker exists it is
+# authoritative — it may reach further back than old_head when a prior run
+# fast-forwarded but did not complete installation.
+diff_from=${installed_head:-$old_head}
+# Pin the pre-install baseline on disk before running any install step. If a
+# subsequent install fails and this script dies, the marker keeps pointing at
+# diff_from so the next run recomputes the same pending work — even after
+# HEAD has already been fast-forwarded and git reports "up to date".
+mkdir -p "$state_dir" \
+  || die "could not create state directory $state_dir"
+printf '%s\n' "$diff_from" >"$marker_file" \
+  || die "could not write reconciliation marker $marker_file"
+if test "$diff_from" = "$new_head"; then
+  changed_paths=''
+else
+  changed_paths=$(git diff --name-only "$diff_from" "$new_head")
+fi
 
 need_build=0
 need_install=0
@@ -162,7 +215,16 @@ if test "$need_build" = 1; then
   fi
 fi
 
-status="fast-forwarded $commits_behind commits to ${new_head:0:7}"
+# All install steps succeeded — advance the marker to the current HEAD so a
+# later run sees no pending reconciliation work.
+printf '%s\n' "$new_head" >"$marker_file" \
+  || die "could not update reconciliation marker $marker_file"
+
+if test "$old_head" = "$new_head"; then
+  status="reconciled install to ${new_head:0:7}"
+else
+  status="fast-forwarded $commits_behind commits to ${new_head:0:7}"
+fi
 if test "$need_binary" = 1; then status="$status, reinstalled ai-sandbox binary"; fi
 if test "$need_build" = 1; then status="$status, rebuilt docker images"; fi
 if test "$need_install" = 1; then status="$status, reinstalled fish wrappers"; fi

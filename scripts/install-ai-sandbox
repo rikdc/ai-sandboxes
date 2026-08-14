@@ -26,7 +26,10 @@ install_path="$install_dir/ai-sandbox"
 
 mkdir -p "$install_dir" || die "could not create install directory $install_dir"
 
-tmpdir=$(mktemp -d) || die 'could not create a temporary directory'
+# The temporary binary must live on the same filesystem as $install_path so the
+# final `mv` is a rename (atomic swap). /tmp is often a separate filesystem, so
+# stage inside $install_dir itself.
+tmpdir=$(mktemp -d "$install_dir/.install.XXXXXX") || die 'could not create a staging directory inside install dir'
 trap 'rm -rf -- "$tmpdir"' EXIT
 tmp_bin="$tmpdir/ai-sandbox"
 

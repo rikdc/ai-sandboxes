@@ -126,6 +126,25 @@ func TestDoctorReportsBinaryInstalled(t *testing.T) {
 	}
 }
 
+func TestDoctorHonoursInstallDirOverride(t *testing.T) {
+	env, _ := fakeEnv(t, true, true)
+	// Simulate AI_SANDBOX_INSTALL_DIR pointing outside $HOME/.local/libexec.
+	installDir := t.TempDir()
+	env.InstallDir = installDir
+	if err := os.WriteFile(filepath.Join(installDir, "ai-sandbox"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	checks := env.Run()
+	if s := checkStatus(checks, "ai-sandbox binary"); s != statusOK {
+		t.Errorf("ai-sandbox binary = %s, want ok when installed under override dir", s)
+	}
+	for _, c := range checks {
+		if c.Name == "ai-sandbox binary" && !strings.Contains(c.Detail, installDir) {
+			t.Errorf("ai-sandbox binary detail = %q, want it to reference override dir %q", c.Detail, installDir)
+		}
+	}
+}
+
 func TestDoctorFailsWhenBinaryMissing(t *testing.T) {
 	env, _ := fakeEnv(t, true, true)
 	// No install file present, and drop the PATH stub for ai-sandbox so the
