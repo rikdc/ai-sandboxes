@@ -1,5 +1,11 @@
 # Claude security and recovery
 
+Claude and Codex both run deny-by-default: only the HTTPS hosts listed in their
+egress allowlist (`~/.config/microvms/claude-egress`,
+`~/.config/microvms/codex-egress`) plus gateway DNS are reachable, each
+launched as `node` in Microsandbox's `restricted` security profile. This page
+covers Claude; Codex follows the same model with its own allowlist file.
+
 The `claude` Fish launcher runs Claude Code as `node` in Microsandbox's `restricted` security profile. It mounts the current Git worktree (or current directory outside Git) read/write, uses a separate persistent home volume, and refuses to mount `/` or the complete host home directory.
 
 ## Network policy
