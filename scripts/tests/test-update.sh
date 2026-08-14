@@ -390,7 +390,7 @@ EOF
 cat >"$mockdir/scenario8.git" <<EOF
 git fetch origin main --quiet
 git merge --ff-only origin/main
-git diff --name-only $old_head $new_head
+git diff --name-only --end-of-options $old_head $new_head
 EOF
 run_update "$allpath"
 expect_status 0 'default full update'

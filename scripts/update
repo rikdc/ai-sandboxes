@@ -60,10 +60,21 @@ installed_head=''
 if test -r "$marker_file"; then
   installed_head=$(cat "$marker_file" 2>/dev/null || :)
 fi
+# The marker file lives under $HOME and is only written by this script, but
+# any process running as the user can tamper with it. Reject anything that
+# is not a plain hex object name before it reaches git — otherwise a value
+# like `--upload-pack=...` would be interpreted as a git flag, not a ref.
+if ! [[ $installed_head =~ ^[0-9a-fA-F]{7,64}$ ]]; then
+  installed_head=''
+fi
 # Only trust the marker if it points at a commit git still knows about; a
 # marker from a discarded branch would otherwise poison every future run.
+# --end-of-options belt-and-braces against future edits: even a validated
+# hex string that happens to start with `-` (impossible today, but the
+# check is cheap) is treated as a positional argument.
 if test -n "$installed_head" \
-  && ! git rev-parse --verify --quiet "$installed_head^{commit}" >/dev/null 2>&1; then
+  && ! git rev-parse --verify --quiet --end-of-options "$installed_head^{commit}" \
+      >/dev/null 2>&1; then
   installed_head=''
 fi
 
@@ -97,6 +108,19 @@ read_value() {
     [[ "$line" == "$key="* ]] && value=${line#"$key="}
   done <"$file"
   printf '%s\n' "$value"
+}
+
+# The reconciliation marker's invariant — "SHA at which the on-disk install
+# was last known reconciled" — is only preserved if this is the single place
+# the file is mutated. Callers pass either $diff_from (pin the baseline
+# before install steps run) or $new_head (advance after every step
+# succeeded); never any other value.
+record_installed_head() {
+  local sha=$1
+  mkdir -p "$state_dir" \
+    || die "could not create state directory $state_dir"
+  printf '%s\n' "$sha" >"$marker_file" \
+    || die "could not update reconciliation marker $marker_file"
 }
 
 version_change_summary() {
@@ -158,14 +182,11 @@ diff_from=${installed_head:-$old_head}
 # subsequent install fails and this script dies, the marker keeps pointing at
 # diff_from so the next run recomputes the same pending work — even after
 # HEAD has already been fast-forwarded and git reports "up to date".
-mkdir -p "$state_dir" \
-  || die "could not create state directory $state_dir"
-printf '%s\n' "$diff_from" >"$marker_file" \
-  || die "could not write reconciliation marker $marker_file"
+record_installed_head "$diff_from"
 if test "$diff_from" = "$new_head"; then
   changed_paths=''
 else
-  changed_paths=$(git diff --name-only "$diff_from" "$new_head")
+  changed_paths=$(git diff --name-only --end-of-options "$diff_from" "$new_head")
 fi
 
 need_build=0
@@ -217,8 +238,7 @@ fi
 
 # All install steps succeeded — advance the marker to the current HEAD so a
 # later run sees no pending reconciliation work.
-printf '%s\n' "$new_head" >"$marker_file" \
-  || die "could not update reconciliation marker $marker_file"
+record_installed_head "$new_head"
 
 if test "$old_head" = "$new_head"; then
   status="reconciled install to ${new_head:0:7}"

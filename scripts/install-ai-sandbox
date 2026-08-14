@@ -23,6 +23,12 @@ cd "$repo_root" || die "could not cd to $repo_root"
 
 install_dir="${AI_SANDBOX_INSTALL_DIR:-$HOME/.local/libexec/ai-sandboxes}"
 install_path="$install_dir/ai-sandbox"
+# Every use of $install_dir below is quoted, so spaces are fine, but a
+# newline in the path would break the mktemp template and the mv target.
+# Reject that explicitly rather than corrupting the install location.
+case $install_dir in
+  *$'\n'*) die 'AI_SANDBOX_INSTALL_DIR must not contain a newline' ;;
+esac
 
 mkdir -p "$install_dir" || die "could not create install directory $install_dir"
 
