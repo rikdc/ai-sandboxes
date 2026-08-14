@@ -9,7 +9,7 @@ Requires Apple Silicon, Docker Desktop, Git, Fish, Microsandbox (`msb`), and
 Go (for the `ai-sandbox` control plane).
 
 ```console
-go build -o "$HOME/.local/bin/ai-sandbox" ./cmd/ai-sandbox   # control plane (must be on $PATH)
+./scripts/install-ai-sandbox   # build the control plane and install it to ~/.local/libexec/ai-sandboxes/ai-sandbox
 ./scripts/build
 ./scripts/verify
 ./scripts/load-msb
