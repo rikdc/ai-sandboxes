@@ -60,7 +60,10 @@ func fakeEnv(t *testing.T, withMsb, withEgress bool) (*Env, string) {
 			return nil, errors.New("unexpected command " + name + " " + strings.Join(args, " "))
 		},
 	}
-	return &Env{Home: home, Checkout: checkout, Runner: runner}, home
+	// Match the CLI's resolved default so tests that don't care about the
+	// override still exercise a realistic install path.
+	installDir := filepath.Join(home, ".local", "libexec", "ai-sandboxes")
+	return &Env{Home: home, Checkout: checkout, InstallDir: installDir, Runner: runner}, home
 }
 
 func checkStatus(checks []Check, name string) string {
@@ -142,6 +145,39 @@ func TestDoctorHonoursInstallDirOverride(t *testing.T) {
 		if c.Name == "ai-sandbox binary" && !strings.Contains(c.Detail, installDir) {
 			t.Errorf("ai-sandbox binary detail = %q, want it to reference override dir %q", c.Detail, installDir)
 		}
+	}
+}
+
+func TestDoctorInstallDirOverrideReportedOnFailure(t *testing.T) {
+	env, _ := fakeEnv(t, true, true)
+	// Point the override somewhere with no binary, and drop the PATH stub so
+	// the "not found anywhere" branch fires. The remediation message must
+	// name the override dir — the user set AI_SANDBOX_INSTALL_DIR and would
+	// otherwise be told to (re)install to the default location.
+	installDir := t.TempDir()
+	env.InstallDir = installDir
+	prev := env.Runner.LookPath
+	env.Runner.LookPath = func(name string) (string, error) {
+		if name == "ai-sandbox" {
+			return "", errors.New("not found")
+		}
+		return prev(name)
+	}
+	var found bool
+	for _, c := range env.Run() {
+		if c.Name != "ai-sandbox binary" {
+			continue
+		}
+		found = true
+		if c.Status != statusFail {
+			t.Errorf("status = %s, want fail", c.Status)
+		}
+		if !strings.Contains(c.Detail, installDir) {
+			t.Errorf("detail = %q, should reference override dir %q", c.Detail, installDir)
+		}
+	}
+	if !found {
+		t.Fatal("no ai-sandbox binary check reported")
 	}
 }
 

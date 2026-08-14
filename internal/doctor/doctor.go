@@ -43,8 +43,10 @@ type Runner struct {
 
 // New builds an Env against the real host. home is the user's home directory;
 // checkout is the ai-sandboxes checkout root (or "" to skip checkout-derived
-// checks); installDir is the trusted ai-sandbox install directory (empty falls
-// back to $HOME/.local/libexec/ai-sandboxes to match the installer default).
+// checks); installDir is the trusted ai-sandbox install directory and must
+// match what scripts/install-ai-sandbox writes to — callers resolve the
+// AI_SANDBOX_INSTALL_DIR override before calling in so the guard, the
+// installer, and this diagnostic all agree on one path.
 func New(home, checkout, installDir string) *Env {
 	return &Env{
 		Home:       home,
@@ -57,19 +59,14 @@ func New(home, checkout, installDir string) *Env {
 	}
 }
 
-// Env carries the host context doctor inspects.
+// Env carries the host context doctor inspects. InstallDir must be non-empty
+// when Run is called; the CLI resolves it once and passes it in, and tests
+// that construct Env directly are expected to do the same.
 type Env struct {
 	Home       string
 	Checkout   string
 	InstallDir string
 	Runner     Runner
-}
-
-func (e *Env) installDir() string {
-	if e.InstallDir != "" {
-		return e.InstallDir
-	}
-	return filepath.Join(e.Home, ".local", "libexec", "ai-sandboxes")
 }
 
 var hostnameRE = regexp.MustCompile(`^(\*\.)?[A-Za-z0-9][A-Za-z0-9.-]*$`)
@@ -231,7 +228,7 @@ func (e *Env) checkLauncher(add func(Check)) {
 		add(Check{Name: "launcher placement", Status: statusFail, Detail: "cannot determine home directory"})
 		return
 	}
-	installedBin := filepath.Join(e.installDir(), "ai-sandbox")
+	installedBin := filepath.Join(e.InstallDir, "ai-sandbox")
 	if _, err := os.Stat(installedBin); err == nil {
 		add(Check{Name: "ai-sandbox binary", Status: statusOK, Detail: installedBin})
 	} else if path, lerr := e.Runner.LookPath("ai-sandbox"); lerr == nil {
