@@ -165,8 +165,36 @@ func TestResolveCodexPlan(t *testing.T) {
 	if p.Resources.CPUs != 0 || p.Resources.Memory != "" {
 		t.Errorf("codex should not set cpus/memory: %+v", p.Resources)
 	}
-	if p.Security != "" {
-		t.Errorf("codex security = %q, want unset", p.Security)
+	if p.Security != "restricted" {
+		t.Errorf("codex security = %q, want restricted", p.Security)
+	}
+}
+
+func TestResolveSessionPlan(t *testing.T) {
+	shared, err := ParseSharedStateRequest("demo-profile", "2G")
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := resolveInput("claude", shared)
+	in.ImageOverride = "ai-sandboxes-claude-session:sha-deadbeef"
+	p, err := Resolve(mustConfig(t, "claude"), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Image != "ai-sandboxes-claude-session:sha-deadbeef" {
+		t.Errorf("session image = %q", p.Image)
+	}
+	if p.Security != "restricted" {
+		t.Errorf("session security = %q, want restricted", p.Security)
+	}
+	if p.SharedState == nil || p.SharedState.Mount != "agent-state-demo-profile-v1:/var/lib/agent-state:kind=dir,quota=2G" {
+		t.Errorf("session shared state = %+v", p.SharedState)
+	}
+	if p.WorkspaceGuest != "/workspace/my-project-e85645dcb849" {
+		t.Errorf("session guest workspace = %q", p.WorkspaceGuest)
+	}
+	if p.HomeMount != "claude-home-hardened:/home/node:kind=dir,quota=4G" {
+		t.Errorf("session home mount = %q", p.HomeMount)
 	}
 }
 

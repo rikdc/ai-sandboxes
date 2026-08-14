@@ -73,6 +73,10 @@ type Input struct {
 	Workspace   string
 	SharedState *SharedState
 	Network     Network
+	// ImageOverride replaces the agent's baked base image. It is used for
+	// session images, whose tag is resolved from a profile at run time rather
+	// than baked into the agent policy.
+	ImageOverride string
 	// RootDiskFromVersions is the versions.env WORKSPACE_QUOTA used when the
 	// agent's policy says to source its root-disk from versions.env.
 	RootDiskFromVersions string
@@ -108,12 +112,17 @@ func Resolve(cfg config.Agent, in Input) (*RuntimePlan, error) {
 
 	resources := Resources{CPUs: cfg.CPUs, Memory: cfg.Memory, RootDisk: rootDisk}
 
+	image := cfg.Image
+	if in.ImageOverride != "" {
+		image = in.ImageOverride
+	}
+
 	workspaceMount := fmt.Sprintf("%s:%s:%s", in.Workspace, guest, cfg.WorkspaceMount)
 	homeMount := fmt.Sprintf("%s:%s:%s", cfg.HomeVolume, cfg.HomePath, cfg.HomeMount)
 
 	return &RuntimePlan{
 		AgentName:      cfg.Name,
-		Image:          cfg.Image,
+		Image:          image,
 		User:           cfg.User,
 		TTY:            cfg.TTY,
 		WorkspaceHost:  in.Workspace,

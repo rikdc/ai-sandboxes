@@ -40,14 +40,31 @@ fish_quote() {
   printf "'%s'" "$s"
 }
 
-# claude and codex are now single-command pass-throughs: after the guard
-# check, everything hands off to `ai-sandbox run`, which resolves the plan,
-# validates the workspace, and execs the Microsandbox. Anything fish-specific
-# (egress args, shared-state handoff, workspace hashing) now lives in Go, so
-# the wrapper stays minimal and never sources checkout code.
+# claude, codex, and claude-session are single-command pass-throughs: after
+# the guard check, everything hands off to `ai-sandbox run`, which resolves the
+# plan (including, for claude-session, the --profile image), validates the
+# workspace, and execs the Microsandbox. Anything fish-specific (egress args,
+# shared-state handoff, workspace hashing) now lives in Go, so the wrappers
+# stay minimal and never source checkout code.
+
+# The wrapper bodies below are expanded by bash at write time, so any value
+# interpolated as a fish string must go through fish_quote. The function name
+# itself cannot be a quoted string, so validate it as a bare identifier
+# instead: an agent name with a space, quote, or leading non-letter would
+# otherwise be able to inject fish syntax through the heredoc.
+valid_agent() {
+  case "$1" in
+    '' | *[!a-z0-9-]* | [!a-z]*) return 1 ;;
+  esac
+  return 0
+}
+
 write_pass_through_wrapper() {
   local agent=$1 out_file=$2
-  local q_guard q_repo_root q_fish_functions_dir q_trusted_dir q_ai_sandbox_install_dir q_ai_sandbox_bin
+  local q_agent q_desc q_guard q_repo_root q_fish_functions_dir q_trusted_dir q_ai_sandbox_install_dir q_ai_sandbox_bin
+  valid_agent "$agent" || die "refusing to generate a wrapper for invalid agent name '$agent'"
+  q_agent=$(fish_quote "$agent") || return 1
+  q_desc=$(fish_quote "$agent: ai-sandboxes hardened Microsandbox launcher") || return 1
   q_guard=$(fish_quote "$trusted_dir/guard.fish") || return 1
   q_repo_root=$(fish_quote "$repo_root") || return 1
   q_fish_functions_dir=$(fish_quote "$fish_functions_dir") || return 1
@@ -55,47 +72,45 @@ write_pass_through_wrapper() {
   q_ai_sandbox_install_dir=$(fish_quote "$ai_sandbox_install_dir") || return 1
   q_ai_sandbox_bin=$(fish_quote "$ai_sandbox_bin") || return 1
 
-  cat > "$out_file" <<EOF
-function $agent --description '$agent: ai-sandboxes hardened Microsandbox launcher'
+  cat > "$out_file" <<EOF || return 1
+function $agent --description $q_desc
     source $q_guard
-    __ai_sandbox_trusted_refuse_overlap $agent $q_repo_root $q_fish_functions_dir $q_trusted_dir $q_ai_sandbox_install_dir; or return \$status
-    command $q_ai_sandbox_bin run $agent -- \$argv
+    __ai_sandbox_trusted_refuse_overlap $q_agent $q_repo_root $q_fish_functions_dir $q_trusted_dir $q_ai_sandbox_install_dir; or return \$status
+    command $q_ai_sandbox_bin run $q_agent -- \$argv
 end
 EOF
+  chmod 0644 "$out_file" || return 1
 }
 
-write_wrapper() {
-  local agent=$1 impl_function=$2 impl_file=$3 out_file=$4
-  local q_guard q_repo_root q_fish_functions_dir q_trusted_dir q_ai_sandbox_install_dir q_lib q_impl_file
+# claude-session differs from the other two wrappers only in that its args are
+# the agent's own (--profile first, then claude arguments): the profile flag
+# must reach ai-sandbox, so no `--` is inserted before $argv.
+write_claude_session_wrapper() {
+  local out_file=$1
+  local q_desc q_guard q_repo_root q_fish_functions_dir q_trusted_dir q_ai_sandbox_install_dir q_ai_sandbox_bin
+  q_desc=$(fish_quote 'claude-session: ai-sandboxes hardened Microsandbox launcher') || return 1
   q_guard=$(fish_quote "$trusted_dir/guard.fish") || return 1
   q_repo_root=$(fish_quote "$repo_root") || return 1
   q_fish_functions_dir=$(fish_quote "$fish_functions_dir") || return 1
   q_trusted_dir=$(fish_quote "$trusted_dir") || return 1
   q_ai_sandbox_install_dir=$(fish_quote "$ai_sandbox_install_dir") || return 1
-  q_lib=$(fish_quote "$repo_root/shell/fish/lib/ai-sandbox.fish") || return 1
-  q_impl_file=$(fish_quote "$impl_file") || return 1
-  cat >"$out_file" <<EOF || return 1
-# Installed by ai-sandboxes' scripts/install-fish-functions. This wrapper is a
-# copy, not a symlink, and lives outside the ai-sandboxes checkout on purpose:
-# it is the trust boundary that runs before any checkout-provided code, so a
-# guest agent with write access to a mounted ai-sandboxes checkout cannot
-# tamper with it. Re-run scripts/install-fish-functions after updating
-# ai-sandboxes to refresh it.
-function $agent --description 'ai-sandboxes: $agent (installed wrapper)'
+  q_ai_sandbox_bin=$(fish_quote "$ai_sandbox_bin") || return 1
+
+  cat > "$out_file" <<EOF || return 1
+function claude-session --description $q_desc
     source $q_guard
-    __ai_sandbox_trusted_refuse_overlap $agent $q_repo_root $q_fish_functions_dir $q_trusted_dir $q_ai_sandbox_install_dir; or return \$status
-    source $q_lib
-    source $q_impl_file
-    $impl_function \$argv
+    __ai_sandbox_trusted_refuse_overlap claude-session $q_repo_root $q_fish_functions_dir $q_trusted_dir $q_ai_sandbox_install_dir; or return \$status
+    command $q_ai_sandbox_bin run claude \$argv
 end
 EOF
+  chmod 0644 "$out_file" || return 1
 }
 
 write_pass_through_wrapper claude "$fish_functions_dir/claude.fish" \
   || die 'could not write the claude wrapper'
 write_pass_through_wrapper codex "$fish_functions_dir/codex.fish" \
   || die 'could not write the codex wrapper'
-write_wrapper claude-session __ai_sandbox_impl_claude_session "$repo_root/shell/fish/claude-session.fish" "$fish_functions_dir/claude-session.fish" \
+write_claude_session_wrapper "$fish_functions_dir/claude-session.fish" \
   || die 'could not write the claude-session wrapper'
 
 printf 'Installed ai-sandboxes Fish wrappers into %s (checkout: %s)\n' "$fish_functions_dir" "$repo_root"

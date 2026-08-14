@@ -55,25 +55,24 @@ can modify project files and must not be able to influence a future host-side
 build implicitly.
 
 `claude-session` (and `claude`/`codex`) refuse to launch if the workspace they
-would mount overlaps any protected ai-sandboxes path. The resolver and its
-helpers run as host-side scripts with real Docker authority before the guest
-ever starts; if the mounted project overlapped one of these paths, a guest
-with write access to the mount could tamper with launcher code for a later
-host invocation to trust. A check placed inside the checkout's own Fish files
-cannot be the primary control here, since a guest with write access to those
-files could simply edit the check back out along with anything else. The
-actual trust boundary is `./scripts/install-fish-functions` (see the
-top-level README): it copies (never symlinks) small wrapper functions and a
-shared guard snippet to `~/.config/fish/functions/` and
-`~/.config/ai-sandboxes/trusted/`, outside any checkout a guest could write
-to, and the wrapper runs the overlap check *before* sourcing any
-checkout-provided code at all. The protected paths are the ai-sandboxes
-checkout itself *and* the wrapper/guard's own installed directories:
-protecting only the checkout would still let a guest mounted at, say,
-`~/.config/fish` tamper with the installed wrapper directly. The in-checkout
-copies of the same check (`shell/fish/lib/ai-sandbox.fish`) remain as defense
-in depth for direct or pre-wrapper invocations, not as the security boundary
-itself.
+would mount overlaps any protected ai-sandboxes path, and the wrappers refuse
+even to attempt a launch from such a workspace. The resolution runs as a
+host-side control plane (`ai-sandbox run`, compiled Go) with real Docker
+authority before the guest ever starts; if the mounted project overlapped one
+of these trusted paths, a guest with write access to the mount could tamper
+with launcher code for a later host invocation to trust. The control plane is
+compiled and invoked by an absolute path, so nothing guest-writable can
+rewrite it in place, and `plan.RefuseOverlap` canonicalizes the workspace and
+every protected root — the ai-sandboxes checkout *and* the wrapper/guard's
+own installed directories under `~/.config` — before any launch (protecting
+only the checkout would still let a guest mounted at, say, `~/.config/fish`
+tamper with the installed wrapper directly). On top of that, the installed
+Fish wrappers (copied, never symlinked, by `./scripts/install-fish-functions`
+to `~/.config/fish/functions/`) stay outside any writable checkout and run a
+small trusted guard snippet from `~/.config/ai-sandboxes/trusted/` before
+handing off to the control plane. They are pure pass-throughs and never
+source checkout-provided code, so there is no executable surface inside the
+checkout for a guest to flip.
 
 The final `msb run` invocation retains the existing policy:
 
@@ -228,20 +227,19 @@ config digest reported by msb with Docker's image ID instead.
 
 The same label-stripping behavior means `msb load` cannot carry a session
 image's `shared_state` request the way the base image carries its own (fixed,
-build-arg-derived) shared-state labels for `__ai_sandbox_shared_state_mount_args`
-to read. Instead, `resolve-image.sh` prints a small JSON descriptor —
+build-arg-derived) shared-state labels. Instead, `resolve-image.sh` prints a
+small JSON descriptor —
 `{"image": "<tag>", "shared_state": {"id": "...", "quota": "..."}|null}` —
 computed entirely from the already-validated, host-side canonical profile
 snapshot, never from anything guest-controlled or re-read from disk after
-validation. `claude-session` parses this descriptor and calls
-`__ai_sandbox_shared_state_request_args` (a narrow, standalone helper that
-validates the id/quota shape and builds the same `--mount-named
-agent-state-<id>-v1:/var/lib/agent-state:kind=dir,quota=<quota>` argument the
-label-based path produces) followed by the existing, unmodified
-`__ai_sandbox_initialize_shared_state`. The base image's own
-`claude`/`codex` launchers are unaffected: they still derive shared state from
-msb image labels via `__ai_sandbox_shared_state_mount_args`, which this
-mechanism does not touch.
+validation. The Go control plane (`ai-sandbox run claude --profile ...`)
+parses this descriptor, validates the id/quota shape
+(`plan.ParseSharedStateRequest`), and builds the same
+`--mount-named agent-state-<id>-v1:/var/lib/agent-state:kind=dir,quota=<quota>`
+argument the label-based path produces, then provisions the volume and shares
+it into the launch. The base `claude`/`codex` paths are unaffected: they still
+derive shared state from the msb image labels via `plan.SharedStateFromLabels`
+in the same control plane.
 
 Otherwise, the resolver creates a temporary build context that contains only
 generated files and trusted installer scripts; it must never use the project
@@ -460,13 +458,16 @@ the tasks that must land first.
    - Extract reusable load logic from `scripts/load-msb`.
    - Load/inspect a distinct session tag without replacing base-image tags.
 
-6. **`claude-session` Fish launcher** (depends on 4, 5)
-   - Parse explicit profile arguments and build-egress opt-in.
+6. **`--profile` support in the control plane** (depends on 4, 5)
+   - Parse explicit profile arguments and build-egress opt-in in
+     `ai-sandbox run claude --profile ...`.
    - Resolve a bare `--profile` name against
      `~/.config/ai-sandboxes/profiles/<name>.json`; treat any value containing
      `/` as a literal path.
    - Reuse the existing Claude network/mount/security construction verbatim
-     after resolving the image.
+     after resolving the image. The `claude-session` Fish wrapper is a thin
+     pass-through to the control plane; the shared-state descriptor parsing
+     and mount construction moved out of Fish into the control plane.
 
 7. **Empty-profile end-to-end verification** (depends on 4, 5, 6)
    - Build and launch an empty-profile session image.

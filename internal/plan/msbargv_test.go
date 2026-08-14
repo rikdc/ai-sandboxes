@@ -106,6 +106,41 @@ func TestClaudeForwardsAgentArgsVerbatim(t *testing.T) {
 	}
 }
 
+func TestClaudeSessionMsbArgvGolden(t *testing.T) {
+	shared, err := SharedStateFromLabels(map[string]string{
+		"io.ai-sandboxes.shared-state.id":    "demo-profile",
+		"io.ai-sandboxes.shared-state.quota": "2G",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := resolveInput("claude", shared)
+	in.ImageOverride = "ai-sandboxes-claude-session:sha-deadbeef"
+	in.AgentArgs = []string{"--model", "sonnet"}
+	p, err := Resolve(mustConfig(t, "claude"), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"run", "--tty", "--pull", "never", "--user", "node",
+		"--cpus", "4", "--memory", "8G", "--root-disk", "10G", "--security", "restricted",
+		"--no-net", "--net-rule", "allow@host:udp:53", "--net-rule", "allow@host:tcp:53",
+		"--net-rule", "allow@api.anthropic.com:tcp:443", "--net-rule", "allow@github.com:tcp:443",
+		"--mount-dir", "/Users/me/dev/my-project:/workspace/my-project-e85645dcb849:rw,quota=10G",
+		"--mount-named", "claude-home-hardened:/home/node:kind=dir,quota=4G",
+		"--mount-named", "agent-state-demo-profile-v1:/var/lib/agent-state:kind=dir,quota=2G",
+		"--workdir", "/workspace/my-project-e85645dcb849",
+		"ai-sandboxes-claude-session:sha-deadbeef",
+		"--", "env",
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+		"ENABLE_CLAUDEAI_MCP_SERVERS=false",
+		"claude", "--model", "sonnet",
+	}
+	if !reflect.DeepEqual(p.MsbArgv(), want) {
+		t.Errorf("claude-session argv mismatch\n got: %#v\nwant: %#v", p.MsbArgv(), want)
+	}
+}
+
 func TestCodexMsbArgvGolden(t *testing.T) {
 	p, err := Resolve(mustConfig(t, "codex"), resolveInput("codex", nil))
 	if err != nil {
@@ -113,7 +148,7 @@ func TestCodexMsbArgvGolden(t *testing.T) {
 	}
 	want := []string{
 		"run", "--tty", "--pull", "never", "--user", "node",
-		"--root-disk", "20G",
+		"--root-disk", "20G", "--security", "restricted",
 		"--no-net", "--net-rule", "allow@host:udp:53", "--net-rule", "allow@host:tcp:53",
 		"--net-rule", "allow@api.openai.com:tcp:443", "--net-rule", "allow@github.com:tcp:443",
 		"--mount-dir", "/Users/me/dev/my-project:/workspace/my-project-2d3837f6cd02:rw",
@@ -143,7 +178,7 @@ func TestCodexMsbArgvWithSharedStateAndArgs(t *testing.T) {
 	}
 	want := []string{
 		"run", "--tty", "--pull", "never", "--user", "node",
-		"--root-disk", "20G",
+		"--root-disk", "20G", "--security", "restricted",
 		"--no-net", "--net-rule", "allow@host:udp:53", "--net-rule", "allow@host:tcp:53",
 		"--net-rule", "allow@api.openai.com:tcp:443", "--net-rule", "allow@github.com:tcp:443",
 		"--mount-dir", "/Users/me/dev/my-project:/workspace/my-project-2d3837f6cd02:rw",

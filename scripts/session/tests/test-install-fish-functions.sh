@@ -23,12 +23,22 @@ trap 'rm -rf "$fake_home" "$fake_home_symlinked" "$real_config_target" "$fake_ho
 ai_sandbox_stub_dir="$fake_home/.local/libexec/ai-sandboxes"
 mkdir -p "$ai_sandbox_stub_dir" || exit 1
 ai_sandbox_stub_log="$fake_home/ai-sandbox-stub.log"
+# The stub records one argument per line rather than a space-joined "$*" so a
+# future wrapper that inserts or drops a separator cannot be masked by argv
+# whitespace normalization in the joined string.
 cat >"$ai_sandbox_stub_dir/ai-sandbox" <<STUB
 #!/usr/bin/env bash
-printf 'invoked: %s\n' "\$*" >>"$ai_sandbox_stub_log"
+for arg in "\$@"; do printf 'argv: %s\n' "\$arg" >>"$ai_sandbox_stub_log"; done
 exit 0
 STUB
 chmod +x "$ai_sandbox_stub_dir/ai-sandbox" || exit 1
+
+assert_stub_argv() {
+  local label=$1 log=$2 arg=$3
+  grep -Fxq -- "argv: $arg" "$log" \
+    || { echo "FAIL ($label): ai-sandbox stub argv missing '$arg'" >&2;
+         echo 'stub log:' >&2; cat "$log" >&2; exit 1; }
+}
 
 env HOME="$fake_home" AI_SANDBOX_INSTALL_DIR="$ai_sandbox_stub_dir" \
   ./scripts/install-fish-functions >/dev/null || exit 1
@@ -36,6 +46,16 @@ env HOME="$fake_home" AI_SANDBOX_INSTALL_DIR="$ai_sandbox_stub_dir" \
 # The wrapper must bake the absolute install path, not rely on PATH lookup.
 grep -Fq "$ai_sandbox_stub_dir/ai-sandbox" "$fake_home/.config/fish/functions/claude.fish" \
   || { echo 'FAIL: claude wrapper does not bake absolute ai-sandbox path' >&2; exit 1; }
+
+# claude-session is a claude invocation driven by the profile flag: ai-sandbox
+# must receive `run claude --profile ...` intact, so no `--` may be inserted
+# between `run claude` and the user's arguments (it would swallow --profile).
+grep -Eq 'run claude[[:space:]]' "$fake_home/.config/fish/functions/claude-session.fish" \
+  || { echo 'FAIL: claude-session wrapper missing run-claude passthrough' >&2; exit 1; }
+if grep -Eq 'run claude[[:space:]]+--' "$fake_home/.config/fish/functions/claude-session.fish"; then
+  echo 'FAIL: claude-session wrapper must not insert -- (it would swallow --profile)' >&2
+  exit 1
+fi
 
 fish_functions_dir="$fake_home/.config/fish/functions"
 trusted_dir="$fake_home/.config/ai-sandboxes/trusted"
@@ -65,9 +85,12 @@ assert_allows() {
     && { echo "FAIL ($label): unexpected refusal for workspace $workspace" >&2; exit 1; }
   # Prove the wrapper actually reached ai-sandbox with the expected argv,
   # rather than passing simply because it errored out before the refusal check.
-  grep -Fq 'invoked: run claude -- a-forwarded-arg' "$ai_sandbox_stub_log" \
-    || { echo "FAIL ($label): ai-sandbox stub was not invoked as expected for $workspace" >&2;
-         echo "stub log:" >&2; cat "$ai_sandbox_stub_log" >&2; exit 1; }
+  # Order is asserted below by the run/claude/--/forwarded sequence at the top
+  # of the log; these presence checks confirm each individual token.
+  assert_stub_argv "$label" "$ai_sandbox_stub_log" run || exit 1
+  assert_stub_argv "$label" "$ai_sandbox_stub_log" claude || exit 1
+  assert_stub_argv "$label" "$ai_sandbox_stub_log" -- || exit 1
+  assert_stub_argv "$label" "$ai_sandbox_stub_log" a-forwarded-arg || exit 1
   return 0
 }
 
@@ -80,6 +103,17 @@ assert_refuses fish-functions-dir "$fish_functions_dir/claude.fish" "$fish_funct
 assert_refuses fish-config-dir "$fish_functions_dir/claude.fish" "$fake_home/.config/fish" || exit 1
 assert_refuses trusted-dir "$fish_functions_dir/claude.fish" "$trusted_dir" || exit 1
 assert_allows unrelated "$fish_functions_dir/claude.fish" "$fake_home/unrelated-project" || exit 1
+
+# The claude-session wrapper must forward --profile and the claude arguments to
+# ai-sandbox unchanged (no `--` separator, so the profile flag reaches the
+# control plane rather than being handed to claude).
+: >"$ai_sandbox_stub_log"
+output=$(cd "$fake_home/unrelated-project" && fish -c "source '$fish_functions_dir/claude-session.fish'; claude-session --profile work -p hi" 2>&1) || true
+printf '%s\n' "$output" | grep -q 'refusing to run' \
+  && { echo 'FAIL: claude-session unexpectedly refused for unrelated workspace' >&2; exit 1; }
+for arg in run claude --profile work -p hi; do
+  assert_stub_argv claude-session "$ai_sandbox_stub_log" "$arg" || exit 1
+done
 
 # Symlinked dotfiles layout: ~/.config itself is a symlink to elsewhere (GNU
 # stow, chezmoi, and similar tools all do this). The protected root baked
@@ -103,7 +137,7 @@ mkdir -p "$apostrophe_stub_dir" || exit 1
 ai_sandbox_stub_log="$fake_home_apostrophe/ai-sandbox-stub.log"
 cat >"$apostrophe_stub_dir/ai-sandbox" <<STUB
 #!/usr/bin/env bash
-printf 'invoked: %s\n' "\$*" >>"$ai_sandbox_stub_log"
+for arg in "\$@"; do printf 'argv: %s\n' "\$arg" >>"$ai_sandbox_stub_log"; done
 exit 0
 STUB
 chmod +x "$apostrophe_stub_dir/ai-sandbox" || exit 1

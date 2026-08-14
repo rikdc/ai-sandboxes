@@ -81,7 +81,7 @@ MOCK_GIT_FETCH_STATUS=0
 MOCK_GIT_MERGE_STATUS=0
 MOCK_GIT_MERGE_BASE="$old_head"
 MOCK_GIT_BEHIND=2
-MOCK_GIT_CHANGED_PATHS=$'versions.env\nshell/fish/claude.fish\nconfig/tools.json\nimages/claude/entrypoint.sh'
+MOCK_GIT_CHANGED_PATHS=$'versions.env\nshell/fish/trusted/guard.fish\nconfig/tools.json\nimages/claude/entrypoint.sh'
 MOCK_GIT_OLD_HEAD="$old_head"
 MOCK_GIT_NEW_HEAD="$new_head"
 MOCK_CLAUDE_VERSION="$CLAUDE_CODE_VERSION"
@@ -416,7 +416,7 @@ grep -Fq 'install-fish-functions' "$op_log" && fail 'install-fish-functions must
 
 # 10. Default mode, msb and docker both absent: build and wrappers still run,
 #     load-msb is skipped, and missing docker is a warning, not a failure.
-MOCK_GIT_CHANGED_PATHS=$'versions.env\nshell/fish/claude.fish'
+MOCK_GIT_CHANGED_PATHS=$'versions.env\nshell/fish/trusted/guard.fish'
 cat >"$mockdir/scenario10.op" <<'EOF'
 build
 install-fish-functions
@@ -434,7 +434,7 @@ expect_status 0 'default update with no relevant changes'
 test -s "$op_log" && fail 'no step should run when nothing relevant changed'
 expect_stdout_contains 'fast-forwarded 2 commits to bbbbbbb' 'default update no build summary'
 expect_stdout_not_contains 'built docker images' 'no build summary message'
-MOCK_GIT_CHANGED_PATHS=$'versions.env\nshell/fish/claude.fish\nconfig/tools.json\nimages/claude/entrypoint.sh'
+MOCK_GIT_CHANGED_PATHS=$'versions.env\nshell/fish/trusted/guard.fish\nconfig/tools.json\nimages/claude/entrypoint.sh'
 
 # 12. Default mode with a dirty tree: refuse before merging.
 MOCK_GIT_STATUS=' M versions.env'
@@ -524,7 +524,7 @@ expect_op_sequence 'recovery reconciliation operations' "$mockdir/scenario16d.op
 expect_stdout_contains 'reconciling incomplete install' 'recovery reconciliation notice'
 expect_stdout_contains 'reconciled install to' 'recovery reconciliation summary'
 
-MOCK_GIT_CHANGED_PATHS=$'versions.env\nshell/fish/claude.fish\nconfig/tools.json\nimages/claude/entrypoint.sh'
+MOCK_GIT_CHANGED_PATHS=$'versions.env\nshell/fish/trusted/guard.fish\nconfig/tools.json\nimages/claude/entrypoint.sh'
 
 # 17. Flag validation: --check --verify and unknown flags are usage errors.
 run_update "$gitpath" --check --verify

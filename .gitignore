@@ -4,6 +4,8 @@
 .env
 .worktrees/
 .superpowers/
+# Local agent session state (settings allowlists, worktree scratch copies)
+.claude/
 
 # Go control plane build artifacts
 /ai-sandbox
