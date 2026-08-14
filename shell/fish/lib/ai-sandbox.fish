@@ -158,6 +158,7 @@ function __ai_sandbox_launch --argument-names launcher_file agent image home_vol
     end
 
     set -l workspace_quota (__ai_sandbox_workspace_quota "$launcher_file" "$agent"); or return $status
+    set -l network_args (__ai_sandbox_agent_egress_args "$agent" "$HOME/.config/microvms/$agent-egress"); or return $status
     set -l shared_state_args (__ai_sandbox_prepare_shared_state "$agent" "$image"); or return $status
     set -l workspace (command git rev-parse --show-toplevel 2>/dev/null)
     if test -z "$workspace"
@@ -178,7 +179,7 @@ function __ai_sandbox_launch --argument-names launcher_file agent image home_vol
     if not contains -- "$home_volume" $existing_volumes
         msb volume create "$home_volume"; or return $status
     end
-    command msb run --tty --pull never --user node --net public --root-disk "$workspace_quota" \
+    command msb run --tty --pull never --user node $network_args --root-disk "$workspace_quota" \
         --mount-dir "$workspace:$guest_workspace:rw" \
         --mount-named "$home_volume:/home/node:rw" \
         $shared_state_args \
@@ -186,25 +187,30 @@ function __ai_sandbox_launch --argument-names launcher_file agent image home_vol
     return $status
 end
 
-# Validates Claude's egress allowlist and returns the network args for the
-# eventual `msb run`. Consumed both by claude (as a preflight before
-# __ai_sandbox_prepare_shared_state, so a host-side config error surfaces
-# before any shared-state VM boot) and by __ai_sandbox_run_claude (to build
-# the real argv); sharing one implementation keeps the two call sites from
-# drifting apart. When CLAUDE_MSB_PUBLIC_EGRESS=1 the public gateway is used
-# and the allowlist is never consulted.
-function __ai_sandbox_claude_egress_args --argument-names agent
-    if set -q CLAUDE_MSB_PUBLIC_EGRESS; and test "$CLAUDE_MSB_PUBLIC_EGRESS" = 1
+# Validates an agent's egress allowlist and returns the network args for the
+# eventual `msb run`. The override env var and allowlist file both derive from
+# the allowlist's own base name: for claude-egress that is CLAUDE_MSB_PUBLIC_EGRESS
+# and ~/.config/microvms/claude-egress, for codex-egress it is CODEX_MSB_PUBLIC_EGRESS
+# and ~/.config/microvms/codex-egress. Consumed both as a preflight (before
+# __ai_sandbox_prepare_shared_state, so a host-side config error surfaces before
+# any shared-state VM boot) and to build the real argv; sharing one
+# implementation keeps the two call sites from drifting apart. When the
+# derived <ALLOWLIST>_MSB_PUBLIC_EGRESS=1 the public gateway is used and the
+# allowlist is never consulted.
+function __ai_sandbox_agent_egress_args --argument-names agent egress_file
+    set -l egress_base (basename "$egress_file")
+    set -l egress_name (string replace -- '-egress' '' "$egress_base")
+    set -l override_var (string upper -- "$egress_name")_MSB_PUBLIC_EGRESS
+    if set -q $override_var; and test "$$override_var" = 1
         printf '%s\n' --net public
         return 0
     end
     # Let Microsandbox's gateway DNS follow the host resolver. An external
     # resolver is not reachable through every public-network gateway.
     set -l network_args --no-net --net-rule 'allow@host:udp:53' --net-rule 'allow@host:tcp:53'
-    set -l egress_file "$HOME/.config/microvms/claude-egress"
     if not test -f "$egress_file"
         echo "$agent: missing egress allowlist: $egress_file" >&2
-        echo "$agent: copy config/claude-egress.example there and review its hosts" >&2
+        echo "$agent: copy config/$egress_base.example there and review its hosts" >&2
         return 1
     end
     while read -l egress_host
@@ -245,7 +251,7 @@ function __ai_sandbox_run_claude --argument-names launcher_file image shared_sta
         return 127
     end
 
-    set -l network_args (__ai_sandbox_claude_egress_args claude); or return $status
+    set -l network_args (__ai_sandbox_agent_egress_args claude "$HOME/.config/microvms/claude-egress"); or return $status
 
     set -l host_workspace (command git rev-parse --show-toplevel 2>/dev/null)
     if test $status -ne 0

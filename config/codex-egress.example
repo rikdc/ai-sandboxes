@@ -1,0 +1,12 @@
+# One HTTPS hostname per line. This file is a starting policy, not a complete
+# list of every Codex feature or development service.
+
+# OpenAI / Codex
+api.openai.com
+chatgpt.com
+api.chatgpt.com
+
+# GitHub
+github.com
+api.github.com
+*.githubusercontent.com
