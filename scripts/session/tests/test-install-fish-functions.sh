@@ -29,6 +29,7 @@ ai_sandbox_stub_log="$fake_home/ai-sandbox-stub.log"
 cat >"$ai_sandbox_stub_dir/ai-sandbox" <<STUB
 #!/usr/bin/env bash
 for arg in "\$@"; do printf 'argv: %s\n' "\$arg" >>"$ai_sandbox_stub_log"; done
+printf 'env AI_SANDBOXES_ROOT: %s\n' "\$AI_SANDBOXES_ROOT" >>"$ai_sandbox_stub_log"
 exit 0
 STUB
 chmod +x "$ai_sandbox_stub_dir/ai-sandbox" || exit 1
@@ -37,6 +38,13 @@ assert_stub_argv() {
   local label=$1 log=$2 arg=$3
   grep -Fxq -- "argv: $arg" "$log" \
     || { echo "FAIL ($label): ai-sandbox stub argv missing '$arg'" >&2;
+         echo 'stub log:' >&2; cat "$log" >&2; exit 1; }
+}
+
+assert_stub_env() {
+  local label=$1 log=$2 value=$3
+  grep -Fxq -- "env AI_SANDBOXES_ROOT: $value" "$log" \
+    || { echo "FAIL ($label): ai-sandbox stub env AI_SANDBOXES_ROOT missing '$value'" >&2;
          echo 'stub log:' >&2; cat "$log" >&2; exit 1; }
 }
 
@@ -77,6 +85,7 @@ assert_refuses() {
 
 assert_allows() {
   local label=$1 wrapper=$2 workspace=$3
+  local expected_env=${4:-$repo_root}
   mkdir -p "$workspace" || return 1
   : >"$ai_sandbox_stub_log"
   local output
@@ -91,6 +100,10 @@ assert_allows() {
   assert_stub_argv "$label" "$ai_sandbox_stub_log" claude || exit 1
   assert_stub_argv "$label" "$ai_sandbox_stub_log" -- || exit 1
   assert_stub_argv "$label" "$ai_sandbox_stub_log" a-forwarded-arg || exit 1
+  # The wrapper must also hand the checkout to the Go binary (AI_SANDBOXES_ROOT),
+  # not only bake it into the fish guard: without it an installed binary cannot
+  # resolve scripts/session/{resolve-image,load-image}.sh.
+  assert_stub_env "$label" "$ai_sandbox_stub_log" "$expected_env" || exit 1
   return 0
 }
 
@@ -114,6 +127,7 @@ printf '%s\n' "$output" | grep -q 'refusing to run' \
 for arg in run claude --profile work -p hi; do
   assert_stub_argv claude-session "$ai_sandbox_stub_log" "$arg" || exit 1
 done
+assert_stub_env claude-session "$ai_sandbox_stub_log" "$repo_root" || exit 1
 
 # Symlinked dotfiles layout: ~/.config itself is a symlink to elsewhere (GNU
 # stow, chezmoi, and similar tools all do this). The protected root baked
@@ -138,12 +152,13 @@ ai_sandbox_stub_log="$fake_home_apostrophe/ai-sandbox-stub.log"
 cat >"$apostrophe_stub_dir/ai-sandbox" <<STUB
 #!/usr/bin/env bash
 for arg in "\$@"; do printf 'argv: %s\n' "\$arg" >>"$ai_sandbox_stub_log"; done
+printf 'env AI_SANDBOXES_ROOT: %s\n' "\$AI_SANDBOXES_ROOT" >>"$ai_sandbox_stub_log"
 exit 0
 STUB
 chmod +x "$apostrophe_stub_dir/ai-sandbox" || exit 1
 env HOME="$fake_home_apostrophe" "$apostrophe_checkout/scripts/install-fish-functions" >/dev/null || exit 1
 apostrophe_fish_functions_dir="$fake_home_apostrophe/.config/fish/functions"
 fish --no-execute "$apostrophe_fish_functions_dir/claude.fish" || exit 1
-assert_allows apostrophe-checkout-unrelated "$apostrophe_fish_functions_dir/claude.fish" "$fake_home_apostrophe/unrelated-project" || exit 1
+assert_allows apostrophe-checkout-unrelated "$apostrophe_fish_functions_dir/claude.fish" "$fake_home_apostrophe/unrelated-project" "$apostrophe_checkout" || exit 1
 
 echo ok
