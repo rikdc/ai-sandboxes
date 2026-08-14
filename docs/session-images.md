@@ -109,7 +109,6 @@ Profiles are JSON. YAML is not supported — see
 }
 ```
 
-<<<<<<< HEAD
 ### Field reference
 
 | Field | Required | Constraints |
