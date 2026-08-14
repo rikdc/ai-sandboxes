@@ -1,37 +1,54 @@
-# Profile-driven ephemeral Claude session images
+# Session images
 
-## Purpose
+A **session image** is a short-lived Docker image, derived from
+`ai-sandboxes-claude:local`, that adds a host-approved set of apt packages,
+npm packages, curated tools, and Claude plugins to a Claude session without
+changing the neutral runtime image or the guest's runtime authority. The
+Claude process still runs as `node` under the `restricted` Microsandbox
+policy; nothing in a session image grants the guest `sudo` or a writable
+system prefix.
 
-Claude sessions sometimes need additional tools without changing the neutral
-runtime image. This design adds an explicit host-side `claude-session` launcher
-that builds a cached, short-lived image derived from
-`ai-sandboxes-claude:local`, then launches it with the existing hardened
-Microsandbox policy.
+Session images are launched with:
 
-The design supports real `apt` installation during an image build while
-preserving the runtime boundary: the Claude process still runs as `node` in the
-`restricted` security profile, receives no `sudo`, and cannot modify the
-system toolchain at runtime.
+```fish
+claude-session --profile <name-or-path> [claude arguments...]
+```
 
-This design replaces the former private-profile image-overlay mechanism.
-Personal and team customization is an explicit, publicly validated JSON file
-that can itself be kept in a private repository, rather than a repository
-overlay that rebuilds the neutral base image from a pinned upstream commit.
+## Security invariants
 
-## Non-goals
+These are the load-bearing properties of the design. Each links to the ADR
+that argues it.
 
-- Installing packages into a running Claude VM.
-- Giving the agent `sudo` or a writable system prefix.
-- Accepting arbitrary Dockerfiles, shell snippets, build arguments, or package
-  source URLs from a profile.
-- Automatically loading a profile from the mounted project directory.
-- Supporting Codex session images in the first implementation.
-- Supporting private or internal package sources: apt mirrors, private npm or
-  PyPI registries, or any credentialed registry. Only public default sources
-  are supported, regardless of where the profile file itself is stored.
-- Publishing or pulling prebuilt session images through a registry. A session
-  image is always resolved and cached locally on the host that runs it; teams
-  share the (non-secret, validated) profile file, not a built image.
+1. **A writable checkout must not contain host-trusted launch code.** The
+   wrapper the host runs is installed outside every checkout by
+   `./scripts/install-fish-functions`; a guest with write access to the
+   project mount cannot edit it. See
+   [ADR-0001](adr/0001-explicit-host-profile-path.md).
+2. **Guest home state and VM root state have different lifetimes.** Session
+   images bake tools into image layers (rebuilt on profile change); guest
+   home state persists across launches independently.
+3. **Build egress and runtime egress are separate authorities.**
+   `CLAUDE_MSB_BUILD_EGRESS=1` authorises a host-side image build;
+   `CLAUDE_MSB_PUBLIC_EGRESS=1` authorises the guest's runtime network. One
+   never implies the other. See [ADR-0005](adr/0005-build-context-isolation.md).
+4. **Mutable image tags are not identities.** The resolver trusts an image
+   only when its `io.ai-sandboxes.session-image` and
+   `io.ai-sandboxes.session-cache-key` labels match; a bare tag match fails
+   closed. See [ADR-0003](adr/0003-label-verified-cache-keys.md).
+5. **Plugin dependencies must exist before an ephemeral session starts.**
+   Session marketplaces install additively into the base image's own
+   `/opt/claude-plugin-cache` at build time, so plugins are present on first
+   launch of a fresh guest home. See
+   [ADR-0002](adr/0002-session-plugins-share-base-cache.md).
+6. **Credentials inside the guest are readable by guest code.** Profiles
+   therefore cannot carry credentials, private-registry URLs, or any
+   authenticated source; only public default package sources are supported.
+7. **The project mount is destructible from within the guest regardless of
+   the VM boundary.** The launcher refuses to mount a workspace that
+   overlaps any protected ai-sandboxes path (the checkout itself *and* the
+   installed wrapper directories), because a guest with write access to
+   those files could tamper with launcher code the host trusts on a later
+   invocation. See [ADR-0001](adr/0001-explicit-host-profile-path.md).
 
 ## Launcher flow
 
@@ -43,49 +60,20 @@ explicit host profile path
   -> run the current Claude Microsandbox policy
 ```
 
-The initial command is:
+The profile path must be supplied explicitly by the host user; nothing is
+auto-discovered from the project mount. `--profile` accepts either:
 
-```fish
-claude-session --profile /absolute/path/to/session.json [claude arguments...]
-```
+- a value containing `/` — used as a literal path;
+- a bare name — resolved as `~/.config/ai-sandboxes/profiles/<name>.json`.
 
-The profile path must be supplied explicitly by the host user. In particular,
-the launcher must not discover `session.json` from the project mount: an agent
-can modify project files and must not be able to influence a future host-side
-build implicitly.
+The final `msb run` invocation reuses the existing Claude policy verbatim:
+`--user node`, `--security restricted`, and the current project-mount,
+home-volume, quota, and runtime-network rules.
 
-`claude-session` (and `claude`/`codex`) refuse to launch if the workspace they
-would mount overlaps any protected ai-sandboxes path, and the wrappers refuse
-even to attempt a launch from such a workspace. The resolution runs as a
-host-side control plane (`ai-sandbox run`, compiled Go) with real Docker
-authority before the guest ever starts; if the mounted project overlapped one
-of these trusted paths, a guest with write access to the mount could tamper
-with launcher code for a later host invocation to trust. The control plane is
-compiled and invoked by an absolute path, so nothing guest-writable can
-rewrite it in place, and `plan.RefuseOverlap` canonicalizes the workspace and
-every protected root — the ai-sandboxes checkout *and* the wrapper/guard's
-own installed directories under `~/.config` — before any launch (protecting
-only the checkout would still let a guest mounted at, say, `~/.config/fish`
-tamper with the installed wrapper directly). On top of that, the installed
-Fish wrappers (copied, never symlinked, by `./scripts/install-fish-functions`
-to `~/.config/fish/functions/`) stay outside any writable checkout and run a
-small trusted guard snippet from `~/.config/ai-sandboxes/trusted/` before
-handing off to the control plane. They are pure pass-throughs and never
-source checkout-provided code, so there is no executable surface inside the
-checkout for a guest to flip.
+## Profile schema (version 1)
 
-The final `msb run` invocation retains the existing policy:
-
-- `--user node`
-- `--security restricted`
-- the current project-mount, home-volume, and quota rules
-- the current runtime network policy, including the separate
-  `CLAUDE_MSB_PUBLIC_EGRESS=1` escape hatch
-
-## Session profile schema
-
-Version 1 uses JSON because the host-side tooling already depends on `jq`.
-YAML is deferred rather than introducing a second parser dependency.
+Profiles are JSON. YAML is not supported — see
+[ADR-0006](adr/0006-json-not-yaml.md).
 
 ```json
 {
@@ -121,418 +109,194 @@ YAML is deferred rather than introducing a second parser dependency.
 }
 ```
 
-Validation must reject unknown fields, credentials, arbitrary URLs, shell
-syntax, package-manager options, local package files, source repository
-changes, malformed package names/versions, and duplicate package names within
-`apt` or within `npm`. Marketplace entries reuse the existing public-GitHub,
-full-commit-SHA, safe-path, and plugin-name constraints. Profiles also have
-package-count, field-length, and estimated-size limits.
+### Field reference
 
-`tools` selects zero or more curated, pinned binary tools from the
-repository-controlled `config/tool-catalog.json` — this is not arbitrary
-binary download support; a profile can only select a catalog `id` that
-already exists, and can only pin a `version` and `sha256`, never a
-repository, release asset name, archive path, adapter, or install command.
-Generic Python packages, arbitrary GitHub releases outside the catalog,
-private registries, and a new package manager are explicitly out of scope.
-Each `tools` entry is validated by *delegating* to
-`scripts/tools/validate-selection.sh` — the same script the base image's own
-`config/tools.json`/`config/runtime.json` mechanism already uses (see
-`images/tools/Dockerfile`) — rather than re-implementing its id/version/
-sha256/shared-state regexes a second time in `validate-profile.sh`, which
-would risk the two mechanisms drifting apart. `shared_state` reuses
-`runtime.json`'s validation rules exactly: `id` matches
-`^[a-z0-9][a-z0-9-]{0,62}$`, `quota` matches `^[1-9][0-9]*[KMGT]$`. A
-catalog tool with `state_wrapper` (currently: `icm`) requires a non-null
-`shared_state` in the same profile — this direction is enforced by
-`scripts/tools/validate-selection.sh` itself. The reverse is *not* something
-`scripts/tools/validate-selection.sh` enforces (the base-image mechanism has
-no notion of "unused" shared state, since a host deliberately maintains
-`config/runtime.json`), but a session profile is per-invocation, host-supplied
-data, so `validate-profile.sh` adds a session-specific rule on top: a
-`shared_state` request with no selected tool that actually needs it is
-rejected, rather than silently provisioning an unused host-side volume.
+| Field | Required | Constraints |
+|---|---|---|
+| `schema_version` | yes | Must be `1`. |
+| `apt[].name` | yes | Debian package name. Validated against a package-name regex. |
+| `apt[].version` | no | If set, exact apt version. Even pinned versions can still resolve differently as apt state changes; the actually-installed version is recorded to `resolved.json` post-install. |
+| `npm[].package` | yes | Public npm package name. |
+| `npm[].version` | yes | Exact semver, optionally with pre-release or build-metadata suffix. Dist-tags and ranges (`latest`, `^1.2.3`, `1.x`) are rejected. Transitive dependencies are not pinned — see Limitations. |
+| `python.enabled` | no | Until the Python layer ships, any non-empty `python` field is rejected. |
+| `python.packages[].package` | yes (if `enabled`) | Public PyPI package name. |
+| `python.packages[].version` | yes (if `enabled`) | Exact version; ranges rejected. |
+| `tools[].id` | yes | Must be an `id` present in the repository-controlled `config/tool-catalog.json`. |
+| `tools[].version` | yes | Exact catalog version. |
+| `tools[].sha256` | yes | Hex sha256 of the catalog artifact. |
+| `shared_state.id` | yes (if set) | Matches `^[a-z0-9][a-z0-9-]{0,62}$`. |
+| `shared_state.quota` | yes (if set) | Matches `^[1-9][0-9]*[KMGT]$`. Required when any selected tool has a `state_wrapper`; a `shared_state` block with no tool that needs it is rejected. |
+| `claude_marketplaces[].url` | yes | Public GitHub URL. |
+| `claude_marketplaces[].ref` | yes | Full 40-character commit SHA. |
+| `claude_marketplaces[].path` | yes | Safe relative path within the repo. |
+| `claude_marketplaces[].plugins` | yes | Non-empty list of plugin names. |
 
-Direct npm and Python package versions are mandatory and must be an exact
-semantic version (optionally with a pre-release or build-metadata suffix,
-e.g. `1.2.3-beta.1`); dist-tags and ranges (`latest`, `1.x`, `^1.2.3`) are
-rejected, so `resolved.json` always records an exact, unambiguous direct
-version rather than a moving target. This pin covers only the profile's
-directly-requested package, not its transitive dependency tree: `npm
-install` resolves each dependency's own version ranges at build time, and
-neither the resulting dependency versions nor their integrity hashes are
-locked or recorded in `resolved.json`, so two builds of an otherwise
-unchanged profile can still install different transitive dependency
-versions. Full reproducibility (a lockfile with integrity hashes, recorded
-alongside the rest of the provenance) is a known limitation, not yet
-implemented. Apt versions are supported and encouraged, but reproducibility
-remains limited by the apt
-repository state until a future snapshot-repository design is introduced.
+Validation rejects unknown fields, credentials, arbitrary URLs, shell
+syntax, package-manager options, local package files, source-repository
+overrides, malformed names/versions, and duplicate package names within
+`apt` or within `npm`. Profiles also have package-count, field-length, and
+estimated-size limits. `tools` validation is delegated to
+`scripts/tools/validate-selection.sh` — the same script the base image's
+own `config/tools.json`/`config/runtime.json` mechanism already uses — so
+the two mechanisms cannot drift apart.
 
-The renderer emits the fixed, package-free Dockerfile described under
-Implementation task 7 unless a profile's `apt`, `npm`, or
-`claude_marketplaces` fields are non-empty, in which case it emits the
-corresponding layers described under "Package layers" and "Claude
-marketplaces and plugins" below (Implementation tasks 8 and 10); any
-combination of these fields may be populated together, in a fixed
-apt-then-npm-then-marketplace order regardless of the profile's own field
-order. `python` is not yet installed by the renderer, so validation still
-rejects any profile with a non-empty `python` field rather than accepting
-and silently dropping it. Only a profile with `python` left unset validates
-until task 9 lands.
+## Lifecycle
 
-## Storing and selecting profiles
+### 1. Build (cache miss only)
 
-This repository ships `config/session-profile.example.json`, following the
-same convention as `config/marketplaces.example.json`, as a starting point
-with no packages or marketplaces selected.
+The resolver computes a cache key from: the digest of
+`ai-sandboxes-claude:local`, the canonicalized profile bytes, the target
+platform, the profile-schema version, and the renderer/launcher version.
+The key becomes the tag `ai-sandboxes-claude-session:sha-<hash>` and is
+also written as image labels.
 
-A profile is still always supplied explicitly (see Launcher flow); nothing is
-auto-discovered from the project mount. `claude-session --profile <value>`
-resolves `<value>` in one of two ways:
+On a cache miss:
 
-- a value containing `/` is used as a literal path, exactly as today;
-- a bare name (no `/`) resolves to `~/.config/ai-sandboxes/profiles/<name>.json`,
-  alongside the `~/.config/ai-sandboxes/trusted/` guard the install writes.
+- The build requires `CLAUDE_MSB_BUILD_EGRESS=1`. A cache hit needs no
+  build egress.
+- The resolver creates a private `ai-sandboxes-claude-session-base:<hash>`
+  tag pointing at the base image's current content, verifies the digest
+  still matches the cache key, and uses that private pin in the generated
+  Dockerfile's `FROM`. A concurrent `./scripts/build` cannot change what
+  the build actually uses without also changing the cache key.
+- The build context contains only generated files and trusted installer
+  scripts. It receives no project mount, host home mount, Docker or
+  registry credentials, SSH agent, BuildKit secret, or profile-supplied
+  build mount. See [ADR-0005](adr/0005-build-context-isolation.md).
+- Layers are ordered apt → npm → tools → marketplaces, in the final stage,
+  regardless of the profile's field order. Each is a separate layer for
+  cache reuse.
+- Each derived image contains a root-owned
+  `/opt/session-profile/resolved.json` recording the canonical request,
+  base digest, installed package inventories, resolved plugin commits,
+  build time, and launcher version.
 
-This lets a team keep its session profiles in a private repository, synced or
-symlinked into `~/.config/ai-sandboxes/profiles/`, and reference them by name.
-The profile's contents are validated identically regardless of where the file is
-stored: private storage changes who can read the file, not what the schema
-allows it to contain.
+### 2. Cache resolution
 
-## Build and image identity
+An existing local image is a cache hit only when its
+`io.ai-sandboxes.session-image` and `io.ai-sandboxes.session-cache-key`
+labels match the computed key. A tag that exists without the expected
+labels fails closed — it is not silently rebuilt over or reused. See
+[ADR-0003](adr/0003-label-verified-cache-keys.md).
 
-The resolver calculates a session-image key from:
+### 3. msb load
 
-- digest of `ai-sandboxes-claude:local`;
-- canonicalized profile bytes;
-- target platform;
-- profile-schema version; and
-- renderer/launcher version.
+Session images are loaded into msb under their exact session tag; the
+loader must not touch `ai-sandboxes-claude:local` or other base tags. Load
+is skipped when the matching session image is already present.
 
-It uses the key in an image tag such as
-`ai-sandboxes-claude-session:sha-<hash>` and as image labels. An existing local
-image is only a cache hit if its `io.ai-sandboxes.session-image` and
-`io.ai-sandboxes.session-cache-key` labels match; a tag match alone is not
-trusted, since a tag is a mutable pointer that something other than the
-resolver could have written. A tag that exists but does not carry the
-expected labels fails closed rather than being silently rebuilt over or
-reused. `claude-session` also verifies the msb-side image after loading,
-since msb keeps a separate image store from Docker's and `load-image.sh` (a
-generic loader also used for non-session images) only checks whether *a*
-image exists under the tag, not whether it is the right one. `msb load`
-does not retain OCI labels, so this second check compares the preserved OCI
-config digest reported by msb with Docker's image ID instead.
+`msb load` strips OCI labels, so `claude-session` performs a second
+verification after loading: it compares the preserved OCI config digest
+reported by msb with Docker's image ID. This is why shared-state can't
+piggyback on msb image labels; instead, `resolve-image.sh` prints a small
+JSON descriptor with the shared-state request, computed from the
+already-validated host-side profile snapshot, and `claude-session` builds
+the shared-state mount args from that.
 
-The same label-stripping behavior means `msb load` cannot carry a session
-image's `shared_state` request the way the base image carries its own (fixed,
-build-arg-derived) shared-state labels. Instead, `resolve-image.sh` prints a
-small JSON descriptor —
-`{"image": "<tag>", "shared_state": {"id": "...", "quota": "..."}|null}` —
-computed entirely from the already-validated, host-side canonical profile
-snapshot, never from anything guest-controlled or re-read from disk after
-validation. The Go control plane (`ai-sandbox run claude --profile ...`)
-parses this descriptor, validates the id/quota shape
-(`plan.ParseSharedStateRequest`), and builds the same
-`--mount-named agent-state-<id>-v1:/var/lib/agent-state:kind=dir,quota=<quota>`
-argument the label-based path produces, then provisions the volume and shares
-it into the launch. The base `claude`/`codex` paths are unaffected: they still
-derive shared state from the msb image labels via `plan.SharedStateFromLabels`
-in the same control plane.
+### 4. Run
 
-Otherwise, the resolver creates a temporary build context that contains only
-generated files and trusted installer scripts; it must never use the project
-checkout as Docker context. Before building, the resolver also creates a
-private `ai-sandboxes-claude-session-base:<hash>` tag pointing at the base
-image's current content and verifies it still matches the digest the cache
-key was computed from; the generated Dockerfile's `FROM` uses that private
-pin, not the mutable `ai-sandboxes-claude:local` tag directly, so a
-concurrent `./scripts/build` cannot
-change what the build actually uses without also changing the cache key.
+The guest runs under the unchanged Microsandbox policy: `--user node`,
+`--security restricted`, existing mounts, quotas, and runtime network
+policy. The image content is trusted host-supplied build output; the
+runtime authority of the guest is unchanged.
 
-The derived Dockerfile begins with the already built Claude image. BuildKit
-therefore reuses the existing operating-system, shared-tool, Claude, and baked
-plugin layers; only requested layers are built. Apt, npm, Python, and plugin
-steps are separate layers to maximize cache reuse.
+### 5. Cleanup
 
-Each derived image contains a root-owned `/opt/session-profile/resolved.json`
-recording the canonical request, base digest, installed package inventories,
-resolved plugin commits, build time, and launcher version.
+There is no automatic session-image garbage collector. Derived images stay
+in the local Docker and msb image stores until the host user removes a
+known session tag. The base, tools, Claude, and Codex image tags must
+never be used as cleanup targets.
 
 ## Package layers
 
-### Apt
+### apt
 
-The generated Dockerfile installs only validated package specifications under
-`USER root`, removes apt lists afterwards, and then returns to `USER node`.
-The renderer, not the profile, constructs command syntax. This is an image-build
-operation; there is no runtime `apt-get` capability.
+Installed under `USER root` from validated specifications, apt lists
+removed afterwards, then back to `USER node`. The renderer (not the
+profile) constructs command syntax. There is no runtime `apt-get`
+capability. After install, `scripts/session/install-apt-packages.sh`
+queries `dpkg-query` for the actual installed version of each package and
+patches `resolved.json` before it is locked read-only.
 
-Apt versions are optional in the profile, and even a pinned version can
-resolve differently depending on the apt repository's state at build time.
-After install, `scripts/session/install-apt-packages.sh` queries
-`dpkg-query` for each package's actual installed version and patches
-`/opt/session-profile/resolved.json` with it before the file is locked
-read-only, so the recorded provenance always reflects what was actually
-installed, not just what was requested.
-
-Apt packages are trusted build-time code, not merely data: `apt-get
-install` runs as root, and a package's maintainer scripts (`postinst` and
-friends) run as root too, with no sandboxing beyond the build environment
-itself. A profile author can therefore request anything the public apt
-repositories serve, including packages that introduce their own privileged
-artifacts (`sudo`, setuid/setgid binaries, Linux capabilities) into the
-image. This is the same trust relationship as a host running `docker build`
-with their own Dockerfile — session profiles are host-supplied input, never
-guest/agent-discoverable (see "Launcher flow" above) — so it does not open a
-new privilege-escalation path for the guest agent, which still runs as
-`node` under the unchanged `restricted` runtime policy regardless of what
-the image contains. It does mean a host can silently bake privileged
-artifacts into an image without any explicit signal that they did so; there
-is currently no allowlist, deny-list, or post-install policy check against
-this.
+apt packages are trusted build-time code: maintainer scripts (`postinst`,
+etc.) run as root in the build environment, and a profile author can bake
+in privileged artifacts (setuid binaries, capabilities). This does not
+change the guest's runtime authority. See
+[ADR-0004](adr/0004-apt-npm-tools-trust-tiers.md).
 
 ### npm
 
-npm packages install during the build into an image-local prefix at
-`/opt/claude-session/npm`, via a single `npm install --global --prefix`
-invocation. The final prefix is root-owned and read-only
-(`chown -R root:root` + `chmod -R a-w`), with its `bin` directory appended
-to `PATH` — appended, not prepended, so a session-installed package can
-never shadow a base-image command the harness itself depends on (`claude`,
-`git`, `curl`, ...); the base image's own directories are always resolved
-first. A global-prefix install produces `<prefix>/bin/<binary>` as a
-relative symlink into `<prefix>/lib/node_modules/<package>/...`, which
-resolves correctly regardless of where the prefix ends up in the final
-image.
+Installed to an image-local prefix at `/opt/claude-session/npm` via a
+single `npm install --global --prefix` invocation. The final prefix is
+root-owned and read-only. Its `bin` is *appended* to `PATH` — not
+prepended — so a session-installed package cannot shadow a base-image
+command the harness depends on (`claude`, `git`, `curl`, ...).
 
 ### Python
 
-When `python.enabled` is true, the build installs the selected Python runtime
-and venv support through apt, creates an image-local virtual environment at
-`/opt/claude-session/python`, and installs validated Python dependencies there.
-The final virtual environment is root-owned and read-only, and its bin directory
-is added to `PATH`.
+When `python.enabled` is true, the build installs the Python runtime and
+venv support through apt, creates an image-local venv at
+`/opt/claude-session/python`, and installs validated packages there. The
+venv is root-owned and read-only; its `bin` is added to `PATH`. Not yet
+implemented — see Limitations.
 
 ### Curated tools
 
-`tools` entries install via the exact same trusted chain the base image's
-`config/tools.json`/`config/runtime.json` mechanism already uses:
+`tools` entries install through the exact chain the base image's
+`config/tools.json`/`config/runtime.json` mechanism uses:
 `scripts/tools/install-selected.sh` (phase `runtime`) and
-`scripts/tools/install-github-release-tar.sh`, both copied into the build
-context unmodified, alongside a copy of the trusted
-`config/tool-catalog.json` and a profile-derived selection document. This
-layer runs after npm and before the marketplace layer, under `USER root` in
-the final stage (not a discarded build stage, since a tool's installed
-footprint under `/usr/local/bin`/`/usr/local/libexec` isn't confined to one
-copyable directory the way npm's prefix is) — unlike npm's registry
-installs, a github-release-tar install runs no third-party lifecycle hooks
-and downloads only a fixed, catalog-pinned URL whose SHA-256 is verified
-before extraction, so it carries none of npm's "arbitrary install-time code"
-risk and does not need npm's node-then-relock privilege dance.
+`scripts/tools/install-github-release-tar.sh`, both copied unmodified into
+the build context, alongside a copy of `config/tool-catalog.json`. Unlike
+npm, github-release-tar installs run no third-party lifecycle hooks and
+download only a fixed catalog-pinned URL whose sha256 is verified before
+extraction.
 
-Installed binaries land under root-owned, non-writable paths exactly as the
-base image's runtime tool mechanism already does: a tool with no
-`state_wrapper` (`rtk`) installs directly to `/usr/local/bin/<binary>`,
-runnable by `node`. A tool with `state_wrapper` (`icm`) installs its real
-binary to `/usr/local/libexec/<binary>` and a launcher symlink at
-`/usr/local/bin/<binary>` pointing at the shared
-`/usr/local/libexec/ai-sandboxes-state-wrapper`, which — except for a
-`--version` bypass — refuses to run unless `/var/lib/agent-state` is
-present and writable, then exports the tool's configured environment
-variable (`ICM_DB_PATH` for `icm`) pointing under
-`/var/lib/agent-state/<state directory>/`, and only then execs the real
-binary. Direct use of `icm` therefore fails safely with no shared-state
-mount, and only `/var/lib/agent-state` is ever writable for its state —
-`/usr/local/bin` and `/usr/local/libexec` themselves are never made
-writable to `node`. `resolved.json` records each selected tool's exact
-`id`/`version`/`sha256`, the catalog's `binary` name for it
-(`packages.tools`), a `tool_catalog_sha256` identifying the exact catalog
-content used, and the requested `shared_state` (or `null`).
+Installed binaries land under root-owned, non-writable paths. A tool with
+no `state_wrapper` installs to `/usr/local/bin/<binary>`. A tool with a
+`state_wrapper` (e.g. `icm`) installs its real binary to
+`/usr/local/libexec/<binary>` and a launcher symlink at
+`/usr/local/bin/<binary>` that refuses to run unless
+`/var/lib/agent-state` is present and writable.
 
-### Claude marketplaces and plugins
+### Claude marketplaces
 
-Session marketplaces reuse the existing pinned installer
-(`scripts/marketplaces/install-claude.sh`, copied into the build context
-unmodified) and install **additively into the base image's own**
-`/opt/claude-plugin-cache` and `/opt/claude-plugin-seed`, not a second,
-session-specific path. This was not the original design — an earlier version
-of this mechanism used a separate `/opt/claude-session/plugin-cache` and
-`/opt/claude-session/plugin-seed`, merged into `settings.json` at container
-launch. That design shipped a marketplace registration
-(`extraKnownMarketplaces` in `settings.json`) that looked correct but never
-actually loaded: Claude resolves a registered marketplace's code relative to
-`CLAUDE_CODE_PLUGIN_CACHE_DIR` at runtime, and that variable only ever points
-at the base image's cache directory — a marketplace cloned into a second,
-unreferenced root registers cleanly and shows as enabled, but its code is
-unreachable. This was confirmed empirically (overriding
-`CLAUDE_CODE_PLUGIN_CACHE_DIR` at runtime to point at the separate session
-cache made the marketplace appear; leaving it at the base path did not),
-not just inferred from documentation.
+Session marketplaces install additively into the base image's own
+`/opt/claude-plugin-cache` and `/opt/claude-plugin-seed` — not a
+session-specific path. The build stage temporarily reclaims write access
+to those base paths, runs the pinned installer
+(`scripts/marketplaces/install-claude.sh`), merges the resulting
+`settings.json` with the base seed via
+`scripts/session/merge-plugin-seed.sh` (session values winning on
+conflicts), and re-locks before the final stage copies the augmented
+directories back to their standard paths.
 
-The fix installs into the same cache Claude already reads. Those base paths
-are read-only in the base image, so the session build stage temporarily
-reclaims write access (`chown`/`chmod` back to node-writable, as root, before
-switching to `USER node` to run the installer — the same lifecycle the base
-image's own build already uses, just re-opened for one more layer), installs
-the profile's marketplaces alongside whatever the base image already has,
-merges the resulting `settings.json` with any pre-existing base seed via
-`scripts/session/merge-plugin-seed.sh` (session values winning on conflicts,
-matching the original "session is additive, layers on top of the base"
-intent — the mechanism moved from runtime to build time, not the
-precedence), and re-locks (`chown root:root`, `chmod -R a-w`) before the
-final stage copies the augmented directories back to their standard paths.
-The final stage never re-opens the cache: from the final image's point of
-view `/opt/claude-plugin-cache` is indistinguishable from a base image that
-shipped with those marketplaces baked in — root-owned, non-writable, and
-never written to at runtime. The base image's entrypoint materialises a
-fresh, fully writable per-session copy under `/tmp` and repoints
-`CLAUDE_CODE_PLUGIN_CACHE_DIR` at it (see `images/claude/entrypoint.sh`), so
-Claude's runtime writes (`known_marketplaces.json` atomic rewrites, plugin
-`data/`, marketplace clones, the `cache/` registry) never touch the seed.
-The install runs in a discarded build stage with a throwaway `HOME`,
-mirroring `images/claude/Dockerfile`'s own build/final split.
+At runtime, the entrypoint reads `CLAUDE_CODE_PLUGIN_SEED_DIR` from the
+environment and merges that one seed into `settings.json` on every launch
+with jq's recursive `*` operator (right side winning per key). The
+user's already-persisted settings take precedence over the seed. See
+[ADR-0002](adr/0002-session-plugins-share-base-cache.md) for why sessions
+share the base cache instead of layering a separate one at runtime.
 
-Because the session build produces one already-merged seed at the standard
-`CLAUDE_CODE_PLUGIN_SEED_DIR` path, it is indistinguishable at runtime from a
-base image that shipped with those marketplaces built in.
-`images/claude/entrypoint.sh` needs no session-specific logic: it reads
-`CLAUDE_CODE_PLUGIN_SEED_DIR` (required, already exported by the Dockerfile)
-and merges that one seed into `settings.json` on every launch via a
-recursive merge (jq's `*` operator, right side winning per key), the user's
-already-persisted settings taking precedence over the seed and unrelated
-Claude settings left untouched — the same shape this file used before this
-mechanism existed, just reading the seed path from an environment variable
-instead of a hardcoded path, and merging recursively (covering
-`extraKnownMarketplaces` alongside `enabledPlugins`) instead of only the
-single `enabledPlugins` key. The entrypoint's second job is equally
-session-agnostic: it copies the immutable seed cache under `/opt/claude-plugin-cache`
-into a fresh writable per-session directory and repoints
-`CLAUDE_CODE_PLUGIN_CACHE_DIR` at it, so a session image (whose cache the
-build stage augmented) needs no session-specific handling either.
+## Rollback
 
-## Build-network policy
+Fall back to `claude` with the base image directly. Delete only labelled
+session images (`ai-sandboxes-claude-session:sha-<hash>`) — never the
+base, tools, Claude, or Codex tags.
 
-Package and plugin installation needs build-time egress, which is separate from
-the guest VM's runtime network policy. A cache miss that requires a build needs
-an explicit host opt-in:
+## Limitations
 
-```fish
-CLAUDE_MSB_BUILD_EGRESS=1 claude-session --profile ...
-```
-
-A cache hit needs no build egress. `CLAUDE_MSB_PUBLIC_EGRESS=1` does not imply
-authority to run a host-side build.
-
-Builds must receive no project mount, host home mount, Docker/registry
-credentials, SSH agent, BuildKit secret, or profile-supplied build mount. The
-profile is trusted host-user input, but package and plugin install scripts remain
-untrusted code; these restrictions contain that code to the build environment.
-
-## msb loading and cleanup
-
-Derived images are imported into msb under their exact session tag. The loader
-must not overwrite or remove `ai-sandboxes-claude:local`; it skips import when
-the matching session image is already present.
-
-There is no automatic session-image garbage collector yet. Derived images stay
-in the local Docker and msb image stores until the host user removes a known
-session tag; the base, tools, Claude, and Codex image tags must never be used
-as cleanup targets. Automatic, dry-run-first garbage collection and host-local
-last-used metadata remain future work.
-
-## Implementation tasks
-
-The tasks below are independently reviewable. Parenthetical dependencies name
-the tasks that must land first.
-
-1. **Profile schema and fixtures** (independent)
-   - Add a version-1 JSON schema document, valid examples, and invalid fixtures.
-   - Ship `config/session-profile.example.json` as the user-facing starting
-     point, alongside the schema's test fixtures.
-   - Define limits and the public error contract.
-
-2. **Profile validation and canonicalization** (depends on 1)
-   - Implement `jq`/Bash validation and canonical JSON generation.
-   - Add stable-hash and injection-rejection tests.
-
-3. **Safe Dockerfile renderer** (depends on 1, 2)
-   - Generate a minimal Dockerfile and build context from trusted templates.
-   - Unit-test escaping and assert that only validated structured values reach
-     package-manager commands.
-
-4. **Session image resolver and cache key** (depends on 2, 3)
-   - Resolve the base image digest, calculate the tag/labels, add per-key
-     locking, build on a cache miss, and write resolved provenance.
-
-5. **Exact msb image loader** (independent)
-   - Extract reusable load logic from `scripts/load-msb`.
-   - Load/inspect a distinct session tag without replacing base-image tags.
-
-6. **`--profile` support in the control plane** (depends on 4, 5)
-   - Parse explicit profile arguments and build-egress opt-in in
-     `ai-sandbox run claude --profile ...`.
-   - Resolve a bare `--profile` name against
-     `~/.config/ai-sandboxes/profiles/<name>.json`; treat any value containing
-     `/` as a literal path.
-   - Reuse the existing Claude network/mount/security construction verbatim
-     after resolving the image. The `claude-session` Fish wrapper is a thin
-     pass-through to the control plane; the shared-state descriptor parsing
-     and mount construction moved out of Fish into the control plane.
-
-7. **Empty-profile end-to-end verification** (depends on 4, 5, 6)
-   - Build and launch an empty-profile session image.
-   - Assert runtime user, no sudo, non-writable system paths, cache hit, and
-     distinct msb tag behavior.
-
-8. **Apt and npm derived layers** (depends on 3, 4)
-   - Implement structured apt and npm installation, immutable final prefixes,
-     inventories, and integration tests.
-
-9. **Python derived layer** (depends on 8)
-   - Implement Python bootstrap, image-local venv, pinned package install, and
-     validation/integration coverage.
-
-10. **Session Claude marketplace/plugin overlay** (depends on 3, 4)
-    - Reuse the existing marketplace validation/installation model to install
-      a session profile's marketplaces additively into the base image's own
-      `/opt/claude-plugin-cache`/`/opt/claude-plugin-seed` at build time
-      (not a separate session-specific cache/seed path merged at runtime —
-      Claude resolves a marketplace's code relative to
-      `CLAUDE_CODE_PLUGIN_CACHE_DIR` at runtime, so a separate root nothing
-      points to would register but never load; see "Claude marketplaces and
-      plugins" above), and test that the session marketplace's plugin is
-      enabled after a fresh-home launch.
-    - Make the entrypoint read `CLAUDE_CODE_PLUGIN_SEED_DIR` from the
-      environment instead of a hardcoded path, and merge that seed
-      recursively (covering `extraKnownMarketplaces` alongside
-      `enabledPlugins`) instead of only a single hardcoded key.
-
-11. **Image GC and host-local metadata** (future work; depends on 4, 5, 6)
-    - Implement discovery, dry-run output, `--apply`, TTL/size policy, and
-      safety tests.
-    - Store last-used metadata at `~/.cache/ai-sandboxes/session-images.json`,
-      updated on every launch.
-
-12. **Documentation, verification, and rollout** (completed except for the
-    future GC work in task 11)
-    - Keep organization policy in a private session-profile repository when
-      appropriate, but keep credentials out of profiles and configuration.
-      README, `docs/configuration.md`, and `docs/claude-security.md` describe
-      session profiles as the customization mechanism.
-    - Add shell/fish checks and networked integration-test policy.
-    - Document rollback: use `claude` with the base image and delete only
-      labeled session images.
-
-## Suggested delivery order
-
-Land tasks 1-7 as the minimum vertical slice. It introduces the explicit
-profile, cache identity, isolated build context, distinct msb loading, and
-hardened launch without granting additional package capabilities. Then add apt
-and npm (task 8), plugins (task 10), Python (task 9), and cleanup/documentation
-(tasks 11-12).
-
-This order makes the first user-visible feature deliberately small while
-preserving the important invariant: session customization is an explicit,
-cached host-side image build, never a privilege grant to the guest agent.
+- **npm and Python transitive dependencies are not locked.** Only directly
+  requested versions are pinned; two builds of an unchanged profile can
+  still install different transitive versions. Full lockfile + integrity
+  provenance is future work.
+- **apt reproducibility is bounded by apt repository state.** A pinned
+  apt version can still resolve differently over time. A snapshot-repository
+  mechanism is future work.
+- **No Python layer yet.** Any non-empty `python` field is rejected during
+  validation.
+- **No automatic image garbage collection.** Host users must remove
+  session tags manually.
+- **No Codex session images yet.**
+- **No private-registry support.** Only public default package sources
+  are supported. Private storage of the profile file itself is fine, but
+  the profile's contents must still resolve through public sources.
