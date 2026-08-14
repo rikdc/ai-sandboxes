@@ -44,24 +44,16 @@ func TestParseRuntimeRejectsInvalid(t *testing.T) {
 func TestParseVersions(t *testing.T) {
 	data := strings.Join([]string{
 		"NODE_IMAGE=node:22-trixie@sha256:abc",
-		"WORKSPACE_QUOTA=20G",
 		"CODEX_VERSION=0.147.0",
 	}, "\n")
-	v, err := ParseVersions([]byte(data))
-	if err != nil {
+	if _, err := ParseVersions([]byte(data)); err != nil {
 		t.Fatal(err)
-	}
-	if v.WorkspaceQuota != "20G" {
-		t.Errorf("WorkspaceQuota = %q, want 20G", v.WorkspaceQuota)
 	}
 }
 
-func TestParseVersionsRejectsInvalidQuota(t *testing.T) {
-	if _, err := ParseVersions([]byte("WORKSPACE_QUOTA=20GB\n")); err == nil {
-		t.Error("invalid quota should be rejected")
-	}
-	if _, err := ParseVersions([]byte("WORKSPACE_QUOTA=0G\n")); err == nil {
-		t.Error("zero quota should be rejected")
+func TestParseVersionsRejectsInvalidLine(t *testing.T) {
+	if _, err := ParseVersions([]byte("bad line without equals\n")); err == nil {
+		t.Error("line without = should be rejected")
 	}
 }
 
@@ -73,12 +65,20 @@ func TestAgentConfig(t *testing.T) {
 	if cfg.Image != "ai-sandboxes-claude:local" || cfg.Security != "restricted" || cfg.CPUs != 4 {
 		t.Errorf("unexpected claude policy: %+v", cfg)
 	}
+	if cfg.RootDiskQuota != "10G" || cfg.WorkspaceQuota != "10G" || cfg.HomeQuota != "4G" || cfg.Memory != "8G" {
+		t.Errorf("unexpected claude resources: root=%q workspace=%q home=%q memory=%q",
+			cfg.RootDiskQuota, cfg.WorkspaceQuota, cfg.HomeQuota, cfg.Memory)
+	}
 	cfg, err = AgentConfig("codex")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Net != "" || cfg.CreateHomeVolume != true || cfg.RootDiskFromVersions != true {
+	if cfg.Net != "" || cfg.CreateHomeVolume != true {
 		t.Errorf("unexpected codex policy: %+v", cfg)
+	}
+	if cfg.RootDiskQuota != "20G" || cfg.WorkspaceQuota != "20G" || cfg.HomeQuota != "4G" || cfg.CPUs != 4 || cfg.Memory != "8G" {
+		t.Errorf("unexpected codex resources: root=%q workspace=%q home=%q cpus=%d memory=%q",
+			cfg.RootDiskQuota, cfg.WorkspaceQuota, cfg.HomeQuota, cfg.CPUs, cfg.Memory)
 	}
 	if cfg.Security != "restricted" {
 		t.Errorf("codex security = %q, want restricted", cfg.Security)
