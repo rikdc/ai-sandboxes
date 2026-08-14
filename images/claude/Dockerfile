@@ -32,18 +32,19 @@ COPY --from=build --chown=root:root /opt/claude-plugin-cache /opt/claude-plugin-
 COPY --from=build --chown=root:root /opt/claude-plugin-seed /opt/claude-plugin-seed
 COPY images/claude/entrypoint.sh /usr/local/bin/claude-entrypoint
 ENV CLAUDE_CODE_PLUGIN_CACHE_DIR=/opt/claude-plugin-cache CLAUDE_CODE_PLUGIN_SEED_DIR=/opt/claude-plugin-seed DISABLE_UPDATES=1
-# Claude Code stores plugin runtime state here. Keep the downloaded cache
-# immutable while allowing the unprivileged runtime user to create that state.
-# The cache root itself must be writable so Claude can atomically rewrite
-# `known_marketplaces.json` (via `known_marketplaces.json.tmp.XXX` + rename) —
-# both operations require write on the parent directory. `data/` and
-# `marketplaces/` are peers Claude writes into at runtime; seeded plugin
-# content lives in other subdirectories that remain root-owned and read-only.
-RUN chmod 0755 /usr/local/bin/claude-entrypoint \
- && install -d -o node -g node -m 0755 \
-      /opt/claude-plugin-cache \
-      /opt/claude-plugin-cache/data \
-      /opt/claude-plugin-cache/marketplaces
+# `/opt/claude-plugin-cache` is an immutable seed: root-owned and non-writable
+# for the container's lifetime. Claude Code rewrites `known_marketplaces.json`
+# and `installed_plugins.json` atomically (via `.tmp.XXX` + rename) and grows
+# `marketplaces/`, `data/`, and `cache/` at runtime, which needs write access
+# to the whole cache tree. Carving writable holes into the seed (root, then
+# `data/`, then `marketplaces/`) chased each failure one layer deeper and
+# ultimately left the cache root writable — enough for the unprivileged
+# runtime user to rename/remove seeded top-level files and shadow the tree.
+# Instead the entrypoint materialises a fresh, fully writable per-session copy
+# of this seed under `/tmp` and repoints CLAUDE_CODE_PLUGIN_CACHE_DIR at it;
+# the seed itself is never written to at runtime. `settings.json` follows the
+# same split (`/opt/claude-plugin-seed` + `$HOME/.claude/settings.json`).
+RUN chmod 0755 /usr/local/bin/claude-entrypoint
 USER node
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/claude-entrypoint"]

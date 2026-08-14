@@ -35,7 +35,15 @@ grep -qFx 'FROM ai-sandboxes-claude-session-base:deadbeef AS build' "$marketplac
 grep -qF 'CLAUDE_CODE_PLUGIN_CACHE_DIR=/opt/claude-plugin-cache' "$marketplace_context_dir/Dockerfile" || exit 1
 grep -qF 'CLAUDE_CODE_PLUGIN_SEED_DIR=/opt/claude-plugin-seed' "$marketplace_context_dir/Dockerfile" || exit 1
 grep -qF 'merge-session-plugin-seed.sh /opt/claude-session-build-home/.claude/settings.json /opt/claude-plugin-seed/settings.json' "$marketplace_context_dir/Dockerfile" || exit 1
-grep -qFx 'RUN install -d -o node -g node -m 0755 /opt/claude-plugin-cache /opt/claude-plugin-cache/data /opt/claude-plugin-cache/marketplaces' "$marketplace_context_dir/Dockerfile" || exit 1
+# The final stage copies the augmented seed cache in read-only; it must NOT
+# carve writable holes into it — the entrypoint materialises a per-session
+# writable copy at runtime (see images/claude/entrypoint.sh).
+if grep -qF 'install -d -o node -g node -m 0755 /opt/claude-plugin-cache' "$marketplace_context_dir/Dockerfile"; then
+  echo 'FAIL: renderer must not make the seeded plugin cache writable' >&2
+  exit 1
+fi
+grep -qFx 'COPY --from=build --chown=root:root /opt/claude-plugin-cache /opt/claude-plugin-cache' "$marketplace_context_dir/Dockerfile" || exit 1
+grep -qFx 'COPY --from=build --chown=root:root /opt/claude-plugin-seed /opt/claude-plugin-seed' "$marketplace_context_dir/Dockerfile" || exit 1
 grep -qFx 'USER node' "$marketplace_context_dir/Dockerfile" || exit 1
 test "$(find "$marketplace_context_dir" -maxdepth 1 -type f | wc -l)" -eq 5 || exit 1
 jq -e '.claude | length == 1' "$marketplace_context_dir/session-marketplaces.json" >/dev/null || exit 1

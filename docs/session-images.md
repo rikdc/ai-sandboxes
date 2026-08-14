@@ -383,6 +383,14 @@ matching the original "session is additive, layers on top of the base"
 intent — the mechanism moved from runtime to build time, not the
 precedence), and re-locks (`chown root:root`, `chmod -R a-w`) before the
 final stage copies the augmented directories back to their standard paths.
+The final stage never re-opens the cache: from the final image's point of
+view `/opt/claude-plugin-cache` is indistinguishable from a base image that
+shipped with those marketplaces baked in — root-owned, non-writable, and
+never written to at runtime. The base image's entrypoint materialises a
+fresh, fully writable per-session copy under `/tmp` and repoints
+`CLAUDE_CODE_PLUGIN_CACHE_DIR` at it (see `images/claude/entrypoint.sh`), so
+Claude's runtime writes (`known_marketplaces.json` atomic rewrites, plugin
+`data/`, marketplace clones, the `cache/` registry) never touch the seed.
 The install runs in a discarded build stage with a throwaway `HOME`,
 mirroring `images/claude/Dockerfile`'s own build/final split.
 
@@ -398,7 +406,11 @@ Claude settings left untouched — the same shape this file used before this
 mechanism existed, just reading the seed path from an environment variable
 instead of a hardcoded path, and merging recursively (covering
 `extraKnownMarketplaces` alongside `enabledPlugins`) instead of only the
-single `enabledPlugins` key.
+single `enabledPlugins` key. The entrypoint's second job is equally
+session-agnostic: it copies the immutable seed cache under `/opt/claude-plugin-cache`
+into a fresh writable per-session directory and repoints
+`CLAUDE_CODE_PLUGIN_CACHE_DIR` at it, so a session image (whose cache the
+build stage augmented) needs no session-specific handling either.
 
 ## Build-network policy
 

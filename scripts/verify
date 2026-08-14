@@ -76,6 +76,11 @@ source ./versions.env || exit 1
 set +a
 claude_version=$(docker run --rm --user node -e HOME=/home/node ai-sandboxes-claude:local bash -lc 'test "$DISABLE_UPDATES" = 1; claude --version') || exit 1
 test "${claude_version%% *}" = "$CLAUDE_CODE_VERSION" || exit 1
+# Even the default image's (usually empty) plugin cache is immutable to node.
+if docker run --rm --user node ai-sandboxes-claude:local sh -c 'touch /opt/claude-plugin-cache/.runtime-write-test 2>/dev/null'; then
+  echo 'FAIL: node can write to the default image plugin cache root' >&2
+  exit 1
+fi
 docker run --rm --user node -e HOME=/home/node ai-sandboxes-codex:local codex --version || exit 1
 docker buildx bake --load \
   --set "tools.args.SHARED_STATE_ID=$expected_state_id" \
@@ -97,12 +102,42 @@ printf '%s\n' "$plugin_output" | awk '
   END { exit !(found && enabled) }
 ' || exit 1
 docker run --rm --user node -e HOME=/tmp/claude-permissions-test "$marketplace_test_image" sh -c 'claude plugin list >/dev/null && test "$(stat -c %a "$HOME/.claude/settings.json")" = 600' || exit 1
-docker run --rm --user node "$marketplace_test_image" sh -c 'touch /opt/claude-plugin-cache/data/.runtime-write-test' || exit 1
-docker run --rm --user node "$marketplace_test_image" sh -c 'touch /opt/claude-plugin-cache/marketplaces/.runtime-write-test' || exit 1
-# Claude rewrites known_marketplaces.json atomically at the cache root at
-# startup (open+rename via known_marketplaces.json.tmp.XXX), which needs write
-# on the directory itself — not just on carved-out subdirs.
-docker run --rm --user node "$marketplace_test_image" sh -c 'touch /opt/claude-plugin-cache/.runtime-write-test' || exit 1
+# The seeded plugin cache is immutable to node: nothing under it — including
+# the root and every subdirectory — may be created, unlinked, renamed, or
+# replaced. Claude writes its runtime state into a fresh per-session copy that
+# the entrypoint materialises under /tmp and points CLAUDE_CODE_PLUGIN_CACHE_DIR
+# at (see images/claude/entrypoint.sh); the seed itself is never written to.
+if docker run --rm --user node "$marketplace_test_image" sh -c 'touch /opt/claude-plugin-cache/.runtime-write-test 2>/dev/null'; then
+  echo 'FAIL: node can write to the seeded plugin cache root' >&2
+  exit 1
+fi
+if docker run --rm --user node "$marketplace_test_image" sh -c 'touch /opt/claude-plugin-cache/data/.runtime-write-test 2>/dev/null'; then
+  echo 'FAIL: node can write to the seeded plugin cache data/' >&2
+  exit 1
+fi
+if docker run --rm --user node "$marketplace_test_image" sh -c 'touch /opt/claude-plugin-cache/marketplaces/.runtime-write-test 2>/dev/null'; then
+  echo 'FAIL: node can write to the seeded plugin cache marketplaces/' >&2
+  exit 1
+fi
+if docker run --rm --user node "$marketplace_test_image" sh -c 'touch /opt/claude-plugin-cache/cache/.runtime-write-test 2>/dev/null'; then
+  echo 'FAIL: node can write to the seeded plugin cache cache/' >&2
+  exit 1
+fi
+# Top-level seeded entries must not be replaceable by node — unlink() or
+# rename() on any file or directory under /opt/claude-plugin-cache would let a
+# compromised node process shadow the tree the next claude invocation loads.
+if docker run --rm --user node "$marketplace_test_image" sh -c 'rm -f /opt/claude-plugin-cache/known_marketplaces.json 2>/dev/null'; then
+  echo 'FAIL: node can unlink seeded known_marketplaces.json' >&2
+  exit 1
+fi
+if docker run --rm --user node "$marketplace_test_image" sh -c 'mv /opt/claude-plugin-cache/installed_plugins.json /tmp/verify-renamed.json 2>/dev/null'; then
+  echo 'FAIL: node can rename seeded installed_plugins.json' >&2
+  exit 1
+fi
+if docker run --rm --user node "$marketplace_test_image" sh -c 'mv /opt/claude-plugin-cache/cache /tmp/verify-renamed-cache 2>/dev/null'; then
+  echo 'FAIL: node can rename the seeded cache/ tree' >&2
+  exit 1
+fi
 for image in ai-sandboxes-claude:local ai-sandboxes-codex:local; do
   if docker history --no-trunc "$image" | grep -Ei '(anthropic_api_key|openai_api_key|codex_access_token)'; then
     exit 1
