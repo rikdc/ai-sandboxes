@@ -38,7 +38,14 @@ echo "${checksum}  ${archive}" | sha256sum -c - >/dev/null || die "checksum mism
 # $destination, all verified against the pinned sha256 above.
 unzip -q "$archive" -d "$extract_dir" || die "could not extract $url"
 test -x "$extract_dir/aws/install" || die "archive for $tool_id is missing aws/install"
+# Refuse rather than overwrite: any pre-existing $binary in the destination
+# means a base-image command or an earlier tool already owns that name.
+# Deliberately not passing --update to aws/install so the vendor installer
+# itself also refuses to clobber an existing install-dir, and any pre-existing
+# aws-cli prefix from a previous adapter run has to be cleared explicitly.
+test ! -e "$destination/$binary" || die "refusing to install $binary into $destination: destination already exists (collision with a base-image command or another tool?)"
 install_dir=$(dirname -- "$destination")/aws-cli
-"$extract_dir/aws/install" --install-dir "$install_dir" --bin-dir "$destination" --update \
+test ! -e "$install_dir" || die "refusing to overwrite existing aws-cli prefix $install_dir"
+"$extract_dir/aws/install" --install-dir "$install_dir" --bin-dir "$destination" \
   || die "aws v2 installer failed for $tool_id"
 test -x "$destination/$binary" || die "$binary was not installed into $destination"

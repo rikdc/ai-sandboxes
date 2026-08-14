@@ -81,7 +81,8 @@ while IFS= read -r id; do
         install_state_wrapper || exit 1
         printf '%s\n' "$state_dir" "$state_env" "$state_db" > "/usr/local/libexec/$binary.state" || exit 1
         chmod 0644 "/usr/local/libexec/$binary.state" || exit 1
-        ln -sf /usr/local/libexec/ai-sandboxes-state-wrapper "/usr/local/bin/$binary" || exit 1
+        test ! -e "/usr/local/bin/$binary" || { echo "refusing to overwrite /usr/local/bin/$binary with state-wrapper launcher for $id" >&2; exit 1; }
+        ln -s /usr/local/libexec/ai-sandboxes-state-wrapper "/usr/local/bin/$binary" || exit 1
       else
         "$script_dir/install-github-release-tar.sh" "$catalog" "$selection" "$id" /usr/local/bin || exit 1
       fi ;;

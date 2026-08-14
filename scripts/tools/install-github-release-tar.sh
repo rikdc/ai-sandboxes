@@ -26,4 +26,10 @@ curl -fsSL "https://github.com/${repository}/releases/download/${version}/${asse
   || die "download failed for $repository $version $asset"
 echo "${checksum}  ${archive}" | sha256sum -c - >/dev/null || die "checksum mismatch for $repository $version $asset"
 tar -xzf "$archive" -C "$extract_dir" "$archive_member" || die "could not extract $archive_member from archive"
+# Refuse rather than overwrite: a catalog entry that happens to name a
+# base-image command (claude, git, curl, ...) must not silently replace it.
+# Every fresh session-image build starts from a base with no curated tools
+# already in place, so a pre-existing destination here always indicates a
+# collision worth stopping the build over.
+test ! -e "$destination/$binary" || die "refusing to install $binary into $destination: destination already exists (collision with a base-image command or another tool?)"
 install -Dm 0755 "$extract_dir/$archive_member" "$destination/$binary" || die "could not install $binary to $destination"

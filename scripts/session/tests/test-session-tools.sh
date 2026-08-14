@@ -89,6 +89,22 @@ docker run --rm --user node "$golang_tag" sh -c 'test "$(go env GOROOT)" = /usr/
 # heuristic" before blaming the install path.
 docker run --rm --user node "$golang_tag" sh -c 'test -x /usr/local/libexec/ai-sandboxes-tools/golang/pkg/tool/linux_arm64/compile' \
   || { echo 'golang toolchain is incomplete (missing pkg/tool/compile)' >&2; exit 1; }
+# `go version` and the presence of pkg/tool/compile only prove the archive
+# extracted; drive a real build so a broken toolchain (missing stdlib,
+# broken linker, wrong GOROOT resolution) actually fails the test.
+docker run --rm --user node "$golang_tag" sh -c '
+  set -e
+  home=$(mktemp -d)
+  export HOME=$home GOCACHE=$home/cache GOPATH=$home/go
+  cd "$home"
+  cat > hello.go <<EOF
+package main
+import "fmt"
+func main() { fmt.Println("ok") }
+EOF
+  go build -o hello hello.go
+  ./hello | grep -qx ok
+' || { echo 'golang cannot compile a hello-world program' >&2; exit 1; }
 docker run --rm --user node "$golang_tag" sh -c '! touch /usr/local/bin/.write-test 2>/dev/null' \
   || { echo '/usr/local/bin is writable by node (golang image)' >&2; exit 1; }
 docker run --rm --user node "$golang_tag" sh -c '! touch /usr/local/libexec/.write-test 2>/dev/null' \

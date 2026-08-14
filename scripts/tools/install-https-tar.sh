@@ -34,6 +34,7 @@ echo "${checksum}  ${archive}" | sha256sum -c - >/dev/null || die "checksum mism
 tar -xzf "$archive" -C "$extract_dir" "$archive_member" || die "could not extract $archive_member from archive"
 
 if test -f "$extract_dir/$archive_member"; then
+  test ! -e "$destination/$binary" || die "refusing to install $binary into $destination: destination already exists (collision with a base-image command or another tool?)"
   install -Dm 0755 "$extract_dir/$archive_member" "$destination/$binary" \
     || die "could not install $binary to $destination"
   exit 0
@@ -48,7 +49,12 @@ test -d "$extract_dir/$archive_member" || die "could not extract $archive_member
 # so /usr/local/bin stays a directory of small launchers/symlinks, and two
 # tools whose archives use a generic member name (bin, linux-arm64, ...)
 # cannot silently overwrite one another.
-prefix_root=/usr/local/libexec/ai-sandboxes-tools
+# The default prefix root is a root-owned path inside the final image.
+# AI_SANDBOXES_TOOLS_PREFIX_ROOT is a test hook: hermetic adapter tests
+# (scripts/tools/tests/test-adapters.sh) redirect installs into a scratch
+# directory. Production callers -- install-selected.sh under a Docker
+# build -- never set this variable.
+prefix_root=${AI_SANDBOXES_TOOLS_PREFIX_ROOT:-/usr/local/libexec/ai-sandboxes-tools}
 prefix=$prefix_root/$tool_id
 install -d "$prefix_root" || die "could not create $prefix_root"
 test ! -e "$prefix" || die "refusing to overwrite existing prefix $prefix (another tool already installed here?)"
