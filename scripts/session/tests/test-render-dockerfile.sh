@@ -35,7 +35,7 @@ grep -qFx 'FROM ai-sandboxes-claude-session-base:deadbeef AS build' "$marketplac
 grep -qF 'CLAUDE_CODE_PLUGIN_CACHE_DIR=/opt/claude-plugin-cache' "$marketplace_context_dir/Dockerfile" || exit 1
 grep -qF 'CLAUDE_CODE_PLUGIN_SEED_DIR=/opt/claude-plugin-seed' "$marketplace_context_dir/Dockerfile" || exit 1
 grep -qF 'merge-session-plugin-seed.sh /opt/claude-session-build-home/.claude/settings.json /opt/claude-plugin-seed/settings.json' "$marketplace_context_dir/Dockerfile" || exit 1
-grep -qFx 'RUN install -d -o node -g node -m 0755 /opt/claude-plugin-cache/data /opt/claude-plugin-cache/marketplaces' "$marketplace_context_dir/Dockerfile" || exit 1
+grep -qFx 'RUN install -d -o node -g node -m 0755 /opt/claude-plugin-cache /opt/claude-plugin-cache/data /opt/claude-plugin-cache/marketplaces' "$marketplace_context_dir/Dockerfile" || exit 1
 grep -qFx 'USER node' "$marketplace_context_dir/Dockerfile" || exit 1
 test "$(find "$marketplace_context_dir" -maxdepth 1 -type f | wc -l)" -eq 5 || exit 1
 jq -e '.claude | length == 1' "$marketplace_context_dir/session-marketplaces.json" >/dev/null || exit 1
