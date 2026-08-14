@@ -312,6 +312,8 @@ func resolvePlan(opts runOptions, e execEnv, stderr io.Writer, client msbClient)
 		fmt.Fprintf(stderr, "ai-sandbox: %s\n", err)
 		return nil, 2
 	}
+	// home is the canonical form of $HOME; it exists only so the workspace
+	// guard refuses to mount the complete home directory, resolved or not.
 	if err := plan.ValidateWorkspace(workspace, home); err != nil {
 		fmt.Fprintf(stderr, "%s: %s\n", opts.agent, err)
 		return nil, 2
@@ -358,7 +360,12 @@ func resolvePlan(opts runOptions, e execEnv, stderr io.Writer, client msbClient)
 		return nil, 2
 	}
 
-	network, err := e.resolveNetwork(agentCfg, home)
+	// The egress allowlist lives at the literal $HOME: the installer, doctor,
+	// and user documentation all reference $HOME/.config/microvms/<agent>-egress
+	// without resolving symlinks, so pass e.home (not the canonical home from
+	// above). On dotfiles-managed layouts ~/.config may itself be a symlink,
+	// and resolving $HOME first would point at a different directory.
+	network, err := e.resolveNetwork(agentCfg, e.home)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %s\n", opts.agent, err)
 		return nil, 1

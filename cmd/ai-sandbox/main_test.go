@@ -210,6 +210,63 @@ func TestExecuteRunMissingEgress(t *testing.T) {
 	}
 }
 
+// TestExecutePlanEgressSymlinkedHome guards the contract that the egress
+// allowlist is read from the literal $HOME, not its canonicalized form. The
+// installer, doctor, and docs all write to $HOME/.config/microvms/, which on
+// dotfiles-managed layouts (~/.config symlinked via chezmoi/stow) is a
+// different directory from EvalSymlinks($HOME)/.config.
+func TestExecutePlanEgressSymlinkedHome(t *testing.T) {
+	home := t.TempDir()
+	link := filepath.Join(t.TempDir(), "home")
+	if err := os.Symlink(home, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	project := t.TempDir()
+
+	// The allowlist exists only at the symlinked $HOME spelling; the resolved
+	// target has no .config at all.
+	os.MkdirAll(filepath.Join(link, ".config", "microvms"), 0o755)
+	os.WriteFile(filepath.Join(link, ".config", "microvms", "claude-egress"),
+		[]byte("api.anthropic.com\n"), 0o600)
+
+	t.Run("resolves through the symlinked home", func(t *testing.T) {
+		e := execEnv{cwd: project, home: link, getenv: func(string) string { return "" }}
+		var out bytes.Buffer
+		code := executePlan(runOptions{agent: "claude"}, e, &out, &bytes.Buffer{}, newFakeMsb())
+		if code != 0 {
+			t.Fatalf("exit code = %d, want 0 (allowlist exists at $HOME)", code)
+		}
+		if !strings.Contains(out.String(), "allow@api.anthropic.com:tcp:443") {
+			t.Errorf("plan should honor the allowlist through the symlink:\n%s", out.String())
+		}
+	})
+
+	t.Run("reports the literal home path when missing", func(t *testing.T) {
+		// Move the .config aside so the allowlist is missing, then assert the
+		// reported path is the literal $HOME spelling, not the resolved one.
+		dotconfig := filepath.Join(link, ".config")
+		moved := dotconfig + ".moved"
+		if err := os.Rename(dotconfig, moved); err != nil {
+			t.Fatalf("renaming .config: %v", err)
+		}
+		defer os.Rename(moved, dotconfig)
+
+		e := execEnv{cwd: project, home: link, getenv: func(string) string { return "" }}
+		var errb bytes.Buffer
+		code := executePlan(runOptions{agent: "claude"}, e, &bytes.Buffer{}, &errb, newFakeMsb())
+		if code != 1 {
+			t.Fatalf("exit code = %d, want 1 (missing egress allowlist)", code)
+		}
+		want := filepath.Join(link, ".config", "microvms", "claude-egress")
+		if !strings.Contains(errb.String(), want) {
+			t.Errorf("missing-allowlist message should reference the literal $HOME path %q, got:\n%s", want, errb.String())
+		}
+		if strings.Contains(errb.String(), filepath.Join(home, ".config", "microvms", "claude-egress")) {
+			t.Errorf("missing-allowlist message should not reference the resolved home path %q:\n%s", filepath.Join(home, ".config", "microvms", "claude-egress"), errb.String())
+		}
+	})
+}
+
 func TestExecuteRunInvalidLabels(t *testing.T) {
 	e, _ := testEnv(t)
 	client := newFakeMsb()
