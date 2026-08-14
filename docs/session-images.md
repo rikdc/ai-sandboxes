@@ -112,7 +112,7 @@ Profiles are JSON. YAML is not supported — see
 ### Field reference
 
 | Field | Required | Constraints |
-|---|---|---|
+| --- | --- | --- |
 | `schema_version` | yes | Must be `1`. |
 | `apt[].name` | yes | Debian package name. Validated against a package-name regex. |
 | `apt[].version` | no | If set, exact apt version. Even pinned versions can still resolve differently as apt state changes; the actually-installed version is recorded to `resolved.json` post-install. |
