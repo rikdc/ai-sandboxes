@@ -9,6 +9,16 @@
       "id": "rtk",
       "version": "vX.Y.Z",
       "sha256": "LOWERCASE_64_CHARACTER_SHA256"
+    },
+    {
+      "id": "golang",
+      "version": "X.Y.Z",
+      "sha256": "LOWERCASE_64_CHARACTER_SHA256"
+    },
+    {
+      "id": "awscli",
+      "version": "X.Y.Z",
+      "sha256": "LOWERCASE_64_CHARACTER_SHA256"
     }
   ]
 }

@@ -85,6 +85,15 @@ while IFS= read -r id; do
       else
         "$script_dir/install-github-release-tar.sh" "$catalog" "$selection" "$id" /usr/local/bin || exit 1
       fi ;;
+    runtime:https-tar|runtime:awscli-zip)
+      # A state-wrapper installation keeps the real binary in /usr/local/libexec
+      # and a launcher in /usr/local/bin, but neither of these adapters installs
+      # a single movable binary: https-tar may install a whole toolchain tree
+      # (see install-https-tar.sh) and awscli-zip carries an installer plus a
+      # dist/ tree, so neither layout is wrapper-compatible. Validation rejects
+      # a state_wrapper on these entries; install straight to /usr/local/bin.
+      "$script_dir/install-$adapter.sh" "$catalog" "$selection" "$id" /usr/local/bin || exit 1
+      ;;
     *)
       echo "unsupported installation phase or adapter: $phase:$adapter" >&2
       exit 2 ;;

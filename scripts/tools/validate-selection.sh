@@ -17,21 +17,58 @@ require_unique_ids() {
   test -z "$duplicates" || fail "duplicate tool id(s): $duplicates"
 }
 
+validate_url_template() {
+  jq -e '
+    (.url_template | type == "string") and
+    (.url_template | startswith("https://")) and
+    (.url_template | contains("{{version}}")) and
+    (.url_template | gsub("\\{\\{version\\}\\}"; "") | (contains("{") or contains("}")) | not) and
+    (.url_template | (contains("..") or contains("@") or contains(" ") or contains("\t")) | not)
+  '
+}
+
 validate_catalog_entry() {
   local entry=$1
-  local id
+  local id adapter
   id=$(jq -er '.id' <<<"$entry") || fail 'catalog tool is missing an id'
+  adapter=$(jq -er '.adapter' <<<"$entry") || fail "catalog entry missing adapter: $id"
 
-  jq -e '
-    (.id | type == "string" and test("^[a-z][a-z0-9-]*$")) and
-    (.adapter == "github-release-tar") and
-    (.repository | type == "string" and test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$") and (contains("..") | not)) and
-    (.asset | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]*$") and (contains("..") | not)) and
-    (.archive_member | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._/-]*$") and (contains("..") | not)) and
-    (.binary | type == "string" and test("^[a-z][a-z0-9-]*$")) and
-    ((keys | sort) == ["adapter", "archive_member", "asset", "binary", "id", "repository"] or
-     (keys | sort) == ["adapter", "archive_member", "asset", "binary", "id", "repository", "state_wrapper"])
-  ' <<<"$entry" >/dev/null || fail "invalid catalog entry: $id"
+  case "$adapter" in
+    github-release-tar)
+      jq -e '
+        (.id | type == "string" and test("^[a-z][a-z0-9-]*$")) and
+        (.adapter == "github-release-tar") and
+        (.repository | type == "string" and test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$") and (contains("..") | not)) and
+        (.asset | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]*$") and (contains("..") | not)) and
+        (.archive_member | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._/-]*$") and (contains("..") | not)) and
+        (.binary | type == "string" and test("^[a-z][a-z0-9-]*$")) and
+        ((keys | sort) == ["adapter", "archive_member", "asset", "binary", "id", "repository"] or
+         (keys | sort) == ["adapter", "archive_member", "asset", "binary", "id", "repository", "state_wrapper"])
+      ' <<<"$entry" >/dev/null || fail "invalid catalog entry: $id"
+      ;;
+    https-tar)
+      jq -e '
+        (.id | type == "string" and test("^[a-z][a-z0-9-]*$")) and
+        (.adapter == "https-tar") and
+        (.archive_member | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._/-]*$") and (contains("..") | not)) and
+        (.binary | type == "string" and test("^[a-z][a-z0-9-]*$")) and
+        ((keys | sort) == ["adapter", "archive_member", "binary", "id", "url_template"])
+      ' <<<"$entry" >/dev/null || fail "invalid catalog entry: $id"
+      validate_url_template <<<"$entry" >/dev/null || fail "invalid catalog entry: $id"
+      ;;
+    awscli-zip)
+      jq -e '
+        (.id | type == "string" and test("^[a-z][a-z0-9-]*$")) and
+        (.adapter == "awscli-zip") and
+        (.binary | type == "string" and test("^[a-z][a-z0-9-]*$")) and
+        ((keys | sort) == ["adapter", "binary", "id", "url_template"])
+      ' <<<"$entry" >/dev/null || fail "invalid catalog entry: $id"
+      validate_url_template <<<"$entry" >/dev/null || fail "invalid catalog entry: $id"
+      ;;
+    *)
+      fail "unknown adapter for $id: $adapter"
+      ;;
+  esac
 
   if jq -e '.state_wrapper != null' <<<"$entry" >/dev/null; then
     jq -e '

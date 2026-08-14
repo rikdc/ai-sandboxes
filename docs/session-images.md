@@ -246,19 +246,28 @@ implemented — see Limitations.
 
 `tools` entries install through the exact chain the base image's
 `config/tools.json`/`config/runtime.json` mechanism uses:
-`scripts/tools/install-selected.sh` (phase `runtime`) and
-`scripts/tools/install-github-release-tar.sh`, both copied unmodified into
-the build context, alongside a copy of `config/tool-catalog.json`. Unlike
-npm, github-release-tar installs run no third-party lifecycle hooks and
-download only a fixed catalog-pinned URL whose sha256 is verified before
-extraction.
+`scripts/tools/install-selected.sh` (phase `runtime`) dispatches to one of
+several adapter installers — currently `install-github-release-tar.sh`,
+`install-https-tar.sh`, and `install-awscli-zip.sh` — all copied
+unmodified into the build context alongside a copy of
+`config/tool-catalog.json`. Which adapter a catalog entry uses is fixed
+by the catalog (`adapter` field), never by the profile; a profile can
+only select a catalog `id` and pin its `version`/`sha256`. Unlike npm,
+these installs run no third-party lifecycle hooks and download only a
+fixed catalog-pinned URL whose sha256 is verified before extraction.
 
 Installed binaries land under root-owned, non-writable paths. A tool with
-no `state_wrapper` installs to `/usr/local/bin/<binary>`. A tool with a
-`state_wrapper` (e.g. `icm`) installs its real binary to
-`/usr/local/libexec/<binary>` and a launcher symlink at
+no `state_wrapper` installs to `/usr/local/bin/<binary>` (for a plain
+archive member) or to a self-contained prefix under
+`/usr/local/libexec/<member>` with executables symlinked into
+`/usr/local/bin` (for a directory member, e.g. the Go toolchain or AWS
+CLI). A tool with a `state_wrapper` (e.g. `icm`) installs its real binary
+to `/usr/local/libexec/<binary>` and a launcher symlink at
 `/usr/local/bin/<binary>` that refuses to run unless
-`/var/lib/agent-state` is present and writable.
+`/var/lib/agent-state` is present and writable. Adapters whose member
+shape is a directory (`https-tar` directory members, `awscli-zip`) cannot
+be paired with a `state_wrapper`; validation rejects such catalog
+entries. See [ADR-0004](adr/0004-apt-npm-tools-trust-tiers.md).
 
 ### Claude marketplaces
 
