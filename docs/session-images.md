@@ -273,7 +273,14 @@ happen to share a generic name — `bin`, `linux-arm64`, `tool` — cannot
 overwrite each other, and only the names the catalog explicitly exposes
 end up on `PATH`. The AWS CLI v2 installer lays out its own
 `/usr/local/aws-cli/v2/<version>` tree and points `/usr/local/bin/aws`
-at it directly. A tool with a `state_wrapper` (e.g. `icm`) installs its real binary
+at it directly.
+
+The Go toolchain adapter guarantees pure-Go builds only. `CGO_ENABLED=1`
+builds additionally require a C compiler, which the base image does not
+declare; anything that currently works only because `gcc` happens to be
+present through the Node base image is inherited, not promised. If CGO
+support becomes a supported baseline, the C toolchain will need its own
+declared apt entry and a corresponding CGO build test. A tool with a `state_wrapper` (e.g. `icm`) installs its real binary
 to `/usr/local/libexec/<binary>` and a launcher symlink at
 `/usr/local/bin/<binary>` that refuses to run unless
 `/var/lib/agent-state` is present and writable. Adapters whose member

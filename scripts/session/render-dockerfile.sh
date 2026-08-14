@@ -117,9 +117,12 @@ if test "$tools_count" -gt 0; then
     || die 'could not copy tool-catalog.json into context'
   cp -- "$repo_root/scripts/tools/install-selected.sh" "$context_dir/install-selected.sh" \
     || die 'could not copy install-selected.sh into context'
+  cp -- "$repo_root/scripts/tools/lib.sh" "$context_dir/lib.sh" \
+    || die 'could not copy lib.sh into context'
   cat >>"$dockerfile" <<EOF || die "could not write $dockerfile"
 COPY --chown=root:root session-tool-catalog.json /opt/session-tool-catalog.json
 COPY --chown=root:root session-tools-selection.json /opt/session-tools-selection.json
+COPY --chown=root:root --chmod=0755 lib.sh /usr/local/lib/ai-sandboxes/lib.sh
 COPY --chown=root:root --chmod=0755 install-selected.sh /usr/local/lib/ai-sandboxes/install-selected.sh
 EOF
   # The catalog is the authoritative list of adapters a profile could be

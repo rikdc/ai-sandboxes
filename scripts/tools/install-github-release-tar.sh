@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -o pipefail
 
+# shellcheck source=scripts/tools/lib.sh
+. "$(dirname -- "$0")/lib.sh" || exit 1
+
 catalog=${1:?usage: install-github-release-tar.sh CATALOG SELECTION TOOL_ID DESTINATION}
 selection=${2:?usage: install-github-release-tar.sh CATALOG SELECTION TOOL_ID DESTINATION}
 tool_id=${3:?usage: install-github-release-tar.sh CATALOG SELECTION TOOL_ID DESTINATION}
@@ -31,5 +34,9 @@ tar -xzf "$archive" -C "$extract_dir" "$archive_member" || die "could not extrac
 # Every fresh session-image build starts from a base with no curated tools
 # already in place, so a pre-existing destination here always indicates a
 # collision worth stopping the build over.
-test ! -e "$destination/$binary" || die "refusing to install $binary into $destination: destination already exists (collision with a base-image command or another tool?)"
-install -Dm 0755 "$extract_dir/$archive_member" "$destination/$binary" || die "could not install $binary to $destination"
+path_is_absent "$destination/$binary" || die "refusing to install $binary into $destination: destination already exists (collision with a base-image command or another tool?)"
+# Portable file-install (BSD `install` on macOS lacks GNU's `-D`; the
+# tests exercise this script on the local host as well as under Linux).
+mkdir -p "$destination" || die "could not create $destination"
+cp -- "$extract_dir/$archive_member" "$destination/$binary" || die "could not install $binary to $destination"
+chmod 0755 "$destination/$binary" || die "could not chmod $destination/$binary"

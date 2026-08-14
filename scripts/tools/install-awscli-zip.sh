@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -o pipefail
 
+# shellcheck source=scripts/tools/lib.sh
+. "$(dirname -- "$0")/lib.sh" || exit 1
+
 catalog=${1:?usage: install-awscli-zip.sh CATALOG SELECTION TOOL_ID DESTINATION}
 selection=${2:?usage: install-awscli-zip.sh CATALOG SELECTION TOOL_ID DESTINATION}
 tool_id=${3:?usage: install-awscli-zip.sh CATALOG SELECTION TOOL_ID DESTINATION}
@@ -43,9 +46,9 @@ test -x "$extract_dir/aws/install" || die "archive for $tool_id is missing aws/i
 # Deliberately not passing --update to aws/install so the vendor installer
 # itself also refuses to clobber an existing install-dir, and any pre-existing
 # aws-cli prefix from a previous adapter run has to be cleared explicitly.
-test ! -e "$destination/$binary" || die "refusing to install $binary into $destination: destination already exists (collision with a base-image command or another tool?)"
+path_is_absent "$destination/$binary" || die "refusing to install $binary into $destination: destination already exists (collision with a base-image command or another tool?)"
 install_dir=$(dirname -- "$destination")/aws-cli
-test ! -e "$install_dir" || die "refusing to overwrite existing aws-cli prefix $install_dir"
+path_is_absent "$install_dir" || die "refusing to overwrite existing aws-cli prefix $install_dir"
 "$extract_dir/aws/install" --install-dir "$install_dir" --bin-dir "$destination" \
   || die "aws v2 installer failed for $tool_id"
 test -x "$destination/$binary" || die "$binary was not installed into $destination"

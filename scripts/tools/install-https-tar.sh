@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -o pipefail
 
+# shellcheck source=scripts/tools/lib.sh
+. "$(dirname -- "$0")/lib.sh" || exit 1
+
 catalog=${1:?usage: install-https-tar.sh CATALOG SELECTION TOOL_ID DESTINATION}
 selection=${2:?usage: install-https-tar.sh CATALOG SELECTION TOOL_ID DESTINATION}
 tool_id=${3:?usage: install-https-tar.sh CATALOG SELECTION TOOL_ID DESTINATION}
@@ -34,9 +37,11 @@ echo "${checksum}  ${archive}" | sha256sum -c - >/dev/null || die "checksum mism
 tar -xzf "$archive" -C "$extract_dir" "$archive_member" || die "could not extract $archive_member from archive"
 
 if test -f "$extract_dir/$archive_member"; then
-  test ! -e "$destination/$binary" || die "refusing to install $binary into $destination: destination already exists (collision with a base-image command or another tool?)"
-  install -Dm 0755 "$extract_dir/$archive_member" "$destination/$binary" \
+  path_is_absent "$destination/$binary" || die "refusing to install $binary into $destination: destination already exists (collision with a base-image command or another tool?)"
+  mkdir -p "$destination" || die "could not create $destination"
+  cp -- "$extract_dir/$archive_member" "$destination/$binary" \
     || die "could not install $binary to $destination"
+  chmod 0755 "$destination/$binary" || die "could not chmod $destination/$binary"
   exit 0
 fi
 
@@ -57,18 +62,21 @@ test -d "$extract_dir/$archive_member" || die "could not extract $archive_member
 prefix_root=${AI_SANDBOXES_TOOLS_PREFIX_ROOT:-/usr/local/libexec/ai-sandboxes-tools}
 prefix=$prefix_root/$tool_id
 install -d "$prefix_root" || die "could not create $prefix_root"
-test ! -e "$prefix" || die "refusing to overwrite existing prefix $prefix (another tool already installed here?)"
+path_is_absent "$prefix" || die "refusing to overwrite existing prefix $prefix (another tool already installed here?)"
 cp -a "$extract_dir/$archive_member" "$prefix" || die "could not install $archive_member to $prefix"
 
-readarray -t expose < <(jq -r '(.expose // [.binary])[]' <<<"$entry") \
-  || die "catalog entry has malformed expose list: $tool_id"
-test "${#expose[@]}" -gt 0 || die "catalog entry exposes no binaries: $tool_id"
+# Portable expose iteration: readarray/mapfile is Bash 4+ only, and this
+# script is exercised locally on Apple's Bash 3.2 as well.
+expose_count=0
 matched=
-for name in "${expose[@]}"; do
+while IFS= read -r name; do
+  test -n "$name" || continue
+  expose_count=$((expose_count + 1))
   tool_path=$prefix/bin/$name
   test -x "$tool_path" || die "$tool_id exposes $name but $tool_path is missing or not executable"
-  test ! -e "$destination/$name" || die "refusing to install $name into $destination: destination already exists (collision with another tool?)"
+  path_is_absent "$destination/$name" || die "refusing to install $name into $destination: destination already exists (collision with a base-image command or another tool?)"
   ln -s "$tool_path" "$destination/$name" || die "could not link $name into $destination"
   test "$name" = "$binary" && matched=1
-done
+done < <(jq -r '(.expose // [.binary])[]' <<<"$entry")
+test "$expose_count" -gt 0 || die "catalog entry exposes no binaries: $tool_id"
 test "$matched" = 1 || die "$tool_id expose list does not include its primary binary $binary"

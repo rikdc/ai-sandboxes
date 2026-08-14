@@ -128,6 +128,9 @@ test -f "$tools_context_dir/install-selected.sh" || exit 1
 test -f "$tools_context_dir/install-github-release-tar.sh" || exit 1
 test -f "$tools_context_dir/install-https-tar.sh" || exit 1
 test -f "$tools_context_dir/install-awscli-zip.sh" || exit 1
+test -f "$tools_context_dir/lib.sh" || exit 1
+grep -qFx 'COPY --chown=root:root --chmod=0755 lib.sh /usr/local/lib/ai-sandboxes/lib.sh' "$tools_context_dir/Dockerfile" || exit 1
+diff -q "$tools_context_dir/lib.sh" scripts/tools/lib.sh || exit 1
 # The trailing backslash is literal Dockerfile content, not a shell escape.
 grep -qFx "RUN install -d /usr/local/libexec \\" "$tools_context_dir/Dockerfile" || exit 1
 grep -qFx ' && /usr/local/lib/ai-sandboxes/install-selected.sh runtime /opt/session-tool-catalog.json /opt/session-tools-selection.json' "$tools_context_dir/Dockerfile" || exit 1
@@ -140,7 +143,7 @@ diff -q "$tools_context_dir/install-github-release-tar.sh" scripts/tools/install
 diff -q "$tools_context_dir/install-https-tar.sh" scripts/tools/install-https-tar.sh || exit 1
 diff -q "$tools_context_dir/install-awscli-zip.sh" scripts/tools/install-awscli-zip.sh || exit 1
 jq -e '.tools | length == 1 and .[0].id == "rtk"' "$tools_context_dir/session-tools-selection.json" >/dev/null || exit 1
-test "$(find "$tools_context_dir" -maxdepth 1 -type f | wc -l)" -eq 8 || exit 1
+test "$(find "$tools_context_dir" -maxdepth 1 -type f | wc -l)" -eq 9 || exit 1
 
 echo '{"ok":true}' >"$combined_context_dir/resolved.json" || exit 1
 profile_combined=$(jq -c '. + {tools: [{"id":"rtk","version":"v0.45.0","sha256":"80a746dd305ef944ff50ef011ae4ce3878dd5ba88dfe35d859d05498191637c3"}]}' scripts/session/fixtures/valid/apt-npm-marketplaces.json) || exit 1
@@ -168,6 +171,6 @@ if grep -qF -- '--chmod=0444 resolved.json' "$combined_context_dir/Dockerfile"; 
 fi
 tail -3 "$combined_context_dir/Dockerfile" | grep -qF 'chmod 0444 /opt/session-profile/resolved.json' || exit 1
 tail -1 "$combined_context_dir/Dockerfile" | grep -qFx 'USER node' || exit 1
-test "$(find "$combined_context_dir" -maxdepth 1 -type f | wc -l)" -eq 16 || exit 1
+test "$(find "$combined_context_dir" -maxdepth 1 -type f | wc -l)" -eq 17 || exit 1
 
 echo ok
