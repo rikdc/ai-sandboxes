@@ -12,7 +12,12 @@ die() {
 
 keyring=$(mktemp -d) || die 'could not create a scratch keyring directory'
 workdir=$(mktemp -d) || die 'could not create a scratch work directory'
-trap 'rm -rf "$keyring" "$workdir"' EXIT
+# The finished binary must land in $destination atomically: /tmp is often a
+# separate filesystem, so a file staged there would make the final move a copy
+# rather than a rename. Stage inside $destination itself instead so the last
+# `mv` is a same-filesystem atomic swap.
+staging=$(mktemp -d "$destination/.claude-install.XXXXXX") || die "could not create a staging directory inside $destination"
+trap 'rm -rf "$keyring" "$workdir" "$staging"' EXIT
 export GNUPGHOME="$keyring"
 
 curl -fsSL https://downloads.claude.ai/keys/claude-code.asc -o "$workdir/claude-code.asc" \
@@ -37,10 +42,11 @@ jq -e --arg version "$version" '.version == $version' "$workdir/manifest.json" >
 expected_checksum=$(jq -er '.platforms["linux-arm64"].checksum | select(test("^[[:xdigit:]]{64}$"))' "$workdir/manifest.json") \
   || die 'manifest.json has no valid linux-arm64 checksum'
 
-curl -fsSL "https://downloads.claude.ai/claude-code-releases/${version}/linux-arm64/claude" -o "$workdir/claude" \
+curl -fsSL "https://downloads.claude.ai/claude-code-releases/${version}/linux-arm64/claude" -o "$staging/claude" \
   || die "could not download claude binary for $version"
-echo "${expected_checksum}  $workdir/claude" | sha256sum --check --status \
+echo "${expected_checksum}  $staging/claude" | sha256sum --check --status \
   || die 'downloaded claude binary does not match manifest checksum'
-install -m 0755 "$workdir/claude" "$destination/claude" || die "could not install claude to $destination"
+chmod 0755 "$staging/claude" || die 'could not set mode on installed claude binary'
+mv -f "$staging/claude" "$destination/claude" || die "could not install claude to $destination"
 test "$("$destination/claude" --version | awk '{print $1}')" = "$version" \
   || die "installed claude --version does not match requested $version"
