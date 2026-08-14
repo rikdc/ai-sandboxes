@@ -10,6 +10,21 @@ die() {
   exit 1
 }
 
+# Fail with a clear message before mktemp does, including for a stray file or a
+# literally-empty (but set) third argument that the ${3:?} expansion cannot
+# catch. These checks also guarantee the prune and the staging dir below can
+# only ever touch a real directory.
+[[ -d $destination ]] || die "destination $destination is not a directory"
+[[ -w $destination ]] || die "destination $destination is not writable"
+
+# A crash (SIGKILL, power loss) between mktemp and the EXIT trap leaves a hidden
+# staging dir behind; the randomized name means repeats accumulate. Prune stale
+# leftovers from earlier interrupted runs so this run starts clean.
+find "$destination" -maxdepth 1 -name '.claude-install.*' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null
+
+keyring=""
+workdir=""
+staging=""
 keyring=$(mktemp -d) || die 'could not create a scratch keyring directory'
 workdir=$(mktemp -d) || die 'could not create a scratch work directory'
 # The finished binary must land in $destination atomically: /tmp is often a
@@ -44,6 +59,8 @@ expected_checksum=$(jq -er '.platforms["linux-arm64"].checksum | select(test("^[
 
 curl -fsSL "https://downloads.claude.ai/claude-code-releases/${version}/linux-arm64/claude" -o "$staging/claude" \
   || die "could not download claude binary for $version"
+# sha256sum --check requires exactly two spaces between the digest and the path;
+# a single space silently skips verification.
 echo "${expected_checksum}  $staging/claude" | sha256sum --check --status \
   || die 'downloaded claude binary does not match manifest checksum'
 chmod 0755 "$staging/claude" || die 'could not set mode on installed claude binary'
