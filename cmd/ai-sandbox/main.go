@@ -219,6 +219,11 @@ func currentEnv() execEnv {
 // callers should read checkout from here rather than re-running findCheckout,
 // so the workspace guard and the versions.env reader can never disagree on
 // which checkout is authoritative.
+//
+// When several anchors resolve, the binary's own checkout wins over the
+// current directory. That is deliberate: the guard protects the checkout that
+// provides the code of the binary actually running, and matches the anchor
+// order findCheckout documents and doctorCommand/currentEnv already use.
 func (e execEnv) resolvedCheckout() string {
 	if e.checkout != "" {
 		return e.checkout

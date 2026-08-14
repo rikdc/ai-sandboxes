@@ -361,4 +361,42 @@ func TestResolvedCheckout(t *testing.T) {
 			t.Errorf("resolvedCheckout() = %q, want checkout %q", got, canonical)
 		}
 	})
+
+	t.Run("prefers the exe-resolved checkout over a different cwd checkout", func(t *testing.T) {
+		// Regression test for the guard's authority: when the binary lives in
+		// checkout A and cwd sits inside a different checkout B, the guard must
+		// protect A (the checkout providing the running binary's code), not B.
+		exeCheckout := t.TempDir()
+		makeCheckout(t, exeCheckout)
+		binDir := filepath.Join(exeCheckout, "bin")
+		os.MkdirAll(binDir, 0o755)
+		exe := filepath.Join(binDir, "ai-sandbox")
+		os.WriteFile(exe, []byte("x"), 0o755)
+
+		cwdCheckout := t.TempDir()
+		makeCheckout(t, cwdCheckout)
+		project := filepath.Join(cwdCheckout, "project")
+		os.MkdirAll(project, 0o755)
+
+		canonical := func(p string) string {
+			if resolved, err := filepath.EvalSymlinks(p); err == nil {
+				return resolved
+			}
+			return p
+		}
+		exeCanonical := canonical(exeCheckout)
+		cwdCanonical := canonical(cwdCheckout)
+
+		e := execEnv{cwd: project, exe: exe}
+		if got := e.resolvedCheckout(); got != exeCanonical {
+			t.Errorf("resolvedCheckout() = %q, want the exe-resolved checkout %q", got, exeCanonical)
+		}
+		roots := e.protectedRoots(e.resolvedCheckout())
+		if !containsArg(roots, exeCanonical) {
+			t.Errorf("protected roots %v missing exe-resolved checkout %q", roots, exeCanonical)
+		}
+		if containsArg(roots, cwdCanonical) {
+			t.Errorf("protected roots %v should not protect the cwd checkout %q", roots, cwdCanonical)
+		}
+	})
 }
