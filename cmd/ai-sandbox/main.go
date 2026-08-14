@@ -177,6 +177,7 @@ func usageCommand(name string, w io.Writer) {
 type execEnv struct {
 	cwd      string
 	home     string
+	exe      string
 	checkout string
 	getenv   func(string) string
 }
@@ -191,9 +192,22 @@ func currentEnv() execEnv {
 	return execEnv{
 		cwd:      cwd,
 		home:     home,
+		exe:      exe,
 		checkout: findCheckout(exe, cwd),
 		getenv:   os.Getenv,
 	}
+}
+
+// resolvedCheckout returns the checkout already computed for this env, or
+// falls back to re-deriving it so a hand-built execEnv still resolves. All
+// callers should read checkout from here rather than re-running findCheckout,
+// so the workspace guard and the versions.env reader can never disagree on
+// which checkout is authoritative.
+func (e execEnv) resolvedCheckout() string {
+	if e.checkout != "" {
+		return e.checkout
+	}
+	return findCheckout(e.exe, e.cwd)
 }
 
 func (e execEnv) homeResolved() (string, error) {
@@ -223,12 +237,20 @@ func (e execEnv) protectedRoots(checkout string) []string {
 	}
 	// Also protect the directory the running binary itself lives in when it
 	// resolves outside the checkout. An attacker who replaced the executable
-	// there would run as host on the next invocation.
-	if exe, err := os.Executable(); err == nil {
+	// there would run as host on the next invocation. Guard both the resolved
+	// install directory and, when they differ, the symlink source so a
+	// PATH-convenience link like ~/.local/bin/ai-sandbox cannot be replaced.
+	exe := e.exe
+	if exe == "" {
+		exe, _ = os.Executable()
+	}
+	if exe != "" {
+		exeDir := filepath.Dir(exe)
+		candidates = append(candidates, exeDir)
 		if resolved, rerr := filepath.EvalSymlinks(exe); rerr == nil {
-			candidates = append(candidates, filepath.Dir(resolved))
-		} else {
-			candidates = append(candidates, filepath.Dir(exe))
+			if dir := filepath.Dir(resolved); dir != exeDir {
+				candidates = append(candidates, dir)
+			}
 		}
 	}
 	for _, p := range candidates {
@@ -273,11 +295,7 @@ func resolvePlan(opts runOptions, e execEnv, stderr io.Writer, client msbClient)
 		fmt.Fprintf(stderr, "%s: %s\n", opts.agent, err)
 		return nil, 2
 	}
-	root := findCheckout("", e.cwd)
-	if root == "" {
-		exe, _ := os.Executable()
-		root = findCheckout(exe, e.cwd)
-	}
+	root := e.resolvedCheckout()
 	if err := plan.RefuseOverlap(workspace, e.protectedRoots(root)); err != nil {
 		fmt.Fprintln(stderr, err)
 		return nil, 1
@@ -285,12 +303,7 @@ func resolvePlan(opts runOptions, e execEnv, stderr io.Writer, client msbClient)
 
 	rootDiskVersions := ""
 	if agentCfg.RootDiskFromVersions {
-		root := findCheckout("", e.cwd)
-		if root == "" {
-			if exe, err := os.Executable(); err == nil {
-				root = findCheckout(exe, e.cwd)
-			}
-		}
+		root := e.resolvedCheckout()
 		if root != "" {
 			if v, verr := config.LoadVersions(filepath.Join(root, "versions.env")); verr == nil {
 				rootDiskVersions = v.WorkspaceQuota
