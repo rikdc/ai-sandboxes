@@ -170,6 +170,34 @@ func TestResolveCodexPlan(t *testing.T) {
 	}
 }
 
+func TestResolveSessionPlan(t *testing.T) {
+	shared, err := ParseSharedStateRequest("demo-profile", "2G")
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := resolveInput("claude", shared)
+	in.ImageOverride = "ai-sandboxes-claude-session:sha-deadbeef"
+	p, err := Resolve(mustConfig(t, "claude"), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Image != "ai-sandboxes-claude-session:sha-deadbeef" {
+		t.Errorf("session image = %q", p.Image)
+	}
+	if p.Security != "restricted" {
+		t.Errorf("session security = %q, want restricted", p.Security)
+	}
+	if p.SharedState == nil || p.SharedState.Mount != "agent-state-demo-profile-v1:/var/lib/agent-state:kind=dir,quota=2G" {
+		t.Errorf("session shared state = %+v", p.SharedState)
+	}
+	if p.WorkspaceGuest != "/workspace/my-project-e85645dcb849" {
+		t.Errorf("session guest workspace = %q", p.WorkspaceGuest)
+	}
+	if p.HomeMount != "claude-home-hardened:/home/node:kind=dir,quota=4G" {
+		t.Errorf("session home mount = %q", p.HomeMount)
+	}
+}
+
 func TestResolveSharedState(t *testing.T) {
 	shared, err := SharedStateFromLabels(map[string]string{
 		"io.ai-sandboxes.shared-state.id":    "demo-profile",

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/rikdc/ai-sandboxes/internal/doctor"
 	"github.com/rikdc/ai-sandboxes/internal/plan"
 	"github.com/rikdc/ai-sandboxes/internal/runtime/microsandbox"
+	"github.com/rikdc/ai-sandboxes/internal/session"
 )
 
 const version = "0.1.0"
@@ -84,8 +86,6 @@ type runOptions struct {
 	help      bool
 }
 
-var errProfileNotImplemented = errors.New("--profile is not yet implemented in this version (planned for a later milestone)")
-
 func parseAgentArgs(args []string) (runOptions, error) {
 	opts := runOptions{}
 	if len(args) == 0 {
@@ -97,8 +97,20 @@ func parseAgentArgs(args []string) (runOptions, error) {
 	}
 	opts.agent = args[0]
 	args = args[1:]
+	profileSeen := false
 	for len(args) > 0 {
 		a := args[0]
+		if profileSeen {
+			// The claude-session contract is "profile first, then the agent's
+			// own arguments verbatim": everything after --profile VALUE belongs
+			// to the agent, presented after an explicit -- when present.
+			if a == "--" {
+				opts.agentArgs = args[1:]
+				return opts, nil
+			}
+			opts.agentArgs = args
+			return opts, nil
+		}
 		switch {
 		case a == "--":
 			opts.agentArgs = args[1:]
@@ -111,9 +123,11 @@ func parseAgentArgs(args []string) (runOptions, error) {
 				return opts, fmt.Errorf("%s requires a value", a)
 			}
 			opts.profile = args[1]
+			profileSeen = true
 			args = args[2:]
 		case strings.HasPrefix(a, "--profile="):
 			opts.profile = strings.TrimPrefix(a, "--profile=")
+			profileSeen = true
 			args = args[1:]
 		case a == "--verbose" || a == "-v":
 			opts.verbose = true
@@ -142,10 +156,6 @@ func runCommand(args []string, verbose bool, stdout, stderr io.Writer) int {
 	if verbose {
 		opts.verbose = true
 	}
-	if opts.profile != "" {
-		fmt.Fprintf(stderr, "ai-sandbox: %v\n", errProfileNotImplemented)
-		return 2
-	}
 	msbPath, err := microsandbox.LookPathMsb()
 	if err != nil {
 		fmt.Fprintf(stderr, "ai-sandbox: %s\n", err)
@@ -171,10 +181,6 @@ func planCommand(args []string, verbose bool, stdout, stderr io.Writer) int {
 	if verbose {
 		opts.verbose = true
 	}
-	if opts.profile != "" {
-		fmt.Fprintf(stderr, "ai-sandbox: %v\n", errProfileNotImplemented)
-		return 2
-	}
 	if _, err := microsandbox.LookPathMsb(); err != nil {
 		fmt.Fprintf(stderr, "ai-sandbox: %s\n", err)
 		return 127
@@ -196,6 +202,14 @@ type execEnv struct {
 	exe      string
 	checkout string
 	getenv   func(string) string
+	// run executes a host program and returns its combined output. It backs
+	// the session-image orchestration (scripts/session/resolve-image.sh,
+	// load-image.sh, docker, msb) and is injectable so tests can fake it.
+	run func(name string, args ...string) ([]byte, error)
+}
+
+func execCapture(name string, args ...string) ([]byte, error) {
+	return exec.Command(name, args...).CombinedOutput()
 }
 
 func currentEnv() execEnv {
@@ -211,6 +225,7 @@ func currentEnv() execEnv {
 		exe:      exe,
 		checkout: findCheckout(exe, cwd),
 		getenv:   os.Getenv,
+		run:      execCapture,
 	}
 }
 
@@ -295,10 +310,14 @@ type msbClient interface {
 	InitSharedState(image string, st *plan.SharedState) error
 }
 
-func resolvePlan(opts runOptions, e execEnv, stderr io.Writer, client msbClient) (*plan.RuntimePlan, int) {
+func resolvePlan(opts runOptions, e execEnv, stderr io.Writer, client msbClient, forRun bool) (*plan.RuntimePlan, int) {
 	agentCfg, err := config.AgentConfig(opts.agent)
 	if err != nil {
 		fmt.Fprintf(stderr, "ai-sandbox: %s\n", err)
+		return nil, 2
+	}
+	if opts.profile != "" && opts.agent != "claude" {
+		fmt.Fprintf(stderr, "ai-sandbox: --profile is only supported for claude (claude-session); got agent %q\n", opts.agent)
 		return nil, 2
 	}
 
@@ -324,6 +343,32 @@ func resolvePlan(opts runOptions, e execEnv, stderr io.Writer, client msbClient)
 		return nil, 1
 	}
 
+	// A session run replaces the agent's baked base image with a profile-
+	// derived image. The image build (resolve-image.sh) and transport
+	// (load-image.sh) stay in Bash; everything downstream is the same plan
+	// resolution the base agents use, so network, security, mounts, and argv
+	// cannot drift between Claude and claude-session.
+	image := agentCfg.Image
+	imageOverride := ""
+	var shared *plan.SharedState
+	if opts.profile != "" {
+		resolver := session.Resolver{Checkout: root, Home: e.home, Run: e.run}
+		desc, rerr := resolver.Resolve(opts.profile, forRun)
+		if rerr != nil {
+			fmt.Fprintf(stderr, "%s: %s\n", opts.agent, rerr)
+			return nil, 1
+		}
+		image = desc.Image
+		imageOverride = desc.Image
+		if desc.SharedState != nil {
+			shared, err = plan.ParseSharedStateRequest(desc.SharedState.ID, desc.SharedState.Quota)
+			if err != nil {
+				fmt.Fprintf(stderr, "%s: %s\n", opts.agent, err)
+				return nil, 2
+			}
+		}
+	}
+
 	rootDiskVersions := ""
 	if agentCfg.RootDiskFromVersions {
 		root := e.resolvedCheckout()
@@ -339,25 +384,32 @@ func resolvePlan(opts runOptions, e execEnv, stderr io.Writer, client msbClient)
 		}
 	}
 
-	present, err := client.ImagePresent(agentCfg.Image)
-	if err != nil {
-		fmt.Fprintf(stderr, "ai-sandbox: %s\n", err)
-		return nil, 1
-	}
-	if !present {
-		fmt.Fprintf(stderr, "%s: image %s is not loaded in Microsandbox; run ./scripts/load-msb first\n", opts.agent, agentCfg.Image)
-		return nil, 1
+	// Base agents require their image to be loaded; session images were loaded
+	// and digest-verified by the resolver moments ago, and `plan` must not
+	// require a load it deliberately skipped. Gate the default image path only.
+	if imageOverride == "" {
+		present, err := client.ImagePresent(image)
+		if err != nil {
+			fmt.Fprintf(stderr, "ai-sandbox: %s\n", err)
+			return nil, 1
+		}
+		if !present {
+			fmt.Fprintf(stderr, "%s: image %s is not loaded in Microsandbox; run ./scripts/load-msb first\n", opts.agent, image)
+			return nil, 1
+		}
 	}
 
-	meta, err := client.ImageMetadata(agentCfg.Image)
-	if err != nil {
-		fmt.Fprintf(stderr, "ai-sandbox: %s\n", err)
-		return nil, 1
-	}
-	shared, err := plan.SharedStateFromLabels(meta.Labels)
-	if err != nil {
-		fmt.Fprintf(stderr, "%s: %s\n", opts.agent, err)
-		return nil, 2
+	if imageOverride == "" {
+		meta, err := client.ImageMetadata(image)
+		if err != nil {
+			fmt.Fprintf(stderr, "ai-sandbox: %s\n", err)
+			return nil, 1
+		}
+		shared, err = plan.SharedStateFromLabels(meta.Labels)
+		if err != nil {
+			fmt.Fprintf(stderr, "%s: %s\n", opts.agent, err)
+			return nil, 2
+		}
 	}
 
 	// The egress allowlist lives at the literal $HOME: the installer, doctor,
@@ -377,6 +429,7 @@ func resolvePlan(opts runOptions, e execEnv, stderr io.Writer, client msbClient)
 		Workspace:            workspace,
 		SharedState:          shared,
 		Network:              network,
+		ImageOverride:        imageOverride,
 		RootDiskFromVersions: rootDiskVersions,
 	})
 	if err != nil {
@@ -404,7 +457,7 @@ func (e execEnv) resolveNetwork(cfg config.Agent, home string) (plan.Network, er
 }
 
 func executeRun(opts runOptions, e execEnv, stderr io.Writer, client msbClient, launch func([]string) error) int {
-	p, code := resolvePlan(opts, e, stderr, client)
+	p, code := resolvePlan(opts, e, stderr, client, true)
 	if code != 0 {
 		return code
 	}
@@ -453,7 +506,7 @@ func executeRun(opts runOptions, e execEnv, stderr io.Writer, client msbClient, 
 }
 
 func executePlan(opts runOptions, e execEnv, stdout, stderr io.Writer, client msbClient) int {
-	p, code := resolvePlan(opts, e, stderr, client)
+	p, code := resolvePlan(opts, e, stderr, client, false)
 	if code != 0 {
 		return code
 	}

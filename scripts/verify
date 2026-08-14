@@ -25,8 +25,6 @@ bash scripts/session/tests/test-session-marketplace.sh || exit 1
 bash scripts/session/tests/test-session-apt-npm.sh || exit 1
 bash scripts/session/tests/test-session-tools.sh || exit 1
 bash scripts/session/tests/test-load-image.sh || exit 1
-bash scripts/session/tests/test-claude-session-args.sh || exit 1
-bash scripts/session/tests/test-run-claude-argv-slicing.sh || exit 1
 bash scripts/session/tests/test-install-fish-functions.sh || exit 1
 bash scripts/session/tests/test-claude-entrypoint-seed-merge.sh || exit 1
 bash scripts/tests/test-publish-release-marker.sh || exit 1
@@ -132,8 +130,4 @@ if command -v msb >/dev/null 2>&1; then
 
   docker image rm "$session_tag_first" >/dev/null 2>&1 || true
   msb image remove "$session_tag_first" >/dev/null 2>&1 || true
-
-  if command -v fish >/dev/null 2>&1; then
-    bash scripts/session/tests/test-claude-session-shared-state.sh || exit 1
-  fi
 fi

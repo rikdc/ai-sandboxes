@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -80,6 +81,8 @@ func TestParseAgentArgs(t *testing.T) {
 		{name: "implicit positional", args: []string{"claude", "somearg"}, agent: "claude", agentArgs: []string{"somearg"}},
 		{name: "profile", args: []string{"claude", "--profile", "work", "--", "-p", "x"}, agent: "claude", profile: "work", agentArgs: []string{"-p", "x"}},
 		{name: "profile equals", args: []string{"claude", "--profile=work"}, agent: "claude", profile: "work"},
+		{name: "profile then agent args", args: []string{"claude", "--profile", "work", "-p", "hi", "--model", "sonnet"}, agent: "claude", profile: "work", agentArgs: []string{"-p", "hi", "--model", "sonnet"}},
+		{name: "profile empty agent args", args: []string{"claude", "--profile=work"}, agent: "claude", profile: "work", agentArgs: nil},
 		{name: "empty agent", args: []string{}, wantErr: true},
 		{name: "unknown flag", args: []string{"claude", "--bogus", "x"}, wantErr: true},
 		{name: "dashed arg needs separator", args: []string{"claude", "--version"}, wantErr: true},
@@ -456,4 +459,109 @@ func TestResolvedCheckout(t *testing.T) {
 			t.Errorf("protected roots %v should not protect the cwd checkout %q", roots, cwdCanonical)
 		}
 	})
+}
+
+// sessionTestEnv builds an execEnv whose session resolver is faked: the home
+// provides Claude's egress allowlist and a demo profile, the checkout provides
+// the expected scripts (never executed), and run returns canned outputs for
+// resolve-image.sh, load-image.sh, docker, and msb.
+func sessionTestEnv(t *testing.T) (execEnv, string) {
+	t.Helper()
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, ".config", "microvms"), 0o755)
+	os.WriteFile(filepath.Join(home, ".config", "microvms", "claude-egress"),
+		[]byte("api.anthropic.com\n"), 0o600)
+	profiles := filepath.Join(home, ".config", "ai-sandboxes", "profiles")
+	os.MkdirAll(profiles, 0o755)
+	os.WriteFile(filepath.Join(profiles, "demo.json"), []byte(`{"schema_version":1}`), 0o644)
+
+	checkout := t.TempDir()
+	for _, p := range []string{"scripts/session/resolve-image.sh", "scripts/session/load-image.sh"} {
+		full := filepath.Join(checkout, p)
+		os.MkdirAll(filepath.Dir(full), 0o755)
+		os.WriteFile(full, []byte("#!/bin/sh\n"), 0o755)
+	}
+
+	e := execEnv{cwd: t.TempDir(), home: home, getenv: func(string) string { return "" }}
+	e.run = func(name string, _ ...string) ([]byte, error) {
+		switch {
+		case strings.Contains(name, "resolve-image.sh"):
+			return []byte(`{"image":"ai-sandboxes-claude-session:sha-abc","shared_state":{"id":"demo","quota":"2G"}}`), nil
+		case strings.Contains(name, "load-image.sh"):
+			return nil, nil
+		case name == "docker":
+			return []byte("sha256:abc"), nil
+		case name == "msb":
+			return []byte(`{"config":{"digest":"sha256:abc"}}`), nil
+		default:
+			return nil, fmt.Errorf("unexpected command %q", name)
+		}
+	}
+	e.checkout = checkout
+	return e, checkout
+}
+
+func TestExecuteRunClaudeSession(t *testing.T) {
+	e, _ := sessionTestEnv(t)
+	client := newFakeMsb()
+	var launched []string
+	code := executeRun(runOptions{agent: "claude", profile: "demo", agentArgs: []string{"--model", "sonnet"}},
+		e, &bytes.Buffer{}, client, func(argv []string) error { launched = argv; return nil })
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if !containsArg(launched, "ai-sandboxes-claude-session:sha-abc") {
+		t.Errorf("argv missing session image: %v", launched)
+	}
+	if !containsArg(launched, "--security", "restricted") {
+		t.Errorf("session argv missing restricted profile: %v", launched)
+	}
+	if !containsArg(launched, "agent-state-demo-v1:/var/lib/agent-state:kind=dir,quota=2G") {
+		t.Errorf("session argv missing shared-state mount: %v", launched)
+	}
+	if !reflect.DeepEqual(launched[len(launched)-3:], []string{"claude", "--model", "sonnet"}) {
+		t.Errorf("trailing argv = %v", launched[len(launched)-3:])
+	}
+	if !containsArg(client.initialized, "agent-state-demo-v1") {
+		t.Errorf("shared state not initialized: %v", client.initialized)
+	}
+}
+
+func TestExecutePlanClaudeSessionSkipsLoad(t *testing.T) {
+	e, _ := sessionTestEnv(t)
+	var out, errb bytes.Buffer
+	code := executePlan(runOptions{agent: "claude", profile: "demo"}, e, &out, &errb, newFakeMsb())
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (plan must not require a loaded image): %s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "ai-sandboxes-claude-session:sha-abc") {
+		t.Errorf("plan output missing session image:\n%s", out.String())
+	}
+}
+
+func TestExecuteRunClaudeSessionProfileNotForCodex(t *testing.T) {
+	e, _ := sessionTestEnv(t)
+	var errb bytes.Buffer
+	code := executeRun(runOptions{agent: "codex", profile: "demo"}, e, &errb, newFakeMsb(),
+		func([]string) error { return nil })
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(errb.String(), "only supported for claude") {
+		t.Errorf("unexpected error:\n%s", errb.String())
+	}
+}
+
+func TestExecuteRunClaudeSessionProfileNotFound(t *testing.T) {
+	e, _ := sessionTestEnv(t)
+	e.checkout = t.TempDir()
+	var errb bytes.Buffer
+	code := executeRun(runOptions{agent: "claude", profile: "nope"}, e, &errb, newFakeMsb(),
+		func([]string) error { return nil })
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(errb.String(), "profile not found") {
+		t.Errorf("unexpected error:\n%s", errb.String())
+	}
 }

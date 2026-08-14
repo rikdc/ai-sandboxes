@@ -37,6 +37,16 @@ env HOME="$fake_home" AI_SANDBOX_INSTALL_DIR="$ai_sandbox_stub_dir" \
 grep -Fq "$ai_sandbox_stub_dir/ai-sandbox" "$fake_home/.config/fish/functions/claude.fish" \
   || { echo 'FAIL: claude wrapper does not bake absolute ai-sandbox path' >&2; exit 1; }
 
+# claude-session is a claude invocation driven by the profile flag: ai-sandbox
+# must receive `run claude --profile ...` intact, so no `--` may be inserted
+# between `run claude` and the user's arguments (it would swallow --profile).
+grep -Eq 'run claude[[:space:]]' "$fake_home/.config/fish/functions/claude-session.fish" \
+  || { echo 'FAIL: claude-session wrapper missing run-claude passthrough' >&2; exit 1; }
+if grep -Eq 'run claude[[:space:]]+--' "$fake_home/.config/fish/functions/claude-session.fish"; then
+  echo 'FAIL: claude-session wrapper must not insert -- (it would swallow --profile)' >&2
+  exit 1
+fi
+
 fish_functions_dir="$fake_home/.config/fish/functions"
 trusted_dir="$fake_home/.config/ai-sandboxes/trusted"
 
@@ -80,6 +90,17 @@ assert_refuses fish-functions-dir "$fish_functions_dir/claude.fish" "$fish_funct
 assert_refuses fish-config-dir "$fish_functions_dir/claude.fish" "$fake_home/.config/fish" || exit 1
 assert_refuses trusted-dir "$fish_functions_dir/claude.fish" "$trusted_dir" || exit 1
 assert_allows unrelated "$fish_functions_dir/claude.fish" "$fake_home/unrelated-project" || exit 1
+
+# The claude-session wrapper must forward --profile and the claude arguments to
+# ai-sandbox unchanged (no `--` separator, so the profile flag reaches the
+# control plane rather than being handed to claude).
+: >"$ai_sandbox_stub_log"
+output=$(cd "$fake_home/unrelated-project" && fish -c "source '$fish_functions_dir/claude-session.fish'; claude-session --profile work -p hi" 2>&1) || true
+printf '%s\n' "$output" | grep -q 'refusing to run' \
+  && { echo 'FAIL: claude-session unexpectedly refused for unrelated workspace' >&2; exit 1; }
+grep -Fq 'invoked: run claude --profile work -p hi' "$ai_sandbox_stub_log" \
+  || { echo 'FAIL: claude-session did not pass --profile through to ai-sandbox' >&2;
+       echo 'stub log:' >&2; cat "$ai_sandbox_stub_log" >&2; exit 1; }
 
 # Symlinked dotfiles layout: ~/.config itself is a symlink to elsewhere (GNU
 # stow, chezmoi, and similar tools all do this). The protected root baked
