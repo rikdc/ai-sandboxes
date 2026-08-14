@@ -63,4 +63,11 @@ fi
 docker run --rm --user node "$session_tag" sh -c 'touch /opt/claude-plugin-cache/data/.runtime-write-test' \
   || { echo 'Session image runtime data directory is not writable' >&2; exit 1; }
 
+# Claude also writes into /opt/claude-plugin-cache/marketplaces at runtime when
+# initialising the plugin cache in a fresh home — a missing carveout there
+# produces `EACCES: permission denied, mkdir '/opt/claude-plugin-cache/marketplaces'`
+# during `claude` startup even though `claude plugin list` (read-only) succeeds.
+docker run --rm --user node "$session_tag" sh -c 'touch /opt/claude-plugin-cache/marketplaces/.runtime-write-test' \
+  || { echo 'Session image runtime marketplaces directory is not writable' >&2; exit 1; }
+
 echo ok
