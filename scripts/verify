@@ -14,6 +14,11 @@ trap cleanup EXIT
 
 for file in scripts/build scripts/update scripts/lint-dockerfiles scripts/load-msb scripts/install-fish-functions .github/workflows/release-marker .github/workflows/update-agent-versions .github/workflows/publish-release-marker scripts/verify images/claude/entrypoint.sh images/codex/entrypoint.sh scripts/claude/*.sh scripts/marketplaces/*.sh scripts/tools/*.sh scripts/session/*.sh scripts/session/tests/*.sh scripts/tests/*.sh scripts/lib/*.sh; do bash -n "$file" || exit 1; done
 if command -v fish >/dev/null 2>&1; then find shell/fish -type f -name '*.fish' -exec fish --no-execute {} + || exit 1; fi
+if command -v go >/dev/null 2>&1; then
+  go build ./... || exit 1
+  go vet ./... || exit 1
+  go test ./... || exit 1
+fi
 bash scripts/session/tests/test-validate-profile.sh || exit 1
 bash scripts/session/tests/test-render-dockerfile.sh || exit 1
 bash scripts/session/tests/test-resolve-image.sh || exit 1
@@ -28,6 +33,12 @@ bash scripts/session/tests/test-claude-entrypoint-seed-merge.sh || exit 1
 bash scripts/tests/test-publish-release-marker.sh || exit 1
 bash scripts/tests/test-update.sh || exit 1
 if git grep -nEi '(api[_-]?key|access[_-]?token|secret)[[:space:]]*=[[:space:]]*[^[:space:]]+' -- ':!README.md' ':!scripts/verify'; then
+  exit 1
+fi
+# Absolute macOS home paths bake the author's username and directory layout
+# into a tracked file (shell/fish/claude.fish leaked /Users/rdchome/... this
+# way). Reject them so a machine-specific path can never be committed again.
+if git grep -nE '/Users/[^/]+/' -- ':!README.md' ':!scripts/verify'; then
   exit 1
 fi
 

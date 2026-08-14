@@ -4,3 +4,8 @@
 .env
 .worktrees/
 .superpowers/
+
+# Go control plane build artifacts
+/ai-sandbox
+/coverage.out
+

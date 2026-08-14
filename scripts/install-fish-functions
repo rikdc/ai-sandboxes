@@ -33,6 +33,28 @@ fish_quote() {
   printf "'%s'" "$s"
 }
 
+# claude and codex are now single-command pass-throughs: after the guard
+# check, everything hands off to `ai-sandbox run`, which resolves the plan,
+# validates the workspace, and execs the Microsandbox. Anything fish-specific
+# (egress args, shared-state handoff, workspace hashing) now lives in Go, so
+# the wrapper stays minimal and never sources checkout code.
+write_pass_through_wrapper() {
+  local agent=$1 out_file=$2
+  local q_guard q_repo_root q_fish_functions_dir q_trusted_dir
+  q_guard=$(fish_quote "$trusted_dir/guard.fish") || return 1
+  q_repo_root=$(fish_quote "$repo_root") || return 1
+  q_fish_functions_dir=$(fish_quote "$fish_functions_dir") || return 1
+  q_trusted_dir=$(fish_quote "$trusted_dir") || return 1
+
+  cat > "$out_file" <<EOF
+function $agent --description '$agent: ai-sandboxes hardened Microsandbox launcher'
+    source $q_guard
+    __ai_sandbox_trusted_refuse_overlap $agent $q_repo_root $q_fish_functions_dir $q_trusted_dir; or return \$status
+    command ai-sandbox run $agent -- \$argv
+end
+EOF
+}
+
 write_wrapper() {
   local agent=$1 impl_function=$2 impl_file=$3 out_file=$4
   local q_guard q_repo_root q_fish_functions_dir q_trusted_dir q_lib q_impl_file
@@ -59,9 +81,9 @@ end
 EOF
 }
 
-write_wrapper claude __ai_sandbox_impl_claude "$repo_root/shell/fish/claude.fish" "$fish_functions_dir/claude.fish" \
+write_pass_through_wrapper claude "$fish_functions_dir/claude.fish" \
   || die 'could not write the claude wrapper'
-write_wrapper codex __ai_sandbox_impl_codex "$repo_root/shell/fish/codex.fish" "$fish_functions_dir/codex.fish" \
+write_pass_through_wrapper codex "$fish_functions_dir/codex.fish" \
   || die 'could not write the codex wrapper'
 write_wrapper claude-session __ai_sandbox_impl_claude_session "$repo_root/shell/fish/claude-session.fish" "$fish_functions_dir/claude-session.fish" \
   || die 'could not write the claude-session wrapper'
