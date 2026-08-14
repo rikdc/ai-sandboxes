@@ -7,6 +7,7 @@ package microsandbox
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -103,6 +104,37 @@ func (c *Client) ImageMetadata(tag string) (*ImageMetadata, error) {
 		return nil, fmt.Errorf("msb image inspect %s: %w", tag, err)
 	}
 	return ParseImageMetadata(out)
+}
+
+// ErrDigestMismatch is returned by MatchDigests when two digests do not
+// represent the same image.
+var ErrDigestMismatch = errors.New("digest mismatch")
+
+// stripSHA256Prefix removes a case-insensitive "sha256:" prefix without
+// allocating a lowercase copy of the whole string.
+func stripSHA256Prefix(s string) string {
+	if len(s) >= 7 && strings.EqualFold(s[:7], "sha256:") {
+		return s[7:]
+	}
+	return s
+}
+
+// MatchDigests compares a Docker image digest and an msb config digest for
+// identity. It normalizes both strings: trims whitespace, strips an optional
+// sha256: prefix, and compares case-insensitively. It fails closed on empty
+// strings.
+func MatchDigests(dockerDigest, msbDigest string) error {
+	dockerDigest = strings.TrimSpace(dockerDigest)
+	msbDigest = strings.TrimSpace(msbDigest)
+	if dockerDigest == "" || msbDigest == "" {
+		return errors.New("empty digest")
+	}
+	dockerDigest = stripSHA256Prefix(dockerDigest)
+	msbDigest = stripSHA256Prefix(msbDigest)
+	if !strings.EqualFold(dockerDigest, msbDigest) {
+		return fmt.Errorf("%w: docker %q vs msb %q", ErrDigestMismatch, dockerDigest, msbDigest)
+	}
+	return nil
 }
 
 // ParseImageMetadata decodes `msb image inspect --format json` output into the

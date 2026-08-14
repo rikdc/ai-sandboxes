@@ -48,13 +48,15 @@ func fakeEnv(t *testing.T, withMsb, withEgress bool) (*Env, string) {
 				return []byte("26.1.0"), nil
 			case name == "docker" && len(args) > 0 && args[0] == "buildx":
 				return []byte("github.com/docker/buildx v0.20.0"), nil
-			case name == "docker" && len(args) > 0 && args[0] == "image":
-				return []byte(`[{}]`), nil
-			case name == "msb" && len(args) > 0 && args[0] == "image" && args[1] == "list":
+		case name == "docker" && len(args) > 2 && args[0] == "image" && args[1] == "inspect":
+			return []byte("sha256:abc"), nil
+		case name == "docker" && len(args) > 0 && args[0] == "image":
+			return []byte(`[{}]`), nil
+			case name == "msb" && len(args) > 1 && args[0] == "image" && args[1] == "list":
 				return []byte("ai-sandboxes-claude:local\nai-sandboxes-codex:local\n"), nil
-			case name == "msb" && len(args) > 0 && args[0] == "volume" && args[1] == "list":
+			case name == "msb" && len(args) > 1 && args[0] == "volume" && args[1] == "list":
 				return []byte("claude-home-hardened\ncodex-home\n"), nil
-			case name == "msb" && len(args) > 0 && args[0] == "image" && args[1] == "inspect":
+			case name == "msb" && len(args) > 1 && args[0] == "image" && args[1] == "inspect":
 				return []byte(imageInspect), nil
 			}
 			return nil, errors.New("unexpected command " + name + " " + strings.Join(args, " "))
@@ -94,6 +96,18 @@ func TestDoctorHealthy(t *testing.T) {
 	}
 	if s := checkStatus(checks, "launcher claude"); s != statusOK {
 		t.Errorf("launcher claude = %s", s)
+	}
+	if s := checkStatus(checks, "image identity ai-sandboxes-claude:local"); s != statusOK {
+		t.Errorf("image identity claude = %s", s)
+	}
+	if s := checkStatus(checks, "image identity ai-sandboxes-codex:local"); s != statusOK {
+		t.Errorf("image identity codex = %s", s)
+	}
+	if s := checkStatus(checks, "shared state ai-sandboxes-claude:local"); s != statusOK {
+		t.Errorf("shared state claude = %s", s)
+	}
+	if s := checkStatus(checks, "shared state ai-sandboxes-codex:local"); s != statusOK {
+		t.Errorf("shared state codex = %s", s)
 	}
 }
 
@@ -208,16 +222,15 @@ func TestDoctorWarnsOnStaleWrapper(t *testing.T) {
 	}
 }
 
-func TestDoctorDetectsSharedStateDrift(t *testing.T) {
+func TestDoctorDetectsImageDigestMismatch(t *testing.T) {
 	env, _ := fakeEnv(t, true, true)
-	// Image labels carry a shared state that config/runtime.json (null) does
-	// not request.
+	// Docker and msb report different digests for the same tag.
 	env.Runner.Run = func(name string, args ...string) ([]byte, error) {
 		if name == "msb" && len(args) > 0 && args[0] == "image" && args[1] == "inspect" {
-			return []byte(`{"config":{"digest":"sha256:abc","Labels":{"io.ai-sandboxes.shared-state.id":"demo","io.ai-sandboxes.shared-state.quota":"2G"}}}`), nil
+			return []byte(`{"config":{"digest":"sha256:abc"}}`), nil
 		}
-		if name == "docker" && len(args) > 0 && args[0] == "image" {
-			return []byte(`[{}]`), nil
+		if name == "docker" && len(args) > 0 && args[0] == "image" && args[1] == "inspect" {
+			return []byte("sha256:different"), nil
 		}
 		if name == "msb" && len(args) > 0 && args[0] == "image" && args[1] == "list" {
 			return []byte("ai-sandboxes-claude:local\nai-sandboxes-codex:local\n"), nil
@@ -228,8 +241,8 @@ func TestDoctorDetectsSharedStateDrift(t *testing.T) {
 		return nil, errors.New("unexpected")
 	}
 	checks := env.Run()
-	if s := checkStatus(checks, "shared state ai-sandboxes-claude:local"); s != statusFail {
-		t.Errorf("shared state claude = %s, want fail", s)
+	if s := checkStatus(checks, "image identity ai-sandboxes-claude:local"); s != statusFail {
+		t.Errorf("image identity claude = %s, want fail", s)
 	}
 }
 

@@ -127,6 +127,33 @@ exit 0
 	}
 }
 
+func TestMatchDigests(t *testing.T) {
+	cases := []struct {
+		docker  string
+		msb     string
+		wantErr bool
+	}{
+		{"sha256:abc", "sha256:abc", false},
+		{"sha256:abc", "abc", false},
+		{"ABC", "sha256:abc", false},
+		{"sha256:abc", "sha256:different", true},
+		{"", "sha256:abc", true},
+		{"sha256:abc", "", true},
+	}
+	for _, c := range cases {
+		err := MatchDigests(c.docker, c.msb)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("MatchDigests(%q, %q) should error", c.docker, c.msb)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("MatchDigests(%q, %q) unexpected error: %v", c.docker, c.msb, err)
+		}
+	}
+}
+
 func TestInitSharedStateArgv(t *testing.T) {
 	stub := filepath.Join(t.TempDir(), "msb")
 	recordFile := filepath.Join(t.TempDir(), "record")
