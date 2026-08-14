@@ -12,7 +12,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for file in scripts/build scripts/update scripts/lint-dockerfiles scripts/load-msb scripts/install-fish-functions scripts/install-ai-sandbox .github/workflows/release-marker .github/workflows/update-agent-versions .github/workflows/publish-release-marker scripts/verify images/claude/entrypoint.sh images/codex/entrypoint.sh scripts/claude/*.sh scripts/marketplaces/*.sh scripts/tools/*.sh scripts/session/*.sh scripts/session/tests/*.sh scripts/tests/*.sh scripts/lib/*.sh; do bash -n "$file" || exit 1; done
+for file in scripts/build scripts/update scripts/lint-dockerfiles scripts/load-msb scripts/install-fish-functions scripts/install-ai-sandbox .github/workflows/release-marker .github/workflows/update-agent-versions .github/workflows/publish-release-marker scripts/verify images/claude/entrypoint.sh images/codex/entrypoint.sh scripts/claude/*.sh scripts/marketplaces/*.sh scripts/tools/*.sh scripts/tools/tests/*.sh scripts/session/*.sh scripts/session/tests/*.sh scripts/tests/*.sh scripts/lib/*.sh; do bash -n "$file" || exit 1; done
 if command -v fish >/dev/null 2>&1; then find shell/fish -type f -name '*.fish' -exec fish --no-execute {} + || exit 1; fi
 command -v go >/dev/null 2>&1 || { echo 'go is required for verify (ai-sandbox control plane); install Go 1.26+' >&2; exit 1; }
 go build ./... || exit 1
@@ -24,6 +24,7 @@ bash scripts/session/tests/test-resolve-image.sh || exit 1
 bash scripts/session/tests/test-session-marketplace.sh || exit 1
 bash scripts/session/tests/test-session-apt-npm.sh || exit 1
 bash scripts/session/tests/test-session-tools.sh || exit 1
+bash scripts/tools/tests/test-adapters.sh || exit 1
 bash scripts/session/tests/test-load-image.sh || exit 1
 bash scripts/session/tests/test-install-fish-functions.sh || exit 1
 bash scripts/session/tests/test-claude-entrypoint-seed-merge.sh || exit 1

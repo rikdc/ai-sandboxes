@@ -246,19 +246,47 @@ implemented — see Limitations.
 
 `tools` entries install through the exact chain the base image's
 `config/tools.json`/`config/runtime.json` mechanism uses:
-`scripts/tools/install-selected.sh` (phase `runtime`) and
-`scripts/tools/install-github-release-tar.sh`, both copied unmodified into
-the build context, alongside a copy of `config/tool-catalog.json`. Unlike
-npm, github-release-tar installs run no third-party lifecycle hooks and
-download only a fixed catalog-pinned URL whose sha256 is verified before
-extraction.
+`scripts/tools/install-selected.sh` (phase `runtime`) dispatches to one of
+several adapter installers — currently `install-github-release-tar.sh`,
+`install-https-tar.sh`, and `install-awscli-zip.sh` — all copied
+unmodified into the build context alongside a copy of
+`config/tool-catalog.json`. Which adapter a catalog entry uses is fixed
+by the catalog (`adapter` field), never by the profile; a profile can
+only select a catalog `id` and pin its `version`/`sha256`. Every
+download is verified against the profile-pinned sha256 before anything
+in the archive is read. `github-release-tar` and `https-tar` extract a
+known member and place it themselves; `awscli-zip` is a distinct trust
+tier — AWS CLI v2 has no movable-binary distribution, so the
+checksum-pinned archive's own `aws/install` script runs as root during
+the image build to lay out its self-contained `dist/` tree and symlinks.
+That is the entire third-party lifecycle surface across the tool
+adapters and it is confined to that one catalog entry.
 
 Installed binaries land under root-owned, non-writable paths. A tool with
-no `state_wrapper` installs to `/usr/local/bin/<binary>`. A tool with a
-`state_wrapper` (e.g. `icm`) installs its real binary to
-`/usr/local/libexec/<binary>` and a launcher symlink at
+no `state_wrapper` installs to `/usr/local/bin/<binary>` (for a plain
+archive member) or to a self-contained prefix under
+`/usr/local/libexec/ai-sandboxes-tools/<tool-id>` with the catalog's
+`expose` list symlinked into `/usr/local/bin` (for a directory member,
+e.g. the Go toolchain). The prefix is namespaced by catalog `id` (not
+by the archive's own top-level directory) so two tools whose archives
+happen to share a generic name — `bin`, `linux-arm64`, `tool` — cannot
+overwrite each other, and only the names the catalog explicitly exposes
+end up on `PATH`. The AWS CLI v2 installer lays out its own
+`/usr/local/aws-cli/v2/<version>` tree and points `/usr/local/bin/aws`
+at it directly.
+
+The Go toolchain adapter guarantees pure-Go builds only. `CGO_ENABLED=1`
+builds additionally require a C compiler, which the base image does not
+declare; anything that currently works only because `gcc` happens to be
+present through the Node base image is inherited, not promised. If CGO
+support becomes a supported baseline, the C toolchain will need its own
+declared apt entry and a corresponding CGO build test. A tool with a `state_wrapper` (e.g. `icm`) installs its real binary
+to `/usr/local/libexec/<binary>` and a launcher symlink at
 `/usr/local/bin/<binary>` that refuses to run unless
-`/var/lib/agent-state` is present and writable.
+`/var/lib/agent-state` is present and writable. Adapters whose member
+shape is a directory (`https-tar` directory members, `awscli-zip`) cannot
+be paired with a `state_wrapper`; validation rejects such catalog
+entries. See [ADR-0004](adr/0004-apt-npm-tools-trust-tiers.md).
 
 ### Claude marketplaces
 

@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "tools": [
+    { "id": "golang", "version": "1.26.6", "sha256": "d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e" }
+  ]
+}
