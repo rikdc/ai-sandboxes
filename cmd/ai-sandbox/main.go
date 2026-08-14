@@ -65,19 +65,19 @@ parsed:
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintf(w, `usage: ai-sandbox <command> [options]
-
-Commands:
-  run <agent> [-- AGENT_ARGS...]   resolve and launch an agent in Microsandbox
-  plan <agent> [-- AGENT_ARGS...]  print the resolved plan without launching
-  doctor                           validate host prerequisites without mutation
-  version                          print the version
-  help                             show this help
-
-Agents: claude, codex. Put agent arguments after `+"`--`"+`; they are
-forwarded verbatim. The installed fish wrappers invoke this binary, so most
-users never call it directly.
-`)
+	// Double-quoted string keeps the literal backticks around `--` inline;
+	// the previous raw-string + concat dance rendered fine but looked like
+	// it was leaking Go syntax to the reader.
+	fmt.Fprint(w, "usage: ai-sandbox <command> [options]\n\n"+
+		"Commands:\n"+
+		"  run <agent> [-- AGENT_ARGS...]   resolve and launch an agent in Microsandbox\n"+
+		"  plan <agent> [-- AGENT_ARGS...]  print the resolved plan without launching\n"+
+		"  doctor                           validate host prerequisites without mutation\n"+
+		"  version                          print the version\n"+
+		"  help                             show this help\n\n"+
+		"Agents: claude, codex. Put agent arguments after `--`; they are\n"+
+		"forwarded verbatim. The installed fish wrappers invoke this binary, so most\n"+
+		"users never call it directly.\n")
 }
 
 // runOptions is the parsed `run`/`plan` command line.
@@ -416,7 +416,7 @@ func resolvePlan(ctx context.Context, opts runOptions, e execEnv, stderr io.Writ
 			fmt.Fprintf(stderr, "ai-sandbox: %s\n", err)
 			return nil, 1
 		}
-		shared, err = sharedStateFromCheckout(root)
+		shared, err = loadSharedState(root, e.getenv("AI_SANDBOX_RUNTIME_CONFIG"))
 		if err != nil {
 			fmt.Fprintf(stderr, "%s: %s\n", opts.agent, err)
 			return nil, 2
@@ -575,21 +575,47 @@ func aiSandboxInstallDir(home string, getenv func(string) string) string {
 	return filepath.Join(home, ".local", "libexec", "ai-sandboxes")
 }
 
-// sharedStateFromCheckout reads config/runtime.json from the trusted checkout
-// and returns a validated SharedState mount, or nil when the checkout is empty,
-// the file is missing, or the configuration requests no shared state.
-// Callers upstream (resolvePlan) have already validated a checkout when one is
-// required, so an empty checkout here simply means "no shared state available".
-func sharedStateFromCheckout(checkout string) (*plan.SharedState, error) {
-	if checkout == "" {
+// loadSharedState resolves the runtime shared-state policy. It refuses to
+// silently drop shared state when no source of truth is available: if the
+// launcher is running outside a checkout and no override is set, it errors
+// with an actionable message rather than continuing with an implicit "none".
+//
+// override comes from AI_SANDBOX_RUNTIME_CONFIG:
+//
+//   - "" (unset): use $checkout/config/runtime.json. If checkout is empty,
+//     that is a hard error — the previous behaviour ("silently return nil")
+//     let an installed binary run outside the checkout change policy without
+//     the operator knowing.
+//   - "none": explicitly opt out of shared state.
+//   - any other value: absolute path to a runtime.json to load.
+//
+// The Fish wrappers already inject AI_SANDBOXES_ROOT so the standalone CLI
+// contract matches theirs; direct invocation gains an explicit opt-in/out.
+func loadSharedState(checkout, override string) (*plan.SharedState, error) {
+	switch {
+	case override == "none":
 		return nil, nil
+	case override != "":
+		return sharedStateFromFile(override)
+	case checkout != "":
+		return sharedStateFromFile(filepath.Join(checkout, "config", "runtime.json"))
+	default:
+		return nil, fmt.Errorf(
+			"cannot locate ai-sandboxes checkout for runtime configuration; " +
+				"set AI_SANDBOXES_ROOT to the checkout, or " +
+				"AI_SANDBOX_RUNTIME_CONFIG=/path/to/runtime.json, or " +
+				"AI_SANDBOX_RUNTIME_CONFIG=none to explicitly opt out of shared state")
 	}
-	rt, err := config.LoadRuntime(filepath.Join(checkout, "config", "runtime.json"))
+}
+
+func sharedStateFromFile(path string) (*plan.SharedState, error) {
+	rt, err := config.LoadRuntime(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("could not load runtime configuration: %w", err)
+		// A missing file at an explicit override path is a hard error; a
+		// missing file inside a checkout is treated the same. The old
+		// "swallow ENOENT" behaviour hid the exact class of drift this
+		// change exists to prevent.
+		return nil, fmt.Errorf("could not load runtime configuration %s: %w", path, err)
 	}
 	if rt.SharedState == nil {
 		return nil, nil

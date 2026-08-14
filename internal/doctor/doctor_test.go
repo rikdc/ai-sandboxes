@@ -48,7 +48,10 @@ func fakeEnv(t *testing.T, withMsb, withEgress bool) (*Env, string) {
 				return []byte("26.1.0"), nil
 			case name == "docker" && len(args) > 0 && args[0] == "buildx":
 				return []byte("github.com/docker/buildx v0.20.0"), nil
-		case name == "docker" && len(args) > 2 && args[0] == "image" && args[1] == "inspect":
+		case name == "docker" && len(args) >= 4 && args[0] == "image" && args[1] == "inspect" && args[2] == "--format":
+			if strings.Contains(args[3], ".Config.Labels") {
+				return []byte("null"), nil
+			}
 			return []byte("sha256:abc"), nil
 		case name == "docker" && len(args) > 0 && args[0] == "image":
 			return []byte(`[{}]`), nil
@@ -243,6 +246,90 @@ func TestDoctorDetectsImageDigestMismatch(t *testing.T) {
 	checks := env.Run()
 	if s := checkStatus(checks, "image identity ai-sandboxes-claude:local"); s != statusFail {
 		t.Errorf("image identity claude = %s, want fail", s)
+	}
+}
+
+// TestDoctorDetectsSharedStateLabelDrift guards the H1 fix: a digest match
+// alone does not prove the loaded image was built with the current
+// runtime.json. If runtime.json requests id/quota that do not match the
+// preserved Docker labels stamped at build time, doctor must fail — otherwise
+// changing runtime.json without rebuilding silently mounts a mismatched
+// shared-state volume into an image whose contract is different.
+func TestDoctorDetectsSharedStateLabelDrift(t *testing.T) {
+	env, _ := fakeEnv(t, true, true)
+	// runtime.json requests work:4G; image was built with client:8G.
+	if err := os.WriteFile(filepath.Join(env.Checkout, "config", "runtime.json"),
+		[]byte(`{"shared_state":{"id":"work","quota":"4G"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env.Runner.Run = func(name string, args ...string) ([]byte, error) {
+		switch {
+		case name == "msb" && len(args) > 1 && args[0] == "image" && args[1] == "list":
+			return []byte("ai-sandboxes-claude:local\nai-sandboxes-codex:local\n"), nil
+		case name == "msb" && len(args) > 1 && args[0] == "volume" && args[1] == "list":
+			return []byte(""), nil
+		case name == "msb" && len(args) > 1 && args[0] == "image" && args[1] == "inspect":
+			return []byte(`{"config":{"digest":"sha256:abc"}}`), nil
+		case name == "docker" && len(args) >= 4 && args[0] == "image" && args[1] == "inspect" && args[2] == "--format":
+			if strings.Contains(args[3], ".Config.Labels") {
+				return []byte(`{"io.ai-sandboxes.shared-state.id":"client","io.ai-sandboxes.shared-state.quota":"8G"}`), nil
+			}
+			return []byte("sha256:abc"), nil
+		case name == "docker" && len(args) > 0 && args[0] == "image":
+			return []byte(`[{}]`), nil
+		case name == "docker" && len(args) > 0 && (args[0] == "version" || args[0] == "buildx"):
+			return []byte("x"), nil
+		}
+		return nil, errors.New("unexpected: " + name + " " + strings.Join(args, " "))
+	}
+	checks := env.Run()
+	got := checkStatus(checks, "shared state ai-sandboxes-claude:local")
+	if got != statusFail {
+		t.Fatalf("shared state claude = %s, want fail on label drift", got)
+	}
+	var detail string
+	for _, c := range checks {
+		if c.Name == "shared state ai-sandboxes-claude:local" {
+			detail = c.Detail
+		}
+	}
+	for _, want := range []string{"work", "4G", "client", "8G", "rebuild"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("drift detail missing %q: %s", want, detail)
+		}
+	}
+}
+
+// TestDoctorDetectsSharedStateLabelPresentButRuntimeNone catches the reverse
+// drift: image was built with shared-state stamped, but runtime.json requests
+// none. Silently ignoring the labels would leave dead configuration in the
+// image; fail so the operator either rebuilds or updates runtime.json.
+func TestDoctorDetectsSharedStateLabelPresentButRuntimeNone(t *testing.T) {
+	env, _ := fakeEnv(t, true, true)
+	// runtime.json is the default `{"shared_state": null}` from fakeEnv.
+	env.Runner.Run = func(name string, args ...string) ([]byte, error) {
+		switch {
+		case name == "msb" && len(args) > 1 && args[0] == "image" && args[1] == "list":
+			return []byte("ai-sandboxes-claude:local\nai-sandboxes-codex:local\n"), nil
+		case name == "msb" && len(args) > 1 && args[0] == "volume" && args[1] == "list":
+			return []byte(""), nil
+		case name == "msb" && len(args) > 1 && args[0] == "image" && args[1] == "inspect":
+			return []byte(`{"config":{"digest":"sha256:abc"}}`), nil
+		case name == "docker" && len(args) >= 4 && args[0] == "image" && args[1] == "inspect" && args[2] == "--format":
+			if strings.Contains(args[3], ".Config.Labels") {
+				return []byte(`{"io.ai-sandboxes.shared-state.id":"leftover","io.ai-sandboxes.shared-state.quota":"2G"}`), nil
+			}
+			return []byte("sha256:abc"), nil
+		case name == "docker" && len(args) > 0 && args[0] == "image":
+			return []byte(`[{}]`), nil
+		case name == "docker" && len(args) > 0 && (args[0] == "version" || args[0] == "buildx"):
+			return []byte("x"), nil
+		}
+		return nil, errors.New("unexpected: " + name + " " + strings.Join(args, " "))
+	}
+	checks := env.Run()
+	if got := checkStatus(checks, "shared state ai-sandboxes-claude:local"); got != statusFail {
+		t.Fatalf("shared state claude = %s, want fail when image has stale labels", got)
 	}
 }
 

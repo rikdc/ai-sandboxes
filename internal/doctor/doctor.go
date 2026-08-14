@@ -4,6 +4,7 @@
 package doctor
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +17,15 @@ import (
 	"github.com/rikdc/ai-sandboxes/internal/config"
 	"github.com/rikdc/ai-sandboxes/internal/plan"
 	"github.com/rikdc/ai-sandboxes/internal/runtime/microsandbox"
+)
+
+// OCI label keys the tools image layer stamps with the SHARED_STATE_ID and
+// SHARED_STATE_QUOTA build args. Docker preserves these across derived layers;
+// microsandbox strips labels on load, which is exactly why we read them from
+// the Docker image and compare digests to the msb copy separately.
+const (
+	labelSharedStateID    = "io.ai-sandboxes.shared-state.id"
+	labelSharedStateQuota = "io.ai-sandboxes.shared-state.quota"
 )
 
 type statusLabel = string
@@ -192,17 +202,66 @@ func (e *Env) checkSharedState(add func(Check), imageTags []string) {
 			continue
 		}
 		add(Check{Name: "image identity " + tag, Status: statusOK, Detail: "verified"})
-		if expectedID != "" && expectedQuota != "" {
+
+		// Digest match proves transport identity: msb has the same bytes
+		// Docker has. It does *not* prove the image was built with the
+		// current shared-state configuration. Change runtime.json from
+		// work:4G to client:8G without rebuilding, and the digest still
+		// matches — the new mount would be silently applied to an image
+		// built for the old id/quota. The build stamps the tools layer
+		// with the labels below, and Docker preserves them across derived
+		// layers; compare those against runtime.json to catch drift.
+		gotID, gotQuota, labelErr := e.dockerSharedStateLabels(tag)
+		if labelErr != nil {
+			add(Check{Name: "shared state " + tag, Status: statusFail, Detail: "cannot read Docker image labels: " + labelErr.Error()})
+			continue
+		}
+		if expectedID != "" || expectedQuota != "" {
 			st, err := plan.ParseSharedStateRequest(expectedID, expectedQuota)
 			if err != nil {
 				add(Check{Name: "shared state " + tag, Status: statusFail, Detail: err.Error()})
 				continue
 			}
+			if gotID != expectedID || gotQuota != expectedQuota {
+				add(Check{Name: "shared state " + tag, Status: statusFail,
+					Detail: fmt.Sprintf("runtime.json requests id=%q quota=%q but image was built with id=%q quota=%q; rebuild with ./scripts/build",
+						expectedID, expectedQuota, gotID, gotQuota)})
+				continue
+			}
 			add(Check{Name: "shared state " + tag, Status: statusOK, Detail: st.Mount})
 		} else {
+			if gotID != "" || gotQuota != "" {
+				add(Check{Name: "shared state " + tag, Status: statusFail,
+					Detail: fmt.Sprintf("runtime.json requests no shared state but image was built with id=%q quota=%q; rebuild with ./scripts/build",
+						gotID, gotQuota)})
+				continue
+			}
 			add(Check{Name: "shared state " + tag, Status: statusOK, Detail: "none"})
 		}
 	}
+}
+
+// dockerSharedStateLabels reads the shared-state labels off the Docker image
+// (msb strips labels on load, so this deliberately targets Docker, not msb).
+// Missing labels are returned as empty strings, not an error: an image built
+// without shared state legitimately has no labels.
+func (e *Env) dockerSharedStateLabels(tag string) (id, quota string, err error) {
+	out, runErr := e.Runner.Run("docker", "image", "inspect", "--format", "{{json .Config.Labels}}", tag)
+	if runErr != nil {
+		return "", "", runErr
+	}
+	// Docker prints the literal string "null" when Labels is absent, and
+	// json.Unmarshal into a map leaves it nil in that case — both mean "no
+	// labels stamped", which is a valid state for a shared-state=none image.
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" || trimmed == "null" {
+		return "", "", nil
+	}
+	var labels map[string]string
+	if err := json.Unmarshal([]byte(trimmed), &labels); err != nil {
+		return "", "", fmt.Errorf("invalid docker labels JSON: %w", err)
+	}
+	return labels[labelSharedStateID], labels[labelSharedStateQuota], nil
 }
 
 func (e *Env) checkVolumes(add func(Check), volumeNames []string) {

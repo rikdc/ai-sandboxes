@@ -40,7 +40,7 @@ Shared state is visible to every image that opts into the same profile. It does 
 
 ## Versions
 
-`versions.env` pins the runtime and agent versions, image digests, and VM quotas. Use `./scripts/build` rather than invoking Docker Bake directly: the script loads this file and validates the selected configuration.
+`versions.env` pins the runtime and agent versions and image digests. VM resource quotas (CPUs, memory, root/workspace/home) live in `internal/config/config.go` as explicit per-agent values; they are deliberate Go configuration so the launcher cannot silently inherit a missing quota from a shell default. Use `./scripts/build` rather than invoking Docker Bake directly: the script loads this file and validates the selected configuration.
 
 ### Agent-version release markers
 

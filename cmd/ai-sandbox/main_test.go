@@ -46,6 +46,24 @@ func (f *fakeMsb) ImageMetadata(_ string) (*microsandbox.ImageMetadata, error) {
 	return &microsandbox.ImageMetadata{ConfigDigest: "sha256:abc", Labels: f.labels}, nil
 }
 
+// testGetenv returns a getenv stub that always opts a test out of shared
+// state (via AI_SANDBOX_RUNTIME_CONFIG=none) unless the caller provides an
+// explicit override map. Without this default, every test running outside a
+// synthetic checkout would trip the "no runtime configuration source" error
+// added to loadSharedState — which is exactly the drift guard we want in
+// production, not in unit tests that intentionally have no runtime.json.
+func testGetenv(override map[string]string) func(string) string {
+	return func(k string) string {
+		if v, ok := override[k]; ok {
+			return v
+		}
+		if k == "AI_SANDBOX_RUNTIME_CONFIG" {
+			return "none"
+		}
+		return ""
+	}
+}
+
 // testEnv builds an execEnv rooted in temp dirs: a project directory to run
 // from and a home containing Claude's egress allowlist.
 func testEnv(t *testing.T) (execEnv, string) {
@@ -62,7 +80,7 @@ func testEnv(t *testing.T) (execEnv, string) {
 	e := execEnv{
 		cwd:    project,
 		home:   home,
-		getenv: func(string) string { return "" },
+		getenv: testGetenv(nil),
 	}
 	return e, home
 }
@@ -160,6 +178,9 @@ func TestExecuteRunCodexCreatesVolumeAndInitsSharedState(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.checkout = checkout
+	// This test intentionally exercises the checkout-driven policy path, so
+	// undo testEnv's default "none" opt-out.
+	e.getenv = testGetenv(map[string]string{"AI_SANDBOX_RUNTIME_CONFIG": ""})
 	e.run = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		switch {
 		case name == "docker" && len(args) > 1 && args[0] == "image" && args[1] == "inspect":
@@ -200,7 +221,7 @@ func TestExecuteRunRejectsOverlappingCheckout(t *testing.T) {
 	os.MkdirAll(nested, 0o755)
 
 	home := t.TempDir()
-	e := execEnv{cwd: nested, home: home, getenv: func(string) string { return "" }}
+	e := execEnv{cwd: nested, home: home, getenv: testGetenv(nil)}
 	client := newFakeMsb()
 	var launched []string
 	code := executeRun(context.Background(), runOptions{agent: "claude"}, e, &bytes.Buffer{}, client,
@@ -226,7 +247,7 @@ func TestExecuteRunImageMissing(t *testing.T) {
 func TestExecuteRunMissingEgress(t *testing.T) {
 	home := t.TempDir()
 	project := t.TempDir()
-	e := execEnv{cwd: project, home: home, getenv: func(string) string { return "" }}
+	e := execEnv{cwd: project, home: home, getenv: testGetenv(nil)}
 	client := newFakeMsb()
 	code := executeRun(context.Background(), runOptions{agent: "claude"}, e, &bytes.Buffer{}, client, func([]string) error { return nil })
 	if code != 1 {
@@ -254,7 +275,7 @@ func TestExecutePlanEgressSymlinkedHome(t *testing.T) {
 		[]byte("api.anthropic.com\n"), 0o600)
 
 	t.Run("resolves through the symlinked home", func(t *testing.T) {
-		e := execEnv{cwd: project, home: link, getenv: func(string) string { return "" }}
+		e := execEnv{cwd: project, home: link, getenv: testGetenv(nil)}
 		var out bytes.Buffer
 		code := executePlan(context.Background(), runOptions{agent: "claude"}, e, &out, &bytes.Buffer{}, newFakeMsb())
 		if code != 0 {
@@ -275,7 +296,7 @@ func TestExecutePlanEgressSymlinkedHome(t *testing.T) {
 		}
 		defer os.Rename(moved, dotconfig)
 
-		e := execEnv{cwd: project, home: link, getenv: func(string) string { return "" }}
+		e := execEnv{cwd: project, home: link, getenv: testGetenv(nil)}
 		var errb bytes.Buffer
 		code := executePlan(context.Background(), runOptions{agent: "claude"}, e, &bytes.Buffer{}, &errb, newFakeMsb())
 		if code != 1 {
@@ -308,10 +329,56 @@ func TestExecuteRunInvalidRuntimeJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.checkout = checkout
+	e.getenv = testGetenv(map[string]string{"AI_SANDBOX_RUNTIME_CONFIG": ""})
 	client := newFakeMsb()
 	code := executeRun(context.Background(), runOptions{agent: "claude"}, e, &bytes.Buffer{}, client, func([]string) error { return nil })
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2 (invalid runtime.json)", code)
+	}
+}
+
+// TestLoadSharedStateFailsWithoutSource guards the M1 fix: an installed
+// binary run outside any checkout, with AI_SANDBOX_RUNTIME_CONFIG unset, must
+// fail loudly. The old behaviour returned nil silently, so a user who had
+// configured shared_state in their checkout would silently lose it when they
+// invoked the standalone binary from elsewhere.
+func TestLoadSharedStateFailsWithoutSource(t *testing.T) {
+	if _, err := loadSharedState("", ""); err == nil {
+		t.Fatal("loadSharedState with no checkout and no override should fail")
+	}
+}
+
+func TestLoadSharedStateExplicitNone(t *testing.T) {
+	got, err := loadSharedState("", "none")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("shared state should be nil for explicit none, got %+v", got)
+	}
+}
+
+func TestLoadSharedStateExplicitPath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "runtime.json")
+	if err := os.WriteFile(path, []byte(`{"shared_state":{"id":"demo","quota":"2G"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadSharedState("", path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil || got.Volume != "agent-state-demo-v1" {
+		t.Fatalf("unexpected shared state: %+v", got)
+	}
+}
+
+func TestLoadSharedStateExplicitPathMissing(t *testing.T) {
+	// A configured override that cannot be loaded is a hard error: the whole
+	// point of the override is to make the source of policy explicit, so
+	// silently returning nil would defeat it.
+	if _, err := loadSharedState("", filepath.Join(t.TempDir(), "does-not-exist.json")); err == nil {
+		t.Fatal("missing override path should fail")
 	}
 }
 
@@ -418,7 +485,7 @@ func TestProtectedRootsSymlinkedBinary(t *testing.T) {
 		t.Fatalf("test needs link and target in different directories: link=%s resolved=%s", link, resolved)
 	}
 
-	e := execEnv{home: home, exe: link, getenv: func(string) string { return "" }}
+	e := execEnv{home: home, exe: link, getenv: testGetenv(nil)}
 	roots := e.protectedRoots("")
 
 	for _, want := range []string{filepath.Dir(link), filepath.Dir(resolved)} {
@@ -538,7 +605,7 @@ func sessionTestEnv(t *testing.T) (execEnv, string) {
 		os.WriteFile(full, []byte("#!/bin/sh\n"), 0o755)
 	}
 
-	e := execEnv{cwd: t.TempDir(), home: home, getenv: func(string) string { return "" }}
+	e := execEnv{cwd: t.TempDir(), home: home, getenv: testGetenv(nil)}
 	e.run = func(_ context.Context, name string, _ ...string) ([]byte, error) {
 		switch {
 		case strings.Contains(name, "resolve-image.sh"):

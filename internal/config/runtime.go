@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 )
@@ -41,32 +43,61 @@ func ValidateSharedState(id, quota string) error {
 func SharedStateIDRE() *regexp.Regexp { return sharedStateIDRE }
 func SharedStateQuotaRE() *regexp.Regexp { return sharedStateQuotaRE }
 
-// ParseRuntime validates the exact runtime.json shape: a top-level object with
-// only a shared_state key that is either null or {id, quota} with valid values.
+// strictSharedState mirrors SharedState but decodes with DisallowUnknownFields.
+// Kept private because the public type stays tag-clean for consumers that want
+// to encode a SharedState back out.
+type strictSharedState struct {
+	ID    string `json:"id"`
+	Quota string `json:"quota"`
+}
+
+type strictRuntime struct {
+	SharedState *strictSharedState `json:"shared_state"`
+}
+
+// ParseRuntime validates the exact runtime.json shape: a non-null top-level
+// object with only a shared_state key that is either null or {id, quota} with
+// valid values. Unknown fields at any nesting level are rejected, as are
+// trailing tokens after the document.
 func ParseRuntime(data []byte) (*Runtime, error) {
-	var doc struct {
-		Runtime
-		Extra map[string]json.RawMessage `json:"-"`
+	// json.Unmarshal accepts a literal `null` for pointer/struct targets,
+	// which would silently produce an empty Runtime. Reject it upfront so the
+	// contract ("a top-level object") is enforced.
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return nil, fmt.Errorf("invalid runtime document: empty")
 	}
-	if err := json.Unmarshal(data, &doc); err != nil {
+	if bytes.Equal(trimmed, []byte("null")) {
+		return nil, fmt.Errorf("invalid runtime document: top-level null is not allowed")
+	}
+	if trimmed[0] != '{' {
+		return nil, fmt.Errorf("invalid runtime document: top-level value must be an object")
+	}
+
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var doc strictRuntime
+	if err := dec.Decode(&doc); err != nil {
 		return nil, fmt.Errorf("invalid runtime document: %w", err)
 	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("invalid runtime document: %w", err)
-	}
-	for key := range raw {
-		if key != "shared_state" {
-			return nil, fmt.Errorf("invalid runtime document: unexpected key %q", key)
+	// Reject trailing tokens: `{"shared_state":null} garbage` or two
+	// concatenated JSON objects should not parse as valid runtime.
+	if _, err := dec.Token(); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("invalid runtime document: unexpected trailing content")
 		}
+		return nil, fmt.Errorf("invalid runtime document: %w", err)
 	}
+
+	rt := &Runtime{}
 	if doc.SharedState == nil {
-		return &Runtime{}, nil
+		return rt, nil
 	}
 	if err := ValidateSharedState(doc.SharedState.ID, doc.SharedState.Quota); err != nil {
 		return nil, fmt.Errorf("invalid runtime document: %w", err)
 	}
-	return &doc.Runtime, nil
+	rt.SharedState = &SharedState{ID: doc.SharedState.ID, Quota: doc.SharedState.Quota}
+	return rt, nil
 }
 
 // LoadRuntime reads and validates config/runtime.json.

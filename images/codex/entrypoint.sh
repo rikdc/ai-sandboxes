@@ -38,10 +38,12 @@ for skill in "$seed_dir"/*; do
 done
 
 # Phase 2: Remove stale managed symlinks (skills removed from the image).
+# Dangling symlinks are false under [ -e ], so check -L first — otherwise the
+# very case we want to clean up (target gone) would be silently skipped.
 if [ -d "$skills_home" ]; then
   for entry in "$skills_home"/*; do
-    [ -e "$entry" ] || continue  # guard against empty dir after glob
-    [ -L "$entry" ] || continue  # only manage symlinks; leave user files alone
+    [ -L "$entry" ] || [ -e "$entry" ] || continue  # skip empty-glob literal
+    [ -L "$entry" ] || continue                     # only manage symlinks
 
     current=$(readlink -- "$entry") || continue
     case "$current" in

@@ -96,6 +96,9 @@ HOME="$empty_home" CODEX_SKILLS_SEED_DIR="/nonexistent" images/codex/entrypoint.
 test ! -e "$empty_home/.codex/skills" || exit 1
 
 # --- 10. Dangling symlink cleanup: a stale managed symlink is removed ---
+# `test ! -e` is a false-positive trap here: -e returns false for a dangling
+# symlink, so a surviving stale link would appear "removed". Assert ! -L to
+# actually verify the link was unlinked.
 fake_home6=$(mktemp -d) || exit 1
 trap 'rm -rf "$fake_seed" "$fake_home" "$fake_home2" "$fake_home3" "$fake_home4" "$fake_home5" "$empty_home" "$fake_home6"' EXIT
 setup_seed "skill-f"
@@ -103,6 +106,7 @@ HOME="$fake_home6" CODEX_SKILLS_SEED_DIR="$fake_seed" images/codex/entrypoint.sh
 test -L "$fake_home6/.codex/skills/skill-f" || exit 1
 rm -rf "$fake_seed/skill-f"
 HOME="$fake_home6" CODEX_SKILLS_SEED_DIR="$fake_seed" images/codex/entrypoint.sh true || exit 1
+test ! -L "$fake_home6/.codex/skills/skill-f" || exit 1
 test ! -e "$fake_home6/.codex/skills/skill-f" || exit 1
 
 echo ok

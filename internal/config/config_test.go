@@ -33,6 +33,22 @@ func TestParseRuntimeRejectsInvalid(t *testing.T) {
 		`{"shared_state": "not-an-object"}`,
 		`{"extra": 1, "shared_state": null}`,
 		`not json`,
+		// Nested unknown fields must be rejected, not silently dropped:
+		// otherwise a typo like `qouta` would look valid and produce an
+		// empty quota that later validation cannot catch.
+		`{"shared_state": {"id": "demo", "quota": "2G", "extra": true}}`,
+		// Top-level null and non-object roots must fail — an empty Runtime
+		// silently produced from `null` is exactly the kind of policy drift
+		// we want the parser to prevent.
+		`null`,
+		``,
+		`   `,
+		`[]`,
+		`42`,
+		`"shared_state"`,
+		// Trailing tokens after a valid object must fail.
+		`{"shared_state": null} garbage`,
+		`{"shared_state": null}{"shared_state": null}`,
 	}
 	for _, c := range cases {
 		if _, err := ParseRuntime([]byte(c)); err == nil {
@@ -52,8 +68,17 @@ func TestParseVersions(t *testing.T) {
 }
 
 func TestParseVersionsRejectsInvalidLine(t *testing.T) {
-	if _, err := ParseVersions([]byte("bad line without equals\n")); err == nil {
-		t.Error("line without = should be rejected")
+	invalid := []string{
+		"bad line without equals\n",
+		"foo bar=baz\n",   // spaces in key
+		"=value\n",        // empty key
+		"1KEY=value\n",    // key starting with digit
+		"KEY-WITH-DASH=v", // dash not allowed in shell identifier
+	}
+	for _, line := range invalid {
+		if _, err := ParseVersions([]byte(line)); err == nil {
+			t.Errorf("ParseVersions(%q) should fail", line)
+		}
 	}
 }
 
