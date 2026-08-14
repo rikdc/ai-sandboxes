@@ -9,37 +9,26 @@ import (
 
 // Versions holds the launcher-relevant pins read from versions.env. The rest
 // of that file drives the Docker image build and is out of scope here.
-type Versions struct {
-	WorkspaceQuota string
-}
+type Versions struct{}
 
-// ParseVersions extracts and validates WORKSPACE_QUOTA from versions.env.
+// ParseVersions validates the versions.env syntax. It no longer extracts
+// agent resource quotas because every agent now carries explicit typed values
+// in AgentConfig.
 func ParseVersions(data []byte) (*Versions, error) {
-	v := &Versions{}
-	found := false
 	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	for scanner.Scan() {
 		line := scanner.Text()
-		key, value, ok := strings.Cut(line, "=")
-		if !ok {
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if key != "WORKSPACE_QUOTA" {
-			continue
+		if !strings.Contains(line, "=") {
+			return nil, fmt.Errorf("invalid versions.env line: %q", line)
 		}
-		if !sharedStateQuotaRE.MatchString(value) {
-			return nil, fmt.Errorf("WORKSPACE_QUOTA must be a positive K, M, G, or T size: %q", value)
-		}
-		v.WorkspaceQuota = value
-		found = true
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	if !found {
-		return nil, fmt.Errorf("WORKSPACE_QUOTA is not set")
-	}
-	return v, nil
+	return &Versions{}, nil
 }
 
 // LoadVersions reads versions.env from the given checkout path.

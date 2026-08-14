@@ -148,11 +148,11 @@ func TestCodexMsbArgvGolden(t *testing.T) {
 	}
 	want := []string{
 		"run", "--tty", "--pull", "never", "--user", "node",
-		"--root-disk", "20G", "--security", "restricted",
+		"--cpus", "4", "--memory", "8G", "--root-disk", "20G", "--security", "restricted",
 		"--no-net", "--net-rule", "allow@host:udp:53", "--net-rule", "allow@host:tcp:53",
 		"--net-rule", "allow@api.openai.com:tcp:443", "--net-rule", "allow@github.com:tcp:443",
-		"--mount-dir", "/Users/me/dev/my-project:/workspace/my-project-2d3837f6cd02:rw",
-		"--mount-named", "codex-home:/home/node:rw",
+		"--mount-dir", "/Users/me/dev/my-project:/workspace/my-project-2d3837f6cd02:rw,quota=20G",
+		"--mount-named", "codex-home:/home/node:rw,quota=4G",
 		"--workdir", "/workspace/my-project-2d3837f6cd02",
 		"ai-sandboxes-codex:local",
 		"--", "codex",
@@ -178,11 +178,11 @@ func TestCodexMsbArgvWithSharedStateAndArgs(t *testing.T) {
 	}
 	want := []string{
 		"run", "--tty", "--pull", "never", "--user", "node",
-		"--root-disk", "20G", "--security", "restricted",
+		"--cpus", "4", "--memory", "8G", "--root-disk", "20G", "--security", "restricted",
 		"--no-net", "--net-rule", "allow@host:udp:53", "--net-rule", "allow@host:tcp:53",
 		"--net-rule", "allow@api.openai.com:tcp:443", "--net-rule", "allow@github.com:tcp:443",
-		"--mount-dir", "/Users/me/dev/my-project:/workspace/my-project-2d3837f6cd02:rw",
-		"--mount-named", "codex-home:/home/node:rw",
+		"--mount-dir", "/Users/me/dev/my-project:/workspace/my-project-2d3837f6cd02:rw,quota=20G",
+		"--mount-named", "codex-home:/home/node:rw,quota=4G",
 		"--mount-named", "agent-state-work-v1:/var/lib/agent-state:kind=dir,quota=4G",
 		"--workdir", "/workspace/my-project-2d3837f6cd02",
 		"ai-sandboxes-codex:local",

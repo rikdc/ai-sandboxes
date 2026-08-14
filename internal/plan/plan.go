@@ -30,9 +30,9 @@ type SharedState struct {
 
 // Resources is the per-VM resource allocation.
 type Resources struct {
-	CPUs     int    `json:"cpus,omitempty"`
-	Memory   string `json:"memory,omitempty"`
-	RootDisk string `json:"root_disk"`
+	CPUs        int    `json:"cpus,omitempty"`
+	Memory      string `json:"memory,omitempty"`
+	RootDisk    string `json:"root_disk"`
 }
 
 // Network is the resolved network policy: either public, or no-network plus an
@@ -77,9 +77,6 @@ type Input struct {
 	// session images, whose tag is resolved from a profile at run time rather
 	// than baked into the agent policy.
 	ImageOverride string
-	// RootDiskFromVersions is the versions.env WORKSPACE_QUOTA used when the
-	// agent's policy says to source its root-disk from versions.env.
-	RootDiskFromVersions string
 }
 
 var (
@@ -99,13 +96,7 @@ func Resolve(cfg config.Agent, in Input) (*RuntimePlan, error) {
 	if err != nil {
 		return nil, err
 	}
-	rootDisk := cfg.RootDisk
-	if cfg.RootDiskFromVersions {
-		if in.RootDiskFromVersions == "" {
-			return nil, fmt.Errorf("internal error: %s requires a versions.env WORKSPACE_QUOTA", cfg.Name)
-		}
-		rootDisk = in.RootDiskFromVersions
-	}
+	rootDisk := cfg.RootDiskQuota
 	if !quotaRE.MatchString(rootDisk) {
 		return nil, fmt.Errorf("invalid root-disk size %q", rootDisk)
 	}
@@ -117,8 +108,17 @@ func Resolve(cfg config.Agent, in Input) (*RuntimePlan, error) {
 		image = in.ImageOverride
 	}
 
-	workspaceMount := fmt.Sprintf("%s:%s:%s", in.Workspace, guest, cfg.WorkspaceMount)
-	homeMount := fmt.Sprintf("%s:%s:%s", cfg.HomeVolume, cfg.HomePath, cfg.HomeMount)
+	workspaceOpts := cfg.WorkspaceMountOpts
+	if cfg.WorkspaceQuota != "" {
+		workspaceOpts += ",quota=" + cfg.WorkspaceQuota
+	}
+	workspaceMount := fmt.Sprintf("%s:%s:%s", in.Workspace, guest, workspaceOpts)
+
+	homeOpts := cfg.HomeMountOpts
+	if cfg.HomeQuota != "" {
+		homeOpts += ",quota=" + cfg.HomeQuota
+	}
+	homeMount := fmt.Sprintf("%s:%s:%s", cfg.HomeVolume, cfg.HomePath, homeOpts)
 
 	return &RuntimePlan{
 		AgentName:      cfg.Name,

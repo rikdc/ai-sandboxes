@@ -24,10 +24,13 @@ type Agent struct {
 	TTY       bool
 	PullNever bool
 
-	// Resources: CPUs (0 = unset), Memory ("" = unset), RootDisk.
-	CPUs     int
-	Memory   string
-	RootDisk string
+	// Resources: every agent has explicit values so names describe what
+	// they control and no field is silently ignored.
+	CPUs           int
+	Memory         string
+	RootDiskQuota  string
+	WorkspaceQuota string
+	HomeQuota      string
 
 	// Security is the msb --security value, or "" when not set.
 	Security string
@@ -42,15 +45,21 @@ type Agent struct {
 	BaseNetRules []string
 
 	// HomeVolume and HomePath describe the persistent home named volume and
-	// where it is mounted. HomeMount is the --mount-named suffix after the
-	// path (for example "kind=dir,quota=4G").
+	// where it is mounted.
 	HomeVolume string
 	HomePath   string
-	HomeMount  string
 
-	// WorkspaceMount is the --mount-dir suffix after the guest path
-	// (for example "rw,quota=10G").
-	WorkspaceMount string
+	// HomeMountOpts is the base --mount-named option string for the home
+	// volume before the quota is appended (for example "kind=dir" or
+	// "rw"). The full mount suffix becomes HomeMountOpts + ",quota=" +
+	// HomeQuota when HomeQuota is non-empty.
+	HomeMountOpts string
+
+	// WorkspaceMountOpts is the base --mount-dir option string for the
+	// workspace before the quota is appended (for example "rw"). The full
+	// mount suffix becomes WorkspaceMountOpts + ",quota=" + WorkspaceQuota
+	// when WorkspaceQuota is non-empty.
+	WorkspaceMountOpts string
 
 	// WorkspaceHash selects how the stable workspace identity in the guest
 	// path is derived: "git-blob" (git hash-object) or "sha256".
@@ -65,30 +74,28 @@ type Agent struct {
 
 	// CreateHomeVolume creates the home named volume when missing.
 	CreateHomeVolume bool
-
-	// RootDiskFromVersions takes the root-disk size from versions.env's
-	// WORKSPACE_QUOTA instead of the baked RootDisk value.
-	RootDiskFromVersions bool
 }
 
 // Agents is the single policy source for every supported agent.
 var agents = map[string]Agent{
 	"claude": {
-		Name:           "claude",
-		Image:          "ai-sandboxes-claude:local",
-		User:           "node",
-		TTY:            true,
-		PullNever:      true,
-		CPUs:           4,
-		Memory:         "8G",
-		RootDisk:       "10G",
-		Security:       "restricted",
-		BaseNetRules:   []string{"allow@host:udp:53", "allow@host:tcp:53"},
-		HomeVolume:     "claude-home-hardened",
-		HomePath:       "/home/node",
-		HomeMount:      "kind=dir,quota=4G",
-		WorkspaceMount: "rw,quota=10G",
-		WorkspaceHash:  "git-blob",
+		Name:               "claude",
+		Image:              "ai-sandboxes-claude:local",
+		User:               "node",
+		TTY:                true,
+		PullNever:          true,
+		CPUs:               4,
+		Memory:             "8G",
+		RootDiskQuota:      "10G",
+		WorkspaceQuota:     "10G",
+		HomeQuota:          "4G",
+		Security:           "restricted",
+		BaseNetRules:       []string{"allow@host:udp:53", "allow@host:tcp:53"},
+		HomeVolume:         "claude-home-hardened",
+		HomePath:           "/home/node",
+		HomeMountOpts:      "kind=dir",
+		WorkspaceMountOpts: "rw",
+		WorkspaceHash:      "git-blob",
 		Environment: []string{
 			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
 			"ENABLE_CLAUDEAI_MCP_SERVERS=false",
@@ -96,25 +103,28 @@ var agents = map[string]Agent{
 		Command: []string{"claude"},
 	},
 	"codex": {
-		Name:                 "codex",
-		Image:                "ai-sandboxes-codex:local",
-		User:                 "node",
-		TTY:                  true,
-		PullNever:            true,
-		Security:             "restricted",
-		RootDisk:             "20G",
+		Name:               "codex",
+		Image:              "ai-sandboxes-codex:local",
+		User:               "node",
+		TTY:                true,
+		PullNever:          true,
+		CPUs:               4,
+		Memory:             "8G",
+		RootDiskQuota:      "20G",
+		WorkspaceQuota:     "20G",
+		HomeQuota:          "4G",
+		Security:           "restricted",
 		// Codex is deny-by-default: its network is resolved from
 		// ~/.config/microvms/codex-egress, matching claude's model, with
 		// CODEX_MSB_PUBLIC_EGRESS=1 as the escape hatch.
-		BaseNetRules:         []string{"allow@host:udp:53", "allow@host:tcp:53"},
-		HomeVolume:           "codex-home",
-		HomePath:             "/home/node",
-		HomeMount:            "rw",
-		WorkspaceMount:       "rw",
-		WorkspaceHash:        "sha256",
-		Command:              []string{"codex"},
-		CreateHomeVolume:     true,
-		RootDiskFromVersions: true,
+		BaseNetRules:       []string{"allow@host:udp:53", "allow@host:tcp:53"},
+		HomeVolume:         "codex-home",
+		HomePath:           "/home/node",
+		HomeMountOpts:      "rw",
+		WorkspaceMountOpts: "rw",
+		WorkspaceHash:      "sha256",
+		Command:            []string{"codex"},
+		CreateHomeVolume:   true,
 	},
 }
 

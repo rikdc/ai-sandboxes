@@ -395,21 +395,6 @@ func resolvePlan(ctx context.Context, opts runOptions, e execEnv, stderr io.Writ
 		}
 	}
 
-	rootDiskVersions := ""
-	if agentCfg.RootDiskFromVersions {
-		root := e.resolvedCheckout()
-		if root != "" {
-			if v, verr := config.LoadVersions(filepath.Join(root, "versions.env")); verr == nil {
-				rootDiskVersions = v.WorkspaceQuota
-			}
-		}
-		if rootDiskVersions == "" {
-			// Fall back to the baked policy default so an installed binary
-			// that cannot locate a checkout still resolves.
-			rootDiskVersions = agentCfg.RootDisk
-		}
-	}
-
 	// Base agents require their image to be loaded; session images were loaded
 	// and digest-verified by the resolver moments ago, and `plan` must not
 	// require a load it deliberately skipped. Gate the default image path only.
@@ -450,13 +435,12 @@ func resolvePlan(ctx context.Context, opts runOptions, e execEnv, stderr io.Writ
 	}
 
 	p, err := plan.Resolve(agentCfg, plan.Input{
-		Agent:                opts.agent,
-		AgentArgs:            opts.agentArgs,
-		Workspace:            workspace,
-		SharedState:          shared,
-		Network:              network,
-		ImageOverride:        imageOverride,
-		RootDiskFromVersions: rootDiskVersions,
+		Agent:         opts.agent,
+		AgentArgs:     opts.agentArgs,
+		Workspace:     workspace,
+		SharedState:   shared,
+		Network:       network,
+		ImageOverride: imageOverride,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "ai-sandbox: %s\n", err)

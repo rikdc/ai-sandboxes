@@ -22,7 +22,6 @@ func resolveInput(agent string, shared *SharedState) Input {
 		SharedState: shared,
 	}
 	if agent == "codex" {
-		in.RootDiskFromVersions = "20G"
 		in.Network = Network{NoNet: true, Rules: []string{
 			"allow@host:udp:53",
 			"allow@host:tcp:53",
@@ -150,20 +149,20 @@ func TestResolveCodexPlan(t *testing.T) {
 	if p.WorkspaceGuest != "/workspace/my-project-2d3837f6cd02" {
 		t.Errorf("guest = %q", p.WorkspaceGuest)
 	}
-	if p.WorkspaceMount != "/Users/me/dev/my-project:/workspace/my-project-2d3837f6cd02:rw" {
+	if p.WorkspaceMount != "/Users/me/dev/my-project:/workspace/my-project-2d3837f6cd02:rw,quota=20G" {
 		t.Errorf("workspace mount = %q", p.WorkspaceMount)
 	}
-	if p.HomeMount != "codex-home:/home/node:rw" {
+	if p.HomeMount != "codex-home:/home/node:rw,quota=4G" {
 		t.Errorf("home mount = %q", p.HomeMount)
 	}
 	if p.Network.Public || !p.Network.NoNet || len(p.Network.Rules) == 0 {
 		t.Errorf("codex network should be deny-by-default allowlist: %+v", p.Network)
 	}
 	if p.Resources.RootDisk != "20G" {
-		t.Errorf("codex root-disk = %q, want 20G (from versions.env)", p.Resources.RootDisk)
+		t.Errorf("codex root-disk = %q, want 20G", p.Resources.RootDisk)
 	}
-	if p.Resources.CPUs != 0 || p.Resources.Memory != "" {
-		t.Errorf("codex should not set cpus/memory: %+v", p.Resources)
+	if p.Resources.CPUs != 4 || p.Resources.Memory != "8G" {
+		t.Errorf("codex resources = %+v", p.Resources)
 	}
 	if p.Security != "restricted" {
 		t.Errorf("codex security = %q, want restricted", p.Security)
@@ -212,14 +211,6 @@ func TestResolveSharedState(t *testing.T) {
 	}
 	if p.SharedState == nil || p.SharedState.Mount != "agent-state-demo-profile-v1:/var/lib/agent-state:kind=dir,quota=2G" {
 		t.Errorf("shared state = %+v", p.SharedState)
-	}
-}
-
-func TestResolveRejectsMissingVersionsQuota(t *testing.T) {
-	in := resolveInput("codex", nil)
-	in.RootDiskFromVersions = ""
-	if _, err := Resolve(mustConfig(t, "codex"), in); err == nil {
-		t.Fatal("expected an error when the versions.env-derived quota is missing")
 	}
 }
 

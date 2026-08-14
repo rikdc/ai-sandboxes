@@ -16,7 +16,7 @@ func fakeEnv(t *testing.T, withMsb, withEgress bool) (*Env, string) {
 	checkout := t.TempDir()
 
 	os.MkdirAll(filepath.Join(checkout, "config"), 0o755)
-	os.WriteFile(filepath.Join(checkout, "versions.env"), []byte("WORKSPACE_QUOTA=20G\n"), 0o644)
+	os.WriteFile(filepath.Join(checkout, "versions.env"), []byte("CODEX_VERSION=0.147.0\n"), 0o644)
 	os.WriteFile(filepath.Join(checkout, "config", "runtime.json"), []byte(`{"shared_state": null}`), 0o644)
 
 	if withEgress {
