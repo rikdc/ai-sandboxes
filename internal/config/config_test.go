@@ -80,6 +80,9 @@ func TestAgentConfig(t *testing.T) {
 	if cfg.Net != "" || cfg.CreateHomeVolume != true || cfg.RootDiskFromVersions != true {
 		t.Errorf("unexpected codex policy: %+v", cfg)
 	}
+	if cfg.Security != "restricted" {
+		t.Errorf("codex security = %q, want restricted", cfg.Security)
+	}
 	if len(cfg.BaseNetRules) == 0 {
 		t.Errorf("codex should have deny-by-default base net rules: %+v", cfg.BaseNetRules)
 	}

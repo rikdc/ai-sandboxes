@@ -109,8 +109,8 @@ done
 
 if command -v msb >/dev/null 2>&1; then
   ./scripts/load-msb || exit 1
-  msb run --pull never --no-tty --user node -e HOME=/home/node ai-sandboxes-claude:local -- claude --version || exit 1
-  msb run --pull never --no-tty --user node -e HOME=/home/node ai-sandboxes-codex:local -- codex --version || exit 1
+  msb run --pull never --no-tty --user node --security restricted -e HOME=/home/node ai-sandboxes-claude:local -- claude --version || exit 1
+  msb run --pull never --no-tty --user node --security restricted -e HOME=/home/node ai-sandboxes-codex:local -- codex --version || exit 1
   msb volume remove verify-home 2>/dev/null || true
   msb volume create verify-home || exit 1
   # shellcheck disable=SC2016 # $HOME expands in the guest shell, not on the host.

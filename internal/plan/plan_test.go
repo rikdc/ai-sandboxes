@@ -165,8 +165,8 @@ func TestResolveCodexPlan(t *testing.T) {
 	if p.Resources.CPUs != 0 || p.Resources.Memory != "" {
 		t.Errorf("codex should not set cpus/memory: %+v", p.Resources)
 	}
-	if p.Security != "" {
-		t.Errorf("codex security = %q, want unset", p.Security)
+	if p.Security != "restricted" {
+		t.Errorf("codex security = %q, want restricted", p.Security)
 	}
 }
 

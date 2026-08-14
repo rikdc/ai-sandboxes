@@ -101,6 +101,7 @@ var agents = map[string]Agent{
 		User:                 "node",
 		TTY:                  true,
 		PullNever:            true,
+		Security:             "restricted",
 		RootDisk:             "20G",
 		// Codex is deny-by-default: its network is resolved from
 		// ~/.config/microvms/codex-egress, matching claude's model, with
