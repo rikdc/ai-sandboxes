@@ -63,11 +63,44 @@ See [configuration details](docs/configuration.md) and [Claude security and reco
 ai-sandbox run claude       # launch Claude Code (what the `claude` wrapper calls)
 ai-sandbox plan claude      # resolve and print the runtime plan without launching
 ai-sandbox doctor           # diagnose host, Docker, msb, and launcher health
+ai-sandbox codex login      # sign in to Codex against a running `run codex` sandbox
 go test ./...               # control-plane unit tests
 ./scripts/build             # build local images
 ./scripts/verify            # validate images, launchers, and control plane
 ./scripts/load-msb          # import images into Microsandbox
 ./scripts/lint-dockerfiles  # run Hadolint locally
 ```
+
+### Codex authentication
+
+Codex's browser sign-in binds its OAuth callback on `127.0.0.1:1455`
+inside the guest, which the host browser cannot reach directly. Run the
+login subcommand in a second terminal while the sandbox is running:
+
+```console
+# terminal 1
+ai-sandbox run codex
+# terminal 2 (once ~/.microsandbox/ssh/authorized_keys is set up)
+ai-sandbox codex login
+```
+
+One-time host setup:
+
+```console
+msb ssh authorize --file ~/.ssh/id_ed25519.pub
+```
+
+`codex login` opens an SSH tunnel scoped to the login operation
+(host `127.0.0.1:1455` → guest `127.0.0.1:1455`), runs the sign-in
+flow inside the guest, and tears the tunnel down on exit. Nothing is
+published to the LAN or public Internet. See
+[ADR-0007](docs/adr/0007-codex-auth-tunnel.md) for why this is a
+tunnel rather than a published port.
+
+After the first successful sign-in, exit and re-run `codex` in
+terminal 1. The already-running `codex` process reads the auth token
+at startup and won't pick up the newly-written credential until it
+restarts. Subsequent runs re-use the persisted token from the
+`codex-home` volume, so this is a one-time cost per credential.
 
 Claude and Codex default to an intentionally restricted network. Use `CLAUDE_MSB_PUBLIC_EGRESS=1 claude` or `CODEX_MSB_PUBLIC_EGRESS=1 codex` only when a session needs public Internet access. The mounted project is writable, so keep secrets out of it and review agent changes with Git.

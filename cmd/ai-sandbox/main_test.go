@@ -173,7 +173,7 @@ func TestExecuteRunClaude(t *testing.T) {
 	}
 }
 
-func TestExecuteRunCodexCreatesVolumeAndInitsSharedState(t *testing.T) {
+func TestExecuteRunCodexSkipsHomeVolumePrecreate(t *testing.T) {
 	e, _ := testEnv(t)
 	// Create a checkout with runtime.json that configures shared state.
 	checkout := t.TempDir()
@@ -212,8 +212,11 @@ func TestExecuteRunCodexCreatesVolumeAndInitsSharedState(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
-	if !containsArg(client.created, "codex-home") {
-		t.Errorf("codex home volume was not created: %v", client.created)
+	// codex-home is lazily created by msb from the mount spec (kind=dir,quota=4G),
+	// matching claude's proven pattern. A pre-create here would produce a
+	// no-quota volume that msb then refuses to mount with the requested quota.
+	if containsArg(client.created, "codex-home") {
+		t.Errorf("codex home volume should not be pre-created: %v", client.created)
 	}
 	if !containsArg(client.initialized, "agent-state-work-v1") {
 		t.Errorf("shared state not initialized: %v", client.initialized)
@@ -480,6 +483,15 @@ func TestDispatch(t *testing.T) {
 	if code := run([]string{"doctor", "--help"}, &out, &err); code != 0 || !strings.Contains(out.String(), "usage:") {
 		t.Fatalf("doctor --help: code=%d out=%q", code, out.String())
 	}
+	out.Reset()
+	if code := run([]string{"codex"}, &out, &err); code != 2 || !strings.Contains(err.String(), "expected subcommand 'login'") {
+		t.Fatalf("codex without subcommand: code=%d err=%q", code, err.String())
+	}
+	err.Reset()
+	if code := run([]string{"codex", "bogus"}, &out, &err); code != 2 || !strings.Contains(err.String(), "expected subcommand 'login'") {
+		t.Fatalf("codex bogus: code=%d err=%q", code, err.String())
+	}
+	err.Reset()
 	out.Reset()
 	if code := run([]string{"-v", "plan", "claude"}, &out, &err); code != 0 {
 		// -v before a command is accepted; plan requires msb, which may be

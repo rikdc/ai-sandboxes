@@ -52,6 +52,12 @@ parsed:
 		return planCommand(args[1:], verbose, stdout, stderr)
 	case "doctor":
 		return doctorCommand(args[1:], stdout, stderr)
+	case "codex":
+		if len(args) < 2 || args[1] != "login" {
+			fmt.Fprintf(stderr, "ai-sandbox codex: expected subcommand 'login'\n")
+			return 2
+		}
+		return codexLoginCommand(args[2:], stdout, stderr)
 	case "help", "--help", "-h":
 		usage(stdout)
 		return 0
@@ -66,14 +72,13 @@ parsed:
 }
 
 func usage(w io.Writer) {
-	// Double-quoted string keeps the literal backticks around `--` inline;
-	// the previous raw-string + concat dance rendered fine but looked like
-	// it was leaking Go syntax to the reader.
 	fmt.Fprint(w, "usage: ai-sandbox <command> [options]\n\n"+
 		"Commands:\n"+
 		"  run <agent> [-- AGENT_ARGS...]   resolve and launch an agent in Microsandbox\n"+
 		"  plan <agent> [-- AGENT_ARGS...]  print the resolved plan without launching\n"+
 		"  doctor                           validate host prerequisites without mutation\n"+
+		"  codex login [--timeout D]        open scoped tunnel + run browser sign-in\n"+
+		"                                   against a running 'run codex' sandbox\n"+
 		"  version                          print the version\n"+
 		"  help                             show this help\n\n"+
 		"Agents: claude, codex. Put agent arguments after `--`; they are\n"+

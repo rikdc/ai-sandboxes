@@ -120,11 +120,10 @@ var agents = map[string]Agent{
 		BaseNetRules:       []string{"allow@host:udp:53", "allow@host:tcp:53"},
 		HomeVolume:         "codex-home",
 		HomePath:           "/home/node",
-		HomeMountOpts:      "rw",
+		HomeMountOpts:      "kind=dir",
 		WorkspaceMountOpts: "rw",
 		WorkspaceHash:      "sha256",
 		Command:            []string{"codex"},
-		CreateHomeVolume:   true,
 	},
 }
 

@@ -152,7 +152,7 @@ func TestResolveCodexPlan(t *testing.T) {
 	if p.WorkspaceMount != "/Users/me/dev/my-project:/workspace/my-project-2d3837f6cd02:rw,quota=20G" {
 		t.Errorf("workspace mount = %q", p.WorkspaceMount)
 	}
-	if p.HomeMount != "codex-home:/home/node:rw,quota=4G" {
+	if p.HomeMount != "codex-home:/home/node:kind=dir,quota=4G" {
 		t.Errorf("home mount = %q", p.HomeMount)
 	}
 	if p.Network.Public || !p.Network.NoNet || len(p.Network.Rules) == 0 {
@@ -166,6 +166,23 @@ func TestResolveCodexPlan(t *testing.T) {
 	}
 	if p.Security != "restricted" {
 		t.Errorf("codex security = %q, want restricted", p.Security)
+	}
+	wantLabels := []string{
+		"ai-sandbox.agent=codex",
+		"ai-sandbox.workspace=2d3837f6cd02",
+	}
+	if !reflect.DeepEqual(p.Labels, wantLabels) {
+		t.Errorf("codex labels = %v, want %v", p.Labels, wantLabels)
+	}
+}
+
+func TestResolveClaudePlanHasNoLabels(t *testing.T) {
+	p, err := Resolve(mustConfig(t, "claude"), resolveInput("claude", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Labels != nil {
+		t.Errorf("claude labels = %v, want nil (labels are codex-only for now)", p.Labels)
 	}
 }
 

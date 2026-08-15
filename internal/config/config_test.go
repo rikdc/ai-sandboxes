@@ -98,7 +98,7 @@ func TestAgentConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Net != "" || cfg.CreateHomeVolume != true {
+	if cfg.Net != "" || cfg.CreateHomeVolume != false {
 		t.Errorf("unexpected codex policy: %+v", cfg)
 	}
 	if cfg.RootDiskQuota != "20G" || cfg.WorkspaceQuota != "20G" || cfg.HomeQuota != "4G" || cfg.CPUs != 4 || cfg.Memory != "8G" {
