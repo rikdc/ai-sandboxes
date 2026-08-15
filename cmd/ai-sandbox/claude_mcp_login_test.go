@@ -41,6 +41,28 @@ func TestClaudeMCPLoginRejectsEmptyName(t *testing.T) {
 	}
 }
 
+func TestClaudeMCPLoginRequiresCallbackPort(t *testing.T) {
+	var out, err bytes.Buffer
+	code := claudeMCPLoginCommand([]string{"sentry"}, &out, &err)
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(err.String(), "--callback-port") {
+		t.Errorf("stderr should mention --callback-port requirement, got: %q", err.String())
+	}
+}
+
+func TestClaudeMCPLoginRejectsInvalidCallbackPort(t *testing.T) {
+	var out, err bytes.Buffer
+	code := claudeMCPLoginCommand([]string{"--callback-port", "99999", "sentry"}, &out, &err)
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(err.String(), "--callback-port") {
+		t.Errorf("stderr should reject out-of-range port, got: %q", err.String())
+	}
+}
+
 func TestClaudeMCPLoginRejectsFlagLikeName(t *testing.T) {
 	var out, err bytes.Buffer
 	code := claudeMCPLoginCommand([]string{"--", "-evil"}, &out, &err)
@@ -58,7 +80,7 @@ func TestClaudeMCPLoginMsbSSHNotAuthorized(t *testing.T) {
 	client := &microsandbox.Client{Msb: "/nonexistent-msb-should-not-be-called"}
 
 	var out, err bytes.Buffer
-	code := executeClaudeMCPLogin(context.Background(), 5*time.Second, "sentry", e, &out, &err, client)
+	code := executeClaudeMCPLogin(context.Background(), 5*time.Second, 49152, "sentry", e, &out, &err, client)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
@@ -79,7 +101,7 @@ func TestClaudeMCPLoginNoSandbox(t *testing.T) {
 	e := execEnv{cwd: cwd, home: home, getenv: os.Getenv}
 
 	var out, err bytes.Buffer
-	code := executeClaudeMCPLogin(context.Background(), 5*time.Second, "sentry", e, &out, &err, client)
+	code := executeClaudeMCPLogin(context.Background(), 5*time.Second, 49152, "sentry", e, &out, &err, client)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}
@@ -104,7 +126,7 @@ func TestClaudeMCPLoginMultipleSandboxes(t *testing.T) {
 	e := execEnv{cwd: cwd, home: home, getenv: os.Getenv}
 
 	var out, err bytes.Buffer
-	code := executeClaudeMCPLogin(context.Background(), 5*time.Second, "sentry", e, &out, &err, client)
+	code := executeClaudeMCPLogin(context.Background(), 5*time.Second, 49152, "sentry", e, &out, &err, client)
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}

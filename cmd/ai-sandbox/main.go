@@ -109,8 +109,11 @@ func usage(w io.Writer) {
 		"                                   against a running 'run codex' sandbox\n"+
 		"  codex mcp login <server-name>    open scoped tunnel + run MCP OAuth sign-in\n"+
 		"    [--timeout D]                  for the named server against a running codex sandbox\n"+
-		"  claude mcp login <server-name>   open scoped tunnel + run MCP OAuth sign-in\n"+
-		"    [--timeout D]                  for the named server against a running claude sandbox\n"+
+		"  claude mcp login --callback-port <P> <server-name>\n"+
+		"    [--timeout D]                  tunnel host 127.0.0.1:P to the running claude sandbox\n"+
+		"                                   and run `claude mcp login <server>`. P must match the\n"+
+		"                                   port passed to `claude mcp add --callback-port` when\n"+
+		"                                   registering the server (Claude has no login-time port flag).\n"+
 		"  version                          print the version\n"+
 		"  help                             show this help\n\n"+
 		"Agents: claude, codex. Put agent arguments after `--`; they are\n"+

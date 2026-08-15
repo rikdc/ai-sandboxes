@@ -13,11 +13,18 @@ a follow-up and speculated that each provider would need its own
 subcommand or discovery mechanism. That conclusion was wrong.
 
 Both Codex and Claude Code expose a stable client-level adapter for
-MCP OAuth:
+MCP OAuth, but their port-override models differ:
 
-- Codex: `codex mcp login <server-name>` + `-c mcp_oauth_callback_port=P`.
-- Claude Code (v2.1.186+): `claude mcp login <server-name>` +
-  `--callback-port P`.
+- **Codex** — `codex mcp login <server-name>` accepts
+  `-c mcp_oauth_callback_port=P` at login time. `ai-sandbox` picks an
+  ephemeral loopback port `P` per invocation and threads it through.
+- **Claude Code** (v2.1.231, the pinned version) — `claude mcp login`
+  has **no** callback-port flag. The port is registered *up front* via
+  `claude mcp add --scope user --callback-port P --transport http <name> <url>`
+  and thereafter the OAuth redirect always targets that port.
+  `ai-sandbox claude mcp login --callback-port P <server-name>` tunnels
+  that same fixed `P` and execs `claude mcp login <server-name>` inside
+  the sandbox.
 
 Each collapses the "one subcommand per provider" fan-out to one
 host-side wrapper per client.
@@ -31,9 +38,10 @@ through one host-side orchestrator (`executeCallbackOperation`):
   port `P`, tunnels `127.0.0.1:P → 127.0.0.1:P`, and execs
   `codex -c mcp_oauth_callback_port=P mcp login <server-name>` inside
   the running codex sandbox.
-- `ai-sandbox claude mcp login <server-name>` picks an ephemeral port
-  `P` and execs `claude mcp login --callback-port P <server-name>` inside
-  the running claude sandbox.
+- `ai-sandbox claude mcp login --callback-port P <server-name>` tunnels
+  the caller-supplied port `P` and execs `claude mcp login <server-name>`
+  inside the running claude sandbox. `P` must be the same value the user
+  passed to `claude mcp add --callback-port` when registering the server.
 
 Sandbox discovery uses the existing `ai-sandbox.agent` and
 `ai-sandbox.workspace` labels, generalised in this change to apply to
@@ -76,9 +84,12 @@ knows about.
   registry.
 - The server name is validated (non-empty, must not start with `-`) to
   prevent flag smuggling into either CLI's `mcp login`.
-- Ephemeral host port picks retry up to three times on OpenSSH
-  collision (`ExitOnForwardFailure=yes`). Two collisions on the same
-  invocation indicate a real problem worth surfacing.
+- Tunnel open is single-attempt: every failure mode (SSH not
+  authorised, `msb ssh serve` not starting, forward bind collision)
+  surfaces as a distinct error the caller can act on. A retry loop
+  was considered and rejected — bind collisions on a freshly-picked
+  ephemeral port are rare enough that retrying mostly serves to
+  disguise the real errors it swallows.
 - Account login (`ai-sandbox codex login`) is unchanged; it stays on
   the Codex-imposed fixed port 1455.
 - Claude has no account-login equivalent under `ai-sandbox` — Claude
@@ -96,5 +107,5 @@ knows about.
 - ADR-0007 — the tunnel primitive and account-login flow.
 - Issue #42 — original bug report; MCP OAuth was in scope.
 - OpenAI MCP documentation — `mcp_oauth_callback_port` semantics.
-- Claude Code MCP docs — `claude mcp login` and `--callback-port`
-  (https://code.claude.com/docs/en/mcp).
+- Claude Code MCP docs — `claude mcp login` (no port flag) and
+  `claude mcp add --callback-port` (https://code.claude.com/docs/en/mcp).
