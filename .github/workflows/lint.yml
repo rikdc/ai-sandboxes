@@ -46,6 +46,8 @@ jobs:
           if ((${#fish_files[@]})); then fish --no-execute "${fish_files[@]}"; fi
       - name: Lint Dockerfiles when present
         run: ./scripts/lint-dockerfiles
+      - name: Test install-fish-functions
+        run: bash scripts/session/tests/test-install-fish-functions.sh
 
   go:
     runs-on: ubuntu-latest

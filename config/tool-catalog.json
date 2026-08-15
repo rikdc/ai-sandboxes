@@ -21,6 +21,20 @@
       "asset": "rtk-aarch64-unknown-linux-gnu.tar.gz",
       "archive_member": "rtk",
       "binary": "rtk"
+    },
+    {
+      "id": "golang",
+      "adapter": "https-tar",
+      "url_template": "https://go.dev/dl/go{{version}}.linux-arm64.tar.gz",
+      "archive_member": "go",
+      "binary": "go",
+      "expose": ["go", "gofmt"]
+    },
+    {
+      "id": "awscli",
+      "adapter": "awscli-zip",
+      "url_template": "https://awscli.amazonaws.com/awscli-exe-linux-aarch64-{{version}}.zip",
+      "binary": "aws"
     }
   ]
 }

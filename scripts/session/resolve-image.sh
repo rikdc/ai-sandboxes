@@ -26,7 +26,7 @@ base_digest=$(docker image inspect --format '{{.Id}}' "$base_image" 2>/dev/null)
 # actually is. Hash each file individually and then hash that listing
 # (rather than concatenating file contents directly) so a change shifting
 # bytes across a file boundary can't produce a collision.
-renderer_hash=$(shasum -a 256 scripts/session/render-dockerfile.sh scripts/marketplaces/install-claude.sh scripts/session/merge-plugin-seed.sh scripts/session/install-apt-packages.sh scripts/session/install-npm-packages.sh scripts/session/patch-apt-provenance.sh config/tool-catalog.json scripts/tools/install-selected.sh scripts/tools/install-github-release-tar.sh \
+renderer_hash=$(shasum -a 256 scripts/session/render-dockerfile.sh scripts/marketplaces/install-claude.sh scripts/session/merge-plugin-seed.sh scripts/session/install-apt-packages.sh scripts/session/install-npm-packages.sh scripts/session/patch-apt-provenance.sh config/tool-catalog.json scripts/tools/install-selected.sh scripts/tools/install-github-release-tar.sh scripts/tools/install-https-tar.sh scripts/tools/install-awscli-zip.sh \
   | shasum -a 256 | awk '{print $1}') \
   || die 'could not hash renderer inputs'
 

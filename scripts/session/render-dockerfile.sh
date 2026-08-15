@@ -8,6 +8,9 @@ die() {
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd) || exit 1
 
+# shellcheck source=scripts/tools/lib.sh
+. "$repo_root/scripts/tools/lib.sh" || exit 1
+
 context_dir=${1:?usage: render-dockerfile.sh CONTEXT_DIR BASE_IMAGE_REF CANONICAL_PROFILE_JSON}
 base_image_ref=${2:?usage: render-dockerfile.sh CONTEXT_DIR BASE_IMAGE_REF CANONICAL_PROFILE_JSON}
 canonical_profile=${3:?usage: render-dockerfile.sh CONTEXT_DIR BASE_IMAGE_REF CANONICAL_PROFILE_JSON}
@@ -117,13 +120,26 @@ if test "$tools_count" -gt 0; then
     || die 'could not copy tool-catalog.json into context'
   cp -- "$repo_root/scripts/tools/install-selected.sh" "$context_dir/install-selected.sh" \
     || die 'could not copy install-selected.sh into context'
-  cp -- "$repo_root/scripts/tools/install-github-release-tar.sh" "$context_dir/install-github-release-tar.sh" \
-    || die 'could not copy install-github-release-tar.sh into context'
+  cp -- "$repo_root/scripts/tools/lib.sh" "$context_dir/lib.sh" \
+    || die 'could not copy lib.sh into context'
   cat >>"$dockerfile" <<EOF || die "could not write $dockerfile"
 COPY --chown=root:root session-tool-catalog.json /opt/session-tool-catalog.json
 COPY --chown=root:root session-tools-selection.json /opt/session-tools-selection.json
+COPY --chown=root:root --chmod=0755 lib.sh /usr/local/lib/ai-sandboxes/lib.sh
 COPY --chown=root:root --chmod=0755 install-selected.sh /usr/local/lib/ai-sandboxes/install-selected.sh
-COPY --chown=root:root --chmod=0755 install-github-release-tar.sh /usr/local/lib/ai-sandboxes/install-github-release-tar.sh
+EOF
+  # The catalog is the authoritative list of adapters a profile could be
+  # selecting; copy exactly the installer script each catalog adapter
+  # dispatches to (see install-selected.sh), never release-provided ones.
+  while IFS= read -r adapter; do
+    is_known_adapter "$adapter" \
+      || die "render-dockerfile: catalog references unsupported adapter: $adapter"
+    cp -- "$repo_root/scripts/tools/install-$adapter.sh" "$context_dir/install-$adapter.sh" \
+      || die "could not copy install-$adapter.sh into context"
+    printf 'COPY --chown=root:root --chmod=0755 install-%s.sh /usr/local/lib/ai-sandboxes/install-%s.sh\n' "$adapter" "$adapter" >>"$dockerfile" \
+      || die "could not write $dockerfile"
+  done < <(jq -r '[.tools[].adapter] | unique[]' "$context_dir/session-tool-catalog.json")
+  cat >>"$dockerfile" <<EOF || die "could not write $dockerfile"
 RUN install -d /usr/local/libexec \\
  && /usr/local/lib/ai-sandboxes/install-selected.sh runtime /opt/session-tool-catalog.json /opt/session-tools-selection.json
 EOF

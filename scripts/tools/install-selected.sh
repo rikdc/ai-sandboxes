@@ -6,6 +6,9 @@ catalog=${2:?usage: install-selected.sh PHASE CATALOG SELECTION}
 selection=${3:?usage: install-selected.sh PHASE CATALOG SELECTION}
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd) || exit 1
 
+# shellcheck source=scripts/tools/lib.sh
+. "$script_dir/lib.sh" || exit 1
+
 install_state_wrapper() {
   cat > /usr/local/libexec/ai-sandboxes-state-wrapper <<'EOF' || return 1
 #!/bin/sh
@@ -81,10 +84,20 @@ while IFS= read -r id; do
         install_state_wrapper || exit 1
         printf '%s\n' "$state_dir" "$state_env" "$state_db" > "/usr/local/libexec/$binary.state" || exit 1
         chmod 0644 "/usr/local/libexec/$binary.state" || exit 1
-        ln -sf /usr/local/libexec/ai-sandboxes-state-wrapper "/usr/local/bin/$binary" || exit 1
+        path_is_absent "/usr/local/bin/$binary" || { echo "refusing to overwrite /usr/local/bin/$binary with state-wrapper launcher for $id" >&2; exit 1; }
+        ln -s /usr/local/libexec/ai-sandboxes-state-wrapper "/usr/local/bin/$binary" || exit 1
       else
         "$script_dir/install-github-release-tar.sh" "$catalog" "$selection" "$id" /usr/local/bin || exit 1
       fi ;;
+    runtime:https-tar|runtime:awscli-zip)
+      # A state-wrapper installation keeps the real binary in /usr/local/libexec
+      # and a launcher in /usr/local/bin, but neither of these adapters installs
+      # a single movable binary: https-tar may install a whole toolchain tree
+      # (see install-https-tar.sh) and awscli-zip carries an installer plus a
+      # dist/ tree, so neither layout is wrapper-compatible. Validation rejects
+      # a state_wrapper on these entries; install straight to /usr/local/bin.
+      "$script_dir/install-$adapter.sh" "$catalog" "$selection" "$id" /usr/local/bin || exit 1
+      ;;
     *)
       echo "unsupported installation phase or adapter: $phase:$adapter" >&2
       exit 2 ;;

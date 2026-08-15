@@ -17,21 +17,66 @@ require_unique_ids() {
   test -z "$duplicates" || fail "duplicate tool id(s): $duplicates"
 }
 
+validate_url_template() {
+  jq -e '
+    (.url_template | type == "string") and
+    (.url_template | startswith("https://")) and
+    (.url_template | contains("{{version}}")) and
+    (.url_template | gsub("\\{\\{version\\}\\}"; "") | (contains("{") or contains("}")) | not) and
+    (.url_template | (contains("..") or contains("@") or contains(" ") or contains("\t")) | not)
+  '
+}
+
 validate_catalog_entry() {
   local entry=$1
-  local id
+  local id adapter
   id=$(jq -er '.id' <<<"$entry") || fail 'catalog tool is missing an id'
+  adapter=$(jq -er '.adapter' <<<"$entry") || fail "catalog entry missing adapter: $id"
 
-  jq -e '
-    (.id | type == "string" and test("^[a-z][a-z0-9-]*$")) and
-    (.adapter == "github-release-tar") and
-    (.repository | type == "string" and test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$") and (contains("..") | not)) and
-    (.asset | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]*$") and (contains("..") | not)) and
-    (.archive_member | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._/-]*$") and (contains("..") | not)) and
-    (.binary | type == "string" and test("^[a-z][a-z0-9-]*$")) and
-    ((keys | sort) == ["adapter", "archive_member", "asset", "binary", "id", "repository"] or
-     (keys | sort) == ["adapter", "archive_member", "asset", "binary", "id", "repository", "state_wrapper"])
-  ' <<<"$entry" >/dev/null || fail "invalid catalog entry: $id"
+  case "$adapter" in
+    github-release-tar)
+      jq -e '
+        (.id | type == "string" and test("^[a-z][a-z0-9-]*$")) and
+        (.adapter == "github-release-tar") and
+        (.repository | type == "string" and test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$") and (contains("..") | not)) and
+        (.asset | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]*$") and (contains("..") | not)) and
+        (.archive_member | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._/-]*$") and (contains("..") | not)) and
+        (.binary | type == "string" and test("^[a-z][a-z0-9-]*$")) and
+        ((keys | sort) == ["adapter", "archive_member", "asset", "binary", "id", "repository"] or
+         (keys | sort) == ["adapter", "archive_member", "asset", "binary", "id", "repository", "state_wrapper"])
+      ' <<<"$entry" >/dev/null || fail "invalid catalog entry: $id"
+      ;;
+    https-tar)
+      jq -e '
+        (.id | type == "string" and test("^[a-z][a-z0-9-]*$")) and
+        (.adapter == "https-tar") and
+        (.archive_member | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._/-]*$") and (contains("..") | not) and (endswith("/") | not)) and
+        (.binary | type == "string" and test("^[a-z][a-z0-9-]*$")) and
+        ((.expose // null) == null or (.expose as $e |
+          ($e | type == "array") and
+          ($e | length > 0) and
+          ($e | all(type == "string" and test("^[a-z][a-z0-9-]*$"))) and
+          (($e | length) == ($e | unique | length)) and
+          ($e | any(. == $binary))
+        )) and
+        ((keys | sort) == ["adapter", "archive_member", "binary", "id", "url_template"] or
+         (keys | sort) == ["adapter", "archive_member", "binary", "expose", "id", "url_template"])
+      ' --arg binary "$(jq -er '.binary' <<<"$entry")" <<<"$entry" >/dev/null || fail "invalid catalog entry: $id"
+      validate_url_template <<<"$entry" >/dev/null || fail "invalid catalog entry: $id"
+      ;;
+    awscli-zip)
+      jq -e '
+        (.id | type == "string" and test("^[a-z][a-z0-9-]*$")) and
+        (.adapter == "awscli-zip") and
+        (.binary | type == "string" and test("^[a-z][a-z0-9-]*$")) and
+        ((keys | sort) == ["adapter", "binary", "id", "url_template"])
+      ' <<<"$entry" >/dev/null || fail "invalid catalog entry: $id"
+      validate_url_template <<<"$entry" >/dev/null || fail "invalid catalog entry: $id"
+      ;;
+    *)
+      fail "unknown adapter for $id: $adapter"
+      ;;
+  esac
 
   if jq -e '.state_wrapper != null' <<<"$entry" >/dev/null; then
     jq -e '
@@ -66,6 +111,7 @@ jq -e '
   ))
 ' "$runtime" >/dev/null || fail 'invalid runtime document'
 
+declare -A claimed_binaries=()
 while IFS= read -r id; do
   entry=$(jq -ce --arg id "$id" '.tools[] | select(.id == $id)' "$catalog") || fail "unknown tool id: $id"
   selected=$(jq -ce --arg id "$id" '.tools[] | select(.id == $id)' "$selection") || fail "could not read selection entry: $id"
@@ -74,4 +120,15 @@ while IFS= read -r id; do
   if jq -e '.state_wrapper != null' <<<"$entry" >/dev/null; then
     jq -e '.shared_state != null' "$runtime" >/dev/null || fail "$id requires shared state"
   fi
+  # Collect the /usr/local/bin names this tool would install so two selected
+  # tools cannot silently overwrite each other's launcher. The catalog's own
+  # unique-id constraint does not cover this: two distinct catalog ids can
+  # still expose the same command name.
+  while IFS= read -r name; do
+    test -n "$name" || continue
+    if test -n "${claimed_binaries[$name]:-}"; then
+      fail "binary name collision on '$name': ${claimed_binaries[$name]} and $id both install it"
+    fi
+    claimed_binaries[$name]=$id
+  done < <(jq -r '(.expose // [.binary])[]' <<<"$entry")
 done < <(jq -r '.tools[].id' "$selection")

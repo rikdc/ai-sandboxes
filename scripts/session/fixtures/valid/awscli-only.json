@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "tools": [
+    { "id": "awscli", "version": "2.36.23", "sha256": "3fecc0e5de767c1f9837058cce1ac382ab80ac83b99673ee9a103c70f058c720" }
+  ]
+}
