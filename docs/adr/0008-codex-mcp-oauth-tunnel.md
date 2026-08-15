@@ -84,12 +84,17 @@ knows about.
   registry.
 - The server name is validated (non-empty, must not start with `-`) to
   prevent flag smuggling into either CLI's `mcp login`.
-- Tunnel open is single-attempt: every failure mode (SSH not
-  authorised, `msb ssh serve` not starting, forward bind collision)
-  surfaces as a distinct error the caller can act on. A retry loop
-  was considered and rejected — bind collisions on a freshly-picked
-  ephemeral port are rare enough that retrying mostly serves to
-  disguise the real errors it swallows.
+- Tunnel readiness is process-aware, not a bare "can I connect?"
+  check: the host loopback port is preflighted before any child
+  starts, and both `msb ssh serve` and the OpenSSH forward are
+  monitored so an unrelated listener already on the expected port can
+  never be mistaken for the child becoming ready. Retrying is narrowly
+  scoped to the one case where it is safe — a self-picked ephemeral
+  port losing the pick/bind TOCTOU race — and even then it is bounded
+  and never applied to a caller-fixed port (Claude's registered
+  callback port) or to any other failure mode (SSH not authorised,
+  `msb ssh serve` not starting, forward bind collision, readiness
+  timeout), each of which surfaces as a distinct, immediate error.
 - Account login (`ai-sandbox codex login`) is unchanged; it stays on
   the Codex-imposed fixed port 1455.
 - Claude has no account-login equivalent under `ai-sandbox` — Claude
@@ -107,5 +112,5 @@ knows about.
 - ADR-0007 — the tunnel primitive and account-login flow.
 - Issue #42 — original bug report; MCP OAuth was in scope.
 - OpenAI MCP documentation — `mcp_oauth_callback_port` semantics.
-- Claude Code MCP docs — `claude mcp login` (no port flag) and
-  `claude mcp add --callback-port` (https://code.claude.com/docs/en/mcp).
+- [Claude Code MCP documentation](https://code.claude.com/docs/en/mcp) —
+  `claude mcp login` (no port flag) and `claude mcp add --callback-port`.

@@ -22,9 +22,12 @@ type CallbackOperation struct {
 	// Agent is the ai-sandbox.agent label to match when discovering the
 	// running sandbox (e.g. "codex").
 	Agent string
-	// HostPort is the host loopback port to forward from. Zero means
-	// "pick a free ephemeral port and use the same port on both sides",
-	// which retries on tunnel-open collisions.
+	// HostPort is the host loopback port to forward from. Zero means "pick
+	// a free ephemeral port and use the same port on both sides", which
+	// narrowly retries only a self-picked port losing the pick/bind TOCTOU
+	// race (see defaultOpenTunnel). A non-zero HostPort is treated as
+	// caller-fixed (e.g. Claude's registered callback port) and is never
+	// retried.
 	HostPort int
 	// GuestPort is the guest loopback port to forward to. Ignored when
 	// HostPort is zero.
