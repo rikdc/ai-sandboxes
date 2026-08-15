@@ -1,4 +1,4 @@
-# ADR-0008: Codex MCP OAuth reuses the operation-scoped SSH tunnel
+# ADR-0008: MCP OAuth reuses the operation-scoped SSH tunnel (Codex + Claude)
 
 ## Status
 
@@ -12,34 +12,46 @@ Consequences section flagged MCP OAuth callbacks (Slack, Notion, …) as
 a follow-up and speculated that each provider would need its own
 subcommand or discovery mechanism. That conclusion was wrong.
 
-Codex already exposes a stable client-level adapter for MCP OAuth:
-`codex mcp login <server-name>` performs the sign-in against a server
-declared in Codex's own `~/.codex/config.toml`, and
-`mcp_oauth_callback_port` lets the caller pin the callback port so a
-loopback tunnel can be established up-front. That collapses the "one
-subcommand per provider" fan-out to one host-side wrapper per client.
+Both Codex and Claude Code expose a stable client-level adapter for
+MCP OAuth:
+
+- Codex: `codex mcp login <server-name>` + `-c mcp_oauth_callback_port=P`.
+- Claude Code (v2.1.186+): `claude mcp login <server-name>` +
+  `--callback-port P`.
+
+Each collapses the "one subcommand per provider" fan-out to one
+host-side wrapper per client.
 
 ## Decision
 
-`ai-sandbox codex mcp login <server-name>` reuses the ADR-0007 tunnel
-primitive with a per-invocation ephemeral loopback port `P`, tunnels
-`127.0.0.1:P → 127.0.0.1:P`, and execs
-`codex -c mcp_oauth_callback_port=P mcp login <server-name>` inside the
-running codex sandbox. The server name is opaque to `ai-sandbox`;
-Codex resolves it from the persisted `codex-home` volume.
+Two symmetric subcommands, both sharing the ADR-0007 tunnel primitive
+through one host-side orchestrator (`executeCallbackOperation`):
 
-The host-side implementation is one shared orchestrator
-(`executeCallbackOperation`) plus a ~40-line per-client wrapper. Adding
-a new MCP provider requires no Go change and no host-side registry —
-it is a user edit to Codex's own config.
+- `ai-sandbox codex mcp login <server-name>` picks an ephemeral loopback
+  port `P`, tunnels `127.0.0.1:P → 127.0.0.1:P`, and execs
+  `codex -c mcp_oauth_callback_port=P mcp login <server-name>` inside
+  the running codex sandbox.
+- `ai-sandbox claude mcp login <server-name>` picks an ephemeral port
+  `P` and execs `claude mcp login --callback-port P <server-name>` inside
+  the running claude sandbox.
+
+Sandbox discovery uses the existing `ai-sandbox.agent` and
+`ai-sandbox.workspace` labels, generalised in this change to apply to
+all agents (previously codex-only, an accidental specialisation). The
+server name is opaque to `ai-sandbox`; each CLI resolves it from its
+own persisted config in the agent's home volume.
+
+Each per-client wrapper is a ~40-line file. Adding a new MCP provider
+requires no Go change and no host-side registry — it is a user edit to
+the CLI's own config.
 
 **Rejected alternative — host-owned `auth.json` registry.** Would have
 mapped `provider → {agent, port, argv}` on the host so
 `ai-sandbox auth <provider>` could dispatch generically. Rejected as
-premature: Codex's client adapter already covers every provider, so a
-registry would manufacture a small badly-documented templating language
-for speculative Claude/other-client requirements. Revisit only after
-2–3 genuinely different clients need the same treatment.
+premature: each client's own adapter already covers every provider it
+knows about, so a registry would manufacture a small badly-documented
+templating language for speculative requirements. Revisit only after a
+future client fails to expose an `mcp login` + callback-port equivalent.
 
 **Reaffirmed — no generic listener publishing.** The session-profile
 schema is still not extended with a `ports` capability. All host↔guest
@@ -49,27 +61,34 @@ recorded in ADR-0007 (probe A failed against `127.0.0.1` guest binds).
 
 **Correction to ADR-0007 Consequences.** The bullet "each provider
 needs its own subcommand or discovery mechanism" is superseded: one
-`codex mcp login <name>` wrapper covers every Codex MCP provider.
+`<client> mcp login <name>` wrapper covers every provider that client
+knows about.
 
 ## Consequences
 
-- MCP browser sign-in works without host-side per-provider code or
-  configuration.
-- The MCP server registry stays where it belongs — in Codex's persisted
-  config — and `ai-sandbox` never reads or writes it.
-- `codex mcp login` execs with `--workdir /home/node --user node` so an
-  agent-writable project-mounted `.codex/config.toml` cannot shadow the
-  persisted MCP server registry.
+- MCP browser sign-in works for both Codex and Claude Code without
+  host-side per-provider code or configuration.
+- Each MCP server registry stays where it belongs — in the CLI's
+  persisted config — and `ai-sandbox` never reads or writes it.
+- `codex mcp login` and `claude mcp login` exec with
+  `--workdir /home/node --user node` so an agent-writable
+  project-mounted config file cannot shadow the persisted MCP server
+  registry.
 - The server name is validated (non-empty, must not start with `-`) to
-  prevent flag smuggling into `codex mcp login`.
+  prevent flag smuggling into either CLI's `mcp login`.
 - Ephemeral host port picks retry up to three times on OpenSSH
   collision (`ExitOnForwardFailure=yes`). Two collisions on the same
   invocation indicate a real problem worth surfacing.
 - Account login (`ai-sandbox codex login`) is unchanged; it stays on
   the Codex-imposed fixed port 1455.
-- Extending this pattern to another client (Claude, etc.) is a ~40-line
-  wrapper file plus an ADR paragraph, provided the client exposes both
-  a `<client> mcp login <name>` subcommand and a callback-port override
+- Claude has no account-login equivalent under `ai-sandbox` — Claude
+  Code's sign-in is out of scope here; only MCP OAuth is covered.
+- Sandbox labels are now applied to every agent, not just codex. No
+  existing behaviour depends on their absence; `msb list --label`
+  queries simply now return matches for claude sandboxes too.
+- Extending this pattern to a third client is a ~40-line wrapper file
+  plus an ADR paragraph, provided the client exposes both a
+  `<client> mcp login <name>` subcommand and a callback-port override
   equivalent.
 
 ## References
@@ -77,3 +96,5 @@ needs its own subcommand or discovery mechanism" is superseded: one
 - ADR-0007 — the tunnel primitive and account-login flow.
 - Issue #42 — original bug report; MCP OAuth was in scope.
 - OpenAI MCP documentation — `mcp_oauth_callback_port` semantics.
+- Claude Code MCP docs — `claude mcp login` and `--callback-port`
+  (https://code.claude.com/docs/en/mcp).

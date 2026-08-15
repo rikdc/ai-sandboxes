@@ -70,6 +70,22 @@ parsed:
 			fmt.Fprintf(stderr, "ai-sandbox codex: unknown subcommand %q\n", args[1])
 			return 2
 		}
+	case "claude":
+		if len(args) < 2 {
+			fmt.Fprintf(stderr, "ai-sandbox claude: expected subcommand 'mcp login <name>'\n")
+			return 2
+		}
+		switch args[1] {
+		case "mcp":
+			if len(args) < 3 || args[2] != "login" {
+				fmt.Fprintf(stderr, "ai-sandbox claude mcp: expected subcommand 'login <name>'\n")
+				return 2
+			}
+			return claudeMCPLoginCommand(args[3:], stdout, stderr)
+		default:
+			fmt.Fprintf(stderr, "ai-sandbox claude: unknown subcommand %q\n", args[1])
+			return 2
+		}
 	case "help", "--help", "-h":
 		usage(stdout)
 		return 0
@@ -93,6 +109,8 @@ func usage(w io.Writer) {
 		"                                   against a running 'run codex' sandbox\n"+
 		"  codex mcp login <server-name>    open scoped tunnel + run MCP OAuth sign-in\n"+
 		"    [--timeout D]                  for the named server against a running codex sandbox\n"+
+		"  claude mcp login <server-name>   open scoped tunnel + run MCP OAuth sign-in\n"+
+		"    [--timeout D]                  for the named server against a running claude sandbox\n"+
 		"  version                          print the version\n"+
 		"  help                             show this help\n\n"+
 		"Agents: claude, codex. Put agent arguments after `--`; they are\n"+
