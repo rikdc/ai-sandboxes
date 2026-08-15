@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -71,7 +72,7 @@ func pickLoopbackPort() (int, error) {
 // a connection or the budget expires.
 func waitForListener(host string, port int, budget time.Duration) error {
 	deadline := time.Now().Add(budget)
-	addr := fmt.Sprintf("%s:%d", host, port)
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	for time.Now().Before(deadline) {
 		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
 		if err == nil {

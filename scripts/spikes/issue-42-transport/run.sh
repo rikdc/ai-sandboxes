@@ -7,7 +7,7 @@ if ! command -v msb >/dev/null 2>&1; then
   exit 0
 fi
 
-# shellcheck source=lib.sh
+# shellcheck disable=SC1091
 . ./lib.sh
 
 SPIKE_RESULTS="$(pwd)/RESULTS.md"
