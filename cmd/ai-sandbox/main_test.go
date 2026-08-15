@@ -481,6 +481,15 @@ func TestDispatch(t *testing.T) {
 		t.Fatalf("doctor --help: code=%d out=%q", code, out.String())
 	}
 	out.Reset()
+	if code := run([]string{"codex"}, &out, &err); code != 2 || !strings.Contains(err.String(), "expected subcommand 'login'") {
+		t.Fatalf("codex without subcommand: code=%d err=%q", code, err.String())
+	}
+	err.Reset()
+	if code := run([]string{"codex", "bogus"}, &out, &err); code != 2 || !strings.Contains(err.String(), "expected subcommand 'login'") {
+		t.Fatalf("codex bogus: code=%d err=%q", code, err.String())
+	}
+	err.Reset()
+	out.Reset()
 	if code := run([]string{"-v", "plan", "claude"}, &out, &err); code != 0 {
 		// -v before a command is accepted; plan requires msb, which may be
 		// absent in the test environment. Assert the flag parses and we reach
