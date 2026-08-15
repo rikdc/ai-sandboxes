@@ -248,6 +248,7 @@ type execEnv struct {
 	cwd      string
 	home     string
 	exe      string
+	argv0    string
 	checkout string
 	getenv   func(string) string
 	// run executes a host program and returns its stdout, streaming stderr to
@@ -287,10 +288,38 @@ func currentEnv() execEnv {
 		cwd:      cwd,
 		home:     home,
 		exe:      exe,
+		argv0:    resolveArgv0(os.Args[0], cwd),
 		checkout: findCheckout(exe, cwd),
 		getenv:   os.Getenv,
 		run:      execCapture,
 	}
+}
+
+// resolveArgv0 resolves os.Args[0] to an absolute path without relying on
+// os.Executable, whose result "may be a symlink or the path it points to"
+// depending on the OS (see the os.Executable doc comment). Preserving how
+// the process was actually invoked lets the guard protect the PATH symlink
+// directory (~/.local/bin/ai-sandbox) even when os.Executable already
+// resolved through it to the libexec target.
+func resolveArgv0(arg0, cwd string) string {
+	if arg0 == "" {
+		return ""
+	}
+	if filepath.IsAbs(arg0) {
+		return arg0
+	}
+	if strings.ContainsRune(arg0, filepath.Separator) {
+		if cwd == "" {
+			return ""
+		}
+		return filepath.Join(cwd, arg0)
+	}
+	// A bare name means the shell resolved it via PATH (the common case for
+	// the ~/.local/bin/ai-sandbox symlink); look it up the same way.
+	if p, err := exec.LookPath(arg0); err == nil {
+		return p
+	}
+	return ""
 }
 
 // resolvedCheckout returns the checkout already computed for this env, or
@@ -334,22 +363,38 @@ func (e execEnv) protectedRoots(checkout string) []string {
 		filepath.Join(e.home, ".config", "ai-sandboxes", "trusted"),
 		filepath.Join(e.home, ".config", "microvms"),
 		aiSandboxInstallDir(e.home, e.getenv),
+		// The installer symlinks ~/.local/bin/ai-sandbox (or
+		// AI_SANDBOX_BIN_DIR) into the libexec install so the auth
+		// subcommands are reachable on PATH. That directory holds
+		// host-trusted state (the symlink itself) independent of whichever
+		// path this particular invocation happened to resolve through, so
+		// it is protected unconditionally rather than only when exe/argv0
+		// happen to point at it.
+		aiSandboxBinDir(e.home, e.getenv),
 	}
 	// Also protect the directory the running binary itself lives in when it
 	// resolves outside the checkout. An attacker who replaced the executable
-	// there would run as host on the next invocation. Guard both the resolved
-	// install directory and, when they differ, the symlink source so a
-	// PATH-convenience link like ~/.local/bin/ai-sandbox cannot be replaced.
+	// there would run as host on the next invocation. Guard both the
+	// resolved install directory and, when they differ, the symlink source
+	// so a PATH-convenience link like ~/.local/bin/ai-sandbox cannot be
+	// replaced. Both os.Executable's result (e.exe) and the actual
+	// invocation path (e.argv0, from os.Args[0]) are considered: Go
+	// explicitly documents that os.Executable may return either the symlink
+	// or its resolved target depending on the OS, so relying on it alone
+	// can silently drop the symlink directory from this list.
 	exe := e.exe
 	if exe == "" {
 		exe, _ = os.Executable()
 	}
-	if exe != "" {
-		exeDir := filepath.Dir(exe)
-		candidates = append(candidates, exeDir)
-		if resolved, rerr := filepath.EvalSymlinks(exe); rerr == nil {
-			if dir := filepath.Dir(resolved); dir != exeDir {
-				candidates = append(candidates, dir)
+	for _, p := range []string{exe, e.argv0} {
+		if p == "" {
+			continue
+		}
+		dir := filepath.Dir(p)
+		candidates = append(candidates, dir)
+		if resolved, rerr := filepath.EvalSymlinks(p); rerr == nil {
+			if resolvedDir := filepath.Dir(resolved); resolvedDir != dir {
+				candidates = append(candidates, resolvedDir)
 			}
 		}
 	}
@@ -622,6 +667,19 @@ func aiSandboxInstallDir(home string, getenv func(string) string) string {
 		}
 	}
 	return filepath.Join(home, ".local", "libexec", "ai-sandboxes")
+}
+
+// aiSandboxBinDir returns the directory scripts/install-ai-sandbox symlinks
+// the ai-sandbox binary into. Kept in one place so both the installer's
+// default and the guard's protected root agree, exactly like
+// aiSandboxInstallDir.
+func aiSandboxBinDir(home string, getenv func(string) string) string {
+	if getenv != nil {
+		if v := getenv("AI_SANDBOX_BIN_DIR"); v != "" {
+			return v
+		}
+	}
+	return filepath.Join(home, ".local", "bin")
 }
 
 // findCheckout walks upward from several anchors looking for the ai-sandboxes

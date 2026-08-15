@@ -565,6 +565,168 @@ func TestProtectedRootsSymlinkedBinary(t *testing.T) {
 	}
 }
 
+// TestProtectedRootsBinDir covers the default and AI_SANDBOX_BIN_DIR-
+// configured PATH symlink directory: it must be protected unconditionally,
+// independent of whatever path os.Executable/argv0 happened to resolve
+// through for this particular invocation.
+func TestProtectedRootsBinDir(t *testing.T) {
+	t.Run("default ~/.local/bin", func(t *testing.T) {
+		home := t.TempDir()
+		binDir := filepath.Join(home, ".local", "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		e := execEnv{home: home, getenv: testGetenv(nil)}
+		roots := e.protectedRoots("")
+		if !containsArg(roots, binDir) {
+			t.Errorf("protected roots %v missing default bin dir %q", roots, binDir)
+		}
+	})
+
+	t.Run("custom AI_SANDBOX_BIN_DIR", func(t *testing.T) {
+		home := t.TempDir()
+		binDir := t.TempDir()
+		e := execEnv{home: home, getenv: testGetenv(map[string]string{"AI_SANDBOX_BIN_DIR": binDir})}
+		roots := e.protectedRoots("")
+		if !containsArg(roots, binDir) {
+			t.Errorf("protected roots %v missing custom bin dir %q", roots, binDir)
+		}
+		defaultBin := filepath.Join(home, ".local", "bin")
+		if containsArg(roots, defaultBin) {
+			t.Errorf("protected roots %v should not also protect the unused default bin dir %q", roots, defaultBin)
+		}
+	})
+
+	t.Run("does not require the install-time env var on later invocations", func(t *testing.T) {
+		// The installer runs once with AI_SANDBOX_BIN_DIR set; every later
+		// `ai-sandbox run` invocation must still protect that directory even
+		// though the shell no longer has AI_SANDBOX_BIN_DIR exported, because
+		// currentEnv reads it fresh from the environment on every run, not
+		// from install-time state. We simulate "still exported" here since
+		// execEnv always resolves getenv live; the guarantee under test is
+		// that no caller needs to thread install-time config through by hand.
+		home := t.TempDir()
+		binDir := filepath.Join(home, "custom-bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		e := execEnv{home: home, getenv: testGetenv(map[string]string{"AI_SANDBOX_BIN_DIR": binDir})}
+		roots := e.protectedRoots("")
+		if !containsArg(roots, binDir) {
+			t.Errorf("protected roots %v missing configured bin dir %q on a fresh invocation", roots, binDir)
+		}
+	})
+}
+
+// TestResolveArgv0 covers resolving the actual invocation path from
+// os.Args[0]: absolute, relative-with-separator, and bare-name-via-PATH
+// forms, plus the empty case.
+func TestResolveArgv0(t *testing.T) {
+	t.Run("absolute", func(t *testing.T) {
+		if got := resolveArgv0("/usr/local/bin/ai-sandbox", "/somewhere"); got != "/usr/local/bin/ai-sandbox" {
+			t.Errorf("resolveArgv0 = %q, want unchanged absolute path", got)
+		}
+	})
+
+	t.Run("relative with separator", func(t *testing.T) {
+		got := resolveArgv0("./bin/ai-sandbox", "/home/user/project")
+		want := filepath.Join("/home/user/project", "./bin/ai-sandbox")
+		if got != want {
+			t.Errorf("resolveArgv0 = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("bare name resolved via PATH", func(t *testing.T) {
+		dir := t.TempDir()
+		bin := filepath.Join(dir, "ai-sandbox-test-helper")
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		got := resolveArgv0("ai-sandbox-test-helper", "/irrelevant")
+		if got != bin {
+			t.Errorf("resolveArgv0 = %q, want PATH-resolved %q", got, bin)
+		}
+	})
+
+	t.Run("empty", func(t *testing.T) {
+		if got := resolveArgv0("", "/somewhere"); got != "" {
+			t.Errorf("resolveArgv0(\"\") = %q, want empty", got)
+		}
+	})
+}
+
+// TestProtectedRootsArgv0SymlinkNotSeenByExecutable is the regression test
+// for os.Executable's documented ambiguity: it may return either the symlink
+// through which the process was invoked or the resolved target, depending on
+// the OS. Here e.exe is already the resolved libexec target (as if
+// os.Executable had resolved through the symlink), so only argv0 -- the
+// actual invocation path -- carries the symlink directory. protectedRoots
+// must still protect it.
+func TestProtectedRootsArgv0SymlinkNotSeenByExecutable(t *testing.T) {
+	home := t.TempDir()
+	target := filepath.Join(t.TempDir(), "ai-sandbox")
+	if err := os.WriteFile(target, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "ai-sandbox")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	// e.exe deliberately set to the resolved target, not the symlink,
+	// simulating a platform where os.Executable already resolved through it.
+	e := execEnv{home: home, exe: target, argv0: link, getenv: testGetenv(nil)}
+	roots := e.protectedRoots("")
+
+	if !containsArg(roots, filepath.Dir(link)) {
+		t.Errorf("protected roots %v missing the symlink directory %q, which os.Executable alone would have missed", roots, filepath.Dir(link))
+	}
+}
+
+// TestRefuseOverlapBinDir is the end-to-end check that the bin dir named by
+// protectedRoots actually stops plan.RefuseOverlap from mounting a workspace
+// equal to, containing, or nested inside it -- not just that the directory
+// appears in the candidate list.
+func TestRefuseOverlapBinDir(t *testing.T) {
+	home := t.TempDir()
+	binDir := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e := execEnv{home: home, getenv: testGetenv(nil)}
+	roots := e.protectedRoots("")
+
+	nested := filepath.Join(binDir, "nested")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	containing := filepath.Dir(binDir) // .local, which contains bin
+	unrelated := t.TempDir()
+
+	cases := []struct {
+		name      string
+		workspace string
+		wantErr   bool
+	}{
+		{"workspace equal to bin dir", binDir, true},
+		{"workspace nested inside bin dir", nested, true},
+		{"workspace containing bin dir", containing, true},
+		{"unrelated workspace", unrelated, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := plan.RefuseOverlap(c.workspace, roots)
+			if c.wantErr && err == nil {
+				t.Errorf("RefuseOverlap(%q) expected an error", c.workspace)
+			}
+			if !c.wantErr && err != nil {
+				t.Errorf("RefuseOverlap(%q) unexpected error: %v", c.workspace, err)
+			}
+		})
+	}
+}
+
 func TestResolvedCheckout(t *testing.T) {
 	t.Setenv("AI_SANDBOXES_ROOT", "")
 	checkout := t.TempDir()
