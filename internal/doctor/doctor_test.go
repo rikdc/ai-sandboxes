@@ -354,6 +354,24 @@ func TestDoctorUsesRuntimeConfigOverride(t *testing.T) {
 	}
 }
 
+func TestDoctorFailsForRelativeRuntimeConfigOverride(t *testing.T) {
+	env, _ := fakeEnv(t, true, true)
+	env.RuntimeConfig = "runtime.json"
+	checks := env.Run()
+	if got := checkStatus(checks, "runtime policy"); got != statusFail {
+		t.Fatalf("runtime policy = %s, want fail for relative override", got)
+	}
+	var detail string
+	for _, c := range checks {
+		if c.Name == "runtime policy" {
+			detail = c.Detail
+		}
+	}
+	if !strings.Contains(detail, "absolute path") {
+		t.Fatalf("runtime policy detail = %q, want absolute-path error", detail)
+	}
+}
+
 func installWrapper(t *testing.T, home, agent, body string) {
 	t.Helper()
 	dir := filepath.Join(home, ".config", "fish", "functions")

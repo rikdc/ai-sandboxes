@@ -86,7 +86,7 @@ func (e *Env) Run() []Check {
 	dockerErr := e.dockerIsUsable()
 	shared, policyErr := runtimepolicy.Resolve(e.Checkout, e.RuntimeConfig)
 	if policyErr != nil {
-		add(Check{Name: "runtime policy", Status: statusWarn, Detail: policyErr.Error()})
+		add(Check{Name: "runtime policy", Status: statusFail, Detail: policyErr.Error()})
 	}
 
 	if msbErr != nil {
