@@ -19,8 +19,8 @@ Run once, then skip on subsequent verifications.
 | # | Check | Command | Pass |
 |---|-------|---------|------|
 | 0.1 | On the review branch | `git rev-parse --abbrev-ref HEAD` | prints `feat/issue-42-codex-mcp-tunnel` |
-| 0.2 | Binary builds | `go build -o ai-sandbox ./cmd/ai-sandbox` | exit 0, `./ai-sandbox` exists |
-| 0.3 | Full test suite | `go test ./...` | prints `ok` for all packages, no `FAIL`, 112 tests total |
+| 0.2 | Binary builds and is on PATH | `scripts/install-ai-sandbox && command -v ai-sandbox` | prints a path under `~/.local/bin/`. If not, add that dir to your `PATH`. |
+| 0.3 | Full test suite | `go test ./...` | prints `ok` for all packages, no `FAIL`, 119 tests total |
 | 0.4 | `msb ssh authorize` has been run once ever | `test -s ~/.microsandbox/ssh/authorized_keys && echo ok` | prints `ok`. If not, run `msb ssh authorize --file ~/.ssh/id_ed25519.pub` (or another pubkey) once. |
 | 0.5 | Choose a browser sign-in target | pick one Codex MCP server + one Claude MCP server that use OAuth. Suggested: **Notion** (Codex) and **Sentry** (Claude) — both real, both documented, unlikely to collide with each other. Any other OAuth-based MCP works. | you have two provider names in mind |
 
@@ -33,7 +33,7 @@ Fast, no browser.
 ### 1.1 Help text lists both new subcommands
 
 ```
-./ai-sandbox help
+ai-sandbox help
 ```
 
 **Expect:** the Commands block contains both:
@@ -48,22 +48,41 @@ Fast, no browser.
 ### 1.2 Missing / malformed server name is rejected with exit 2
 
 ```
-./ai-sandbox codex mcp login;     echo "exit=$?"
-./ai-sandbox codex mcp login "";  echo "exit=$?"
-./ai-sandbox codex mcp login -- -weird; echo "exit=$?"
-./ai-sandbox claude mcp login;    echo "exit=$?"
-./ai-sandbox claude mcp login ""; echo "exit=$?"
-./ai-sandbox claude mcp login -- -weird; echo "exit=$?"
+ai-sandbox codex mcp login;                  echo "exit=$?"
+ai-sandbox codex mcp login "";               echo "exit=$?"
+ai-sandbox codex mcp login -- -weird;        echo "exit=$?"
+ai-sandbox claude mcp login;                 echo "exit=$?"
+ai-sandbox claude mcp login "";              echo "exit=$?"
+ai-sandbox claude mcp login --callback-port 49152 -- -weird; echo "exit=$?"
 ```
 
 **Expect:** each prints `exit=2` and a stderr message mentioning "server name".
 
+### 1.2b Claude requires `--callback-port`
+
+```
+ai-sandbox claude mcp login sentry;                       echo "exit=$?"
+ai-sandbox claude mcp login --callback-port 0 sentry;     echo "exit=$?"
+ai-sandbox claude mcp login --callback-port 99999 sentry; echo "exit=$?"
+```
+
+**Expect:** each prints `exit=2` and stderr mentions `--callback-port`.
+
+### 1.2c `--timeout` works on either side of the server name
+
+```
+ai-sandbox codex mcp login --timeout 2s notion; echo "exit=$?"
+ai-sandbox codex mcp login notion --timeout 2s; echo "exit=$?"
+```
+
+Both should reach sandbox discovery (and then exit 1 with "no running codex sandbox" — this section only asserts the parser accepts both orderings, not the end-to-end flow).
+
 ### 1.3 Dispatcher rejects unknown subcommands cleanly
 
 ```
-./ai-sandbox codex bogus; echo "exit=$?"
-./ai-sandbox claude bogus; echo "exit=$?"
-./ai-sandbox claude mcp bogus; echo "exit=$?"
+ai-sandbox codex bogus; echo "exit=$?"
+ai-sandbox claude bogus; echo "exit=$?"
+ai-sandbox claude mcp bogus; echo "exit=$?"
 ```
 
 **Expect:** each prints `exit=2` with a clear "unknown subcommand" or "expected subcommand" message.
@@ -73,8 +92,8 @@ Fast, no browser.
 Ensure nothing is running: `msb list --running --format json | jq '.[].name'` should be empty (or none of the entries match codex/claude for your workspace). Then:
 
 ```
-./ai-sandbox codex mcp login notion;    echo "exit=$?"
-./ai-sandbox claude mcp login sentry;   echo "exit=$?"
+ai-sandbox codex mcp login notion;                     echo "exit=$?"
+ai-sandbox claude mcp login --callback-port 49152 sentry; echo "exit=$?"
 ```
 
 **Expect:**
@@ -93,7 +112,7 @@ Verifies the refactor didn't break the shipped account-login flow.
 Terminal A:
 
 ```
-./ai-sandbox run codex
+ai-sandbox run codex
 ```
 
 Wait for the codex REPL prompt.
@@ -103,7 +122,7 @@ Wait for the codex REPL prompt.
 Terminal B (same repo checkout):
 
 ```
-./ai-sandbox codex login
+ai-sandbox codex login
 ```
 
 **Expect:**
@@ -122,7 +141,7 @@ Terminal A: exit codex, then `ctrl-c` to stop the sandbox.
 
 ### 3.1 Declare a Notion MCP server in Codex's config
 
-The `codex-home` volume persists across sessions. Inside a running codex sandbox (terminal A: `./ai-sandbox run codex`), add the Notion MCP server via the codex REPL or by editing `~/.codex/config.toml`. Refer to Codex's MCP docs for the exact stanza. Verify it's registered:
+The `codex-home` volume persists across sessions. Inside a running codex sandbox (terminal A: `ai-sandbox run codex`), add the Notion MCP server via the codex REPL or by editing `~/.codex/config.toml`. Refer to Codex's MCP docs for the exact stanza. Verify it's registered:
 
 Inside the codex REPL: `/mcp` should list `notion` as a server pending authentication.
 
@@ -133,7 +152,7 @@ Leave the sandbox running.
 Terminal B:
 
 ```
-./ai-sandbox codex mcp login notion
+ai-sandbox codex mcp login notion
 ```
 
 **Expect:**
@@ -171,55 +190,89 @@ Clean up: delete the adversarial file.
 
 ## 4. Claude MCP login end-to-end
 
+Claude Code v2.1.231 (the version pinned in this repo) implements MCP OAuth
+differently from Codex: `claude mcp login` has **no** callback-port flag.
+The fixed callback port is established when the server is registered with
+`claude mcp add --callback-port P`, and both the browser redirect and any
+tunneling must target that exact port. `ai-sandbox claude mcp login`
+therefore requires `--callback-port P` on the host command line, so the
+tunnel binds the port Claude will actually redirect to.
+
 ### 4.1 Verify Claude Code CLI is recent enough
 
-Inside a running claude sandbox (terminal A: `./ai-sandbox run claude`):
+Inside a running claude sandbox (terminal A: `ai-sandbox run claude`):
 
 ```
 claude --version
 ```
 
-**Expect:** v2.1.186 or later. Earlier versions do not have `claude mcp login`. If older, `ai-sandbox run claude` should have pulled an up-to-date image; if it didn't, run `./scripts/update` on the host first.
+**Expect:** v2.1.186 or later (v2.1.231 is what this repo pins). Earlier
+versions do not have `claude mcp login`. If older, run `scripts/update`
+on the host first.
 
-### 4.2 Declare a Sentry MCP server in Claude Code's config
+### 4.2 Register the Sentry MCP server with a fixed callback port
 
-Inside terminal A's claude session, add the Sentry MCP server per Claude Code's docs (`claude mcp add sentry --transport http https://mcp.sentry.dev/mcp` or equivalent — check current docs at https://code.claude.com/docs/en/mcp for the exact command). Verify:
+**Important:** use `--scope user` so the server persists in
+`~/.claude.json` (the `/home/node` scope), not in the workspace's local
+`.mcp.json`. `ai-sandbox claude mcp login` execs from `/home/node` as
+`node` (the trust-boundary decision described in ADR-0008), so a
+locally-scoped registration will not be visible to the login command.
+
+Inside terminal A's claude session:
+
+```
+claude mcp add \
+  --scope user \
+  --callback-port 49152 \
+  --transport http \
+  sentry https://mcp.sentry.dev/mcp
+```
+
+Then confirm:
 
 ```
 claude mcp list
 ```
 
-**Expect:** `sentry` is listed, marked as needing authentication.
+**Expect:** `sentry` is listed as `user`-scoped and marked as needing
+authentication.
+
+Any free unprivileged port works in place of `49152`; pick something in
+`49152..65535` (the IANA dynamic range) and use the same value at login
+time. If the port is already in use, `ai-sandbox` will surface a clear
+"open tunnel" error and you can retry with a different value.
 
 Leave the sandbox running.
 
 ### 4.3 Run the login from the host
 
-Terminal B:
+Terminal B, using the **same** port from step 4.2:
 
 ```
-./ai-sandbox claude mcp login sentry
+ai-sandbox claude mcp login --callback-port 49152 sentry
 ```
 
 **Expect:**
 - Browser opens to Sentry's OAuth consent screen.
-- Callback redirects to `http://localhost:<ephemeral-port>/callback` (Claude Code uses `/callback`, differing from Codex's default path — this is expected).
+- Callback redirects to `http://localhost:49152/callback` and the page reports success.
 - Terminal B exits 0.
 - Inside terminal A, `claude mcp list` now marks `sentry` as authenticated.
+
+If the browser reports "can't connect to localhost:49152", the callback
+port passed to `ai-sandbox` did not match the one registered with
+`claude mcp add`. Re-check step 4.2.
 
 ### 4.4 Verify labels + discovery for Claude sandbox
 
 With terminal A still running:
 
 ```
-msb list --running --format json \
-  --label ai-sandbox.agent=claude \
-  --label ai-sandbox.workspace=$(git rev-parse HEAD | cut -c1-12 || echo unknown)
+msb list --running --format json --label ai-sandbox.agent=claude | jq .
 ```
 
-**Expect:** exactly one sandbox listed — the claude sandbox from terminal A. This verifies the label generalisation from `plan.go`. If empty, the label change didn't take effect and the discovery would have failed in step 4.3.
+**Expect:** at least one entry, and it is the claude sandbox from terminal A. This verifies the label generalisation from `plan.go` (previously claude sandboxes had no labels, so `FindSandbox("claude", …)` would have failed).
 
-*Note:* the exact `workspace` hash value differs per agent (claude uses `git-blob`, codex uses `sha256`), so the command above only works reliably against a known-correct hash. The simpler evidence that discovery is working is that step 4.3 succeeded rather than reporting "no running claude sandbox".
+The simpler evidence that discovery is working is that step 4.3 succeeded rather than reporting "no running claude sandbox for this workspace".
 
 ---
 
@@ -230,25 +283,25 @@ Optional deeper checks; do at least one.
 ### 5.1 Timeout is honoured
 
 ```
-./ai-sandbox codex mcp login notion --timeout 2s
+ai-sandbox codex mcp login --timeout 2s notion
 ```
 
 Close the browser tab without completing sign-in.
 
-**Expect:** exits with code 1 after ~2 seconds; stderr contains `aborted after 2s`. Tunnel processes are cleaned up.
+**Expect:** exits with code 1 after ~2 seconds; stderr contains `aborted after 2s`. Tunnel processes are cleaned up. (`TestCallbackOperationTimeoutIsHonoured` exercises the same code path automatically.)
 
 ### 5.2 SIGINT during the flow tears down the tunnel
 
-Start `./ai-sandbox claude mcp login sentry`, then press `ctrl-c` before completing the browser sign-in.
+Start `ai-sandbox claude mcp login --callback-port 49152 sentry`, then press `ctrl-c` before completing the browser sign-in.
 
 **Expect:** exits promptly with a non-zero code. `pgrep -f "msb ssh serve"` and `pgrep -f "ssh -N -o.*127.0.0.1:.*127.0.0.1:.*"` return nothing.
 
 ### 5.3 Multiple sandboxes surface as ambiguous
 
-Start two codex sandboxes for the same workspace (e.g. by running `./ai-sandbox run codex` in two different terminals with the same CWD). Then:
+Start two codex sandboxes for the same workspace (e.g. by running `ai-sandbox run codex` in two different terminals with the same CWD). Then:
 
 ```
-./ai-sandbox codex mcp login notion
+ai-sandbox codex mcp login notion
 ```
 
 **Expect:** exit 1; stderr contains `multiple running codex sandboxes match this workspace` and suggests `msb stop <name>`.
@@ -283,5 +336,7 @@ Before approving the PR, confirm:
 | `cmd/ai-sandbox/callback_op.go` (new) | `CallbackOperation` + `executeCallbackOperation`. Owns SSH-authorized preflight, workspace resolve/validate, sandbox discovery, tunnel open (with retry on ephemeral collisions), `msb exec` with timeout/signal handling. | Shared orchestration for every callback-based auth flow. |
 | `cmd/ai-sandbox/codex_login.go` | Collapsed to a `CallbackOperation` builder. Behaviour unchanged. | Extraction, not rewrite. |
 | `cmd/ai-sandbox/codex_mcp_login.go` (new) | `codex mcp login <name>` — ephemeral port, guest argv `codex -c mcp_oauth_callback_port=P mcp login <name>`. | Per-client wrapper for Codex MCP. |
-| `cmd/ai-sandbox/claude_mcp_login.go` (new) | `claude mcp login <name>` — ephemeral port, guest argv `claude mcp login --callback-port P <name>`. | Per-client wrapper for Claude Code MCP. |
+| `cmd/ai-sandbox/claude_mcp_login.go` (new) | `claude mcp login --callback-port <P> <name>` — fixed port supplied by the caller (must match `claude mcp add --callback-port`); guest argv is `claude mcp login <name>` (Claude Code v2.1.231 rejects `--callback-port` on `mcp login`; the flag lives on `mcp add`). | Per-client wrapper for Claude Code MCP. |
+| `cmd/ai-sandbox/argv.go` (new) | `reorderFlagsFirst` — splits argv so flags can appear on either side of the positional server name (Go's `flag.Parse` stops at first positional otherwise). Applied to `codex login`, `codex mcp login`, `claude mcp login`. | Documented `--timeout … <name>` and `<name> --timeout …` both work. |
+| `scripts/install-ai-sandbox` | Also symlinks `~/.local/bin/ai-sandbox` to the libexec install (dir configurable via `AI_SANDBOX_BIN_DIR`). Warns if that dir is not on `PATH`. | The Fish wrappers only route `codex`/`claude` launches; auth subcommands are typed directly and need `PATH` resolution. |
 | `docs/adr/0008-codex-mcp-oauth-tunnel.md` (new) | Records the client-adapter approach; rejects a host-owned registry; reaffirms no generic listener publishing; supersedes ADR-0007's Consequences bullet. | Design record. |
