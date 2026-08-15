@@ -58,6 +58,14 @@ never boots its own VM.
   because `-o ExitOnForwardFailure=yes` refuses to open the second
   forward. Acceptable — Codex login is inherently interactive and
   single-user.
+- After a successful `codex login`, the `codex` process already running
+  in the attached sandbox does not pick up the new credential — Codex
+  reads the auth token at startup and caches it in-process. The user
+  must exit and restart `codex` in terminal 1 once. Subsequent boots
+  reuse the persisted token from the `codex-home` volume. A launcher-
+  driven auto-restart was considered and rejected: it adds surprise,
+  the one-time cost is trivial, and any in-process reload dance would
+  couple us tightly to a Codex CLI internal we do not control.
 
 ## References
 

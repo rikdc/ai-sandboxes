@@ -97,4 +97,10 @@ published to the LAN or public Internet. See
 [ADR-0007](docs/adr/0007-codex-auth-tunnel.md) for why this is a
 tunnel rather than a published port.
 
+After the first successful sign-in, exit and re-run `codex` in
+terminal 1. The already-running `codex` process reads the auth token
+at startup and won't pick up the newly-written credential until it
+restarts. Subsequent runs re-use the persisted token from the
+`codex-home` volume, so this is a one-time cost per credential.
+
 Claude and Codex default to an intentionally restricted network. Use `CLAUDE_MSB_PUBLIC_EGRESS=1 claude` or `CODEX_MSB_PUBLIC_EGRESS=1 codex` only when a session needs public Internet access. The mounted project is writable, so keep secrets out of it and review agent changes with Git.
