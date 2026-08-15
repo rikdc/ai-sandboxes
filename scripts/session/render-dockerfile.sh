@@ -8,6 +8,9 @@ die() {
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd) || exit 1
 
+# shellcheck source=scripts/tools/lib.sh
+. "$repo_root/scripts/tools/lib.sh" || exit 1
+
 context_dir=${1:?usage: render-dockerfile.sh CONTEXT_DIR BASE_IMAGE_REF CANONICAL_PROFILE_JSON}
 base_image_ref=${2:?usage: render-dockerfile.sh CONTEXT_DIR BASE_IMAGE_REF CANONICAL_PROFILE_JSON}
 canonical_profile=${3:?usage: render-dockerfile.sh CONTEXT_DIR BASE_IMAGE_REF CANONICAL_PROFILE_JSON}
@@ -129,10 +132,8 @@ EOF
   # selecting; copy exactly the installer script each catalog adapter
   # dispatches to (see install-selected.sh), never release-provided ones.
   while IFS= read -r adapter; do
-    case "$adapter" in
-      github-release-tar|https-tar|awscli-zip) ;;
-      *) die "render-dockerfile: catalog references unsupported adapter: $adapter" ;;
-    esac
+    is_known_adapter "$adapter" \
+      || die "render-dockerfile: catalog references unsupported adapter: $adapter"
     cp -- "$repo_root/scripts/tools/install-$adapter.sh" "$context_dir/install-$adapter.sh" \
       || die "could not copy install-$adapter.sh into context"
     printf 'COPY --chown=root:root --chmod=0755 install-%s.sh /usr/local/lib/ai-sandboxes/install-%s.sh\n' "$adapter" "$adapter" >>"$dockerfile" \
