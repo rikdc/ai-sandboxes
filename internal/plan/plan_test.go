@@ -176,13 +176,17 @@ func TestResolveCodexPlan(t *testing.T) {
 	}
 }
 
-func TestResolveClaudePlanHasNoLabels(t *testing.T) {
+func TestResolveClaudePlanLabels(t *testing.T) {
 	p, err := Resolve(mustConfig(t, "claude"), resolveInput("claude", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Labels != nil {
-		t.Errorf("claude labels = %v, want nil (labels are codex-only for now)", p.Labels)
+	wantLabels := []string{
+		"ai-sandbox.agent=claude",
+		"ai-sandbox.workspace=e85645dcb849",
+	}
+	if !reflect.DeepEqual(p.Labels, wantLabels) {
+		t.Errorf("claude labels = %v, want %v", p.Labels, wantLabels)
 	}
 }
 

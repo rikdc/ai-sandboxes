@@ -126,16 +126,18 @@ func Resolve(cfg config.Agent, in Input) (*RuntimePlan, error) {
 	}
 	homeMount := fmt.Sprintf("%s:%s:%s", cfg.HomeVolume, cfg.HomePath, homeOpts)
 
-	var labels []string
-	if cfg.Name == "codex" {
-		hash, herr := WorkspaceHash(cfg.WorkspaceHash, in.Workspace)
-		if herr != nil {
-			return nil, herr
-		}
-		labels = []string{
-			"ai-sandbox.agent=codex",
-			"ai-sandbox.workspace=" + hash,
-		}
+	// Every agent's sandbox is labelled with its agent name and workspace
+	// hash so subcommands like `codex login` / `codex mcp login` /
+	// `claude mcp login` can attach via `msb list --label`. Callers that
+	// don't need discovery (image builds, ad-hoc `msb run`) simply ignore
+	// the labels.
+	hash, herr := WorkspaceHash(cfg.WorkspaceHash, in.Workspace)
+	if herr != nil {
+		return nil, herr
+	}
+	labels := []string{
+		"ai-sandbox.agent=" + cfg.Name,
+		"ai-sandbox.workspace=" + hash,
 	}
 
 	return &RuntimePlan{
