@@ -43,9 +43,9 @@ func claudeMCPLoginCommand(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "claude mcp login: server name must be non-empty and must not start with '-', got %q\n", name)
 		return 2
 	}
-	if *callbackPort <= 0 || *callbackPort > 65535 {
+	if *callbackPort < 1024 || *callbackPort > 65535 {
 		fmt.Fprintf(stderr,
-			"claude mcp login: --callback-port <1..65535> is required; use the same port you passed to `claude mcp add --callback-port` when registering %q\n",
+			"claude mcp login: --callback-port <1024..65535> is required (unprivileged range; the IANA dynamic range 49152..65535 is recommended); use the same port you passed to `claude mcp add --callback-port` when registering %q\n",
 			name)
 		return 2
 	}

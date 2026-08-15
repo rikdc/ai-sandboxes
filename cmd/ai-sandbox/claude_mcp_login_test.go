@@ -63,6 +63,66 @@ func TestClaudeMCPLoginRejectsInvalidCallbackPort(t *testing.T) {
 	}
 }
 
+// TestClaudeMCPLoginCallbackPortBoundaries verifies the callback port is
+// restricted to the unprivileged range 1024..65535: the host SSH process and
+// the guest Claude process both run unprivileged, so ports 1..1023 can never
+// be bound and must be rejected before a tunnel is attempted.
+func TestClaudeMCPLoginCallbackPortBoundaries(t *testing.T) {
+	cases := []struct {
+		port    string
+		wantErr bool
+	}{
+		{"1023", true},
+		{"1024", false},
+		{"65535", false},
+		{"65536", true},
+		{"0", true},
+		{"-1", true},
+	}
+	for _, c := range cases {
+		t.Run(c.port, func(t *testing.T) {
+			var out, err bytes.Buffer
+			args := []string{"--callback-port", c.port, "sentry"}
+			code := claudeMCPLoginCommand(args, &out, &err)
+			if c.wantErr {
+				if code != 2 {
+					t.Errorf("port %s: exit code = %d, want 2", c.port, code)
+				}
+				if !strings.Contains(err.String(), "--callback-port") {
+					t.Errorf("port %s: stderr should reject out-of-range port, got: %q", c.port, err.String())
+				}
+				return
+			}
+			// In-range ports pass validation and proceed to msb ssh auth
+			// checks, which fail fast in this test environment (no real
+			// msb/home). What matters here is that the port itself was
+			// never rejected as out-of-range.
+			if strings.Contains(err.String(), "--callback-port") {
+				t.Errorf("port %s: should be accepted as in-range, got: %q", c.port, err.String())
+			}
+		})
+	}
+}
+
+// TestClaudeMCPLoginCallbackPortFlagOrdering verifies --callback-port is
+// accepted whether it comes before or after the positional server name.
+func TestClaudeMCPLoginCallbackPortFlagOrdering(t *testing.T) {
+	t.Run("flag before server name", func(t *testing.T) {
+		var out, err bytes.Buffer
+		code := claudeMCPLoginCommand([]string{"--callback-port", "49200", "sentry"}, &out, &err)
+		if code == 2 && strings.Contains(err.String(), "--callback-port") {
+			t.Errorf("flag-before-name should not be rejected as missing/invalid port, got: %q", err.String())
+		}
+	})
+	t.Run("flag after server name", func(t *testing.T) {
+		var out, err bytes.Buffer
+		code := claudeMCPLoginCommand([]string{"sentry", "--callback-port", "49200"}, &out, &err)
+		if code == 2 && strings.Contains(err.String(), "--callback-port") {
+			t.Errorf("flag-after-name should not be rejected as missing/invalid port, got: %q", err.String())
+		}
+	})
+}
+
 func TestClaudeMCPLoginRejectsFlagLikeName(t *testing.T) {
 	var out, err bytes.Buffer
 	code := claudeMCPLoginCommand([]string{"--", "-evil"}, &out, &err)
