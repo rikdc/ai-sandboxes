@@ -152,7 +152,7 @@ func TestResolveCodexPlan(t *testing.T) {
 	if p.WorkspaceMount != "/Users/me/dev/my-project:/workspace/my-project-2d3837f6cd02:rw,quota=20G" {
 		t.Errorf("workspace mount = %q", p.WorkspaceMount)
 	}
-	if p.HomeMount != "codex-home:/home/node:rw,quota=4G" {
+	if p.HomeMount != "codex-home:/home/node:kind=dir,quota=4G" {
 		t.Errorf("home mount = %q", p.HomeMount)
 	}
 	if p.Network.Public || !p.Network.NoNet || len(p.Network.Rules) == 0 {
