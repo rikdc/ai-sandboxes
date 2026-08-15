@@ -132,13 +132,24 @@ func executeCallbackOperation(ctx context.Context, op CallbackOperation, e execE
 	return 0
 }
 
-// openTunnel returns a live tunnel and the guest port used. When hostPort
-// is zero it picks a free ephemeral port and uses the same value on both
-// sides; otherwise it treats hostPort/guestPort as fixed. It does not
-// retry — every failure mode (SSH not authorised, `msb ssh serve` not
-// starting, forward bind collision) surfaces as an error the caller can
-// act on. Bind collisions on a freshly-picked ephemeral port are so rare
-// in practice that a retry loop mostly serves to mask the real errors.
+// maxEphemeralPortAttempts bounds the narrow retry below: a self-picked
+// ephemeral port can lose a TOCTOU race between PickLoopbackPort releasing it
+// and OpenLoopbackTunnel's own preflight rebinding it. That specific
+// collision is the only failure mode worth retrying — everything else
+// (authorization, msb ssh serve failing to start, SSH forward failure,
+// readiness timeout) is surfaced verbatim so it never gets mistaken for a
+// transient bind race.
+const maxEphemeralPortAttempts = 3
+
+// openTunnel returns a live tunnel and the guest port used. When hostPort is
+// zero it picks a free ephemeral port and uses the same value on both sides,
+// narrowly retrying only if OpenLoopbackTunnel reports that exact port as
+// occupied (microsandbox.ErrCallbackPortOccupied) — a TOCTOU loss on a port
+// nothing else has any claim to. A caller-fixed hostPort (e.g. Claude's
+// registered callback port) is never retried: retrying it would silently try
+// a port different from the one the caller registered, and every other
+// failure mode must surface immediately rather than being mistaken for a
+// collision.
 //
 // Package-level indirection so tests can substitute a mock.
 var openTunnelFn = defaultOpenTunnel
@@ -148,13 +159,20 @@ func defaultOpenTunnel(client *microsandbox.Client, sandboxName string, hostPort
 		tun, err := client.OpenLoopbackTunnel(sandboxName, hostPort, guestPort)
 		return tun, guestPort, err
 	}
-	p, err := microsandbox.PickLoopbackPort()
-	if err != nil {
-		return nil, 0, fmt.Errorf("pick host port: %w", err)
+	var lastErr error
+	for attempt := 0; attempt < maxEphemeralPortAttempts; attempt++ {
+		p, err := microsandbox.PickLoopbackPort()
+		if err != nil {
+			return nil, 0, fmt.Errorf("pick host port: %w", err)
+		}
+		tun, err := client.OpenLoopbackTunnel(sandboxName, p, p)
+		if err == nil {
+			return tun, p, nil
+		}
+		lastErr = err
+		if !errors.Is(err, microsandbox.ErrCallbackPortOccupied) {
+			return nil, 0, err
+		}
 	}
-	tun, err := client.OpenLoopbackTunnel(sandboxName, p, p)
-	if err != nil {
-		return nil, 0, err
-	}
-	return tun, p, nil
+	return nil, 0, fmt.Errorf("ephemeral port collided %d times in a row: %w", maxEphemeralPortAttempts, lastErr)
 }
