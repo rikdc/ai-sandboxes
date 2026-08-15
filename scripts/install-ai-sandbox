@@ -54,4 +54,19 @@ esac
 chmod 0755 "$tmp_bin" || die 'could not set mode on built binary'
 mv -f "$tmp_bin" "$install_path" || die "could not install to $install_path"
 
+# The Fish wrappers only route `codex`/`claude` (agent-launch pass-throughs).
+# Auth subcommands like `ai-sandbox codex mcp login` are typed by the user
+# and need $PATH resolution to work. Symlink from ~/.local/bin (the usual
+# per-user PATH prefix) into the trusted libexec install so the binary is
+# reachable without exposing $install_dir itself on PATH.
+symlink_dir="${AI_SANDBOX_BIN_DIR:-$HOME/.local/bin}"
+symlink_path="$symlink_dir/ai-sandbox"
+mkdir -p "$symlink_dir" || die "could not create $symlink_dir"
+ln -sfn "$install_path" "$symlink_path" || die "could not symlink $symlink_path -> $install_path"
+
 printf 'installed %s (%s)\n' "$install_path" "$built_version"
+printf 'symlinked %s -> %s\n' "$symlink_path" "$install_path"
+case ":$PATH:" in
+  *":$symlink_dir:"*) ;;
+  *) printf 'note: %s is not on your PATH; add it or invoke ai-sandbox by absolute path\n' "$symlink_dir" >&2 ;;
+esac
