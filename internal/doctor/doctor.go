@@ -4,6 +4,7 @@
 package doctor
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/rikdc/ai-sandboxes/internal/config"
 	"github.com/rikdc/ai-sandboxes/internal/plan"
 	"github.com/rikdc/ai-sandboxes/internal/runtime/microsandbox"
+	"github.com/rikdc/ai-sandboxes/internal/runtimepolicy"
 )
 
 type statusLabel = string
@@ -47,11 +49,12 @@ type Runner struct {
 // match what scripts/install-ai-sandbox writes to — callers resolve the
 // AI_SANDBOX_INSTALL_DIR override before calling in so the guard, the
 // installer, and this diagnostic all agree on one path.
-func New(home, checkout, installDir string) *Env {
+func New(home, checkout, installDir, runtimeConfig string) *Env {
 	return &Env{
-		Home:       home,
-		Checkout:   checkout,
-		InstallDir: installDir,
+		Home:          home,
+		Checkout:      checkout,
+		InstallDir:    installDir,
+		RuntimeConfig: runtimeConfig,
 		Runner: Runner{
 			LookPath: execLookPath,
 			Run:      execRun,
@@ -63,10 +66,11 @@ func New(home, checkout, installDir string) *Env {
 // when Run is called; the CLI resolves it once and passes it in, and tests
 // that construct Env directly are expected to do the same.
 type Env struct {
-	Home       string
-	Checkout   string
-	InstallDir string
-	Runner     Runner
+	Home          string
+	Checkout      string
+	InstallDir    string
+	RuntimeConfig string
+	Runner        Runner
 }
 
 var hostnameRE = regexp.MustCompile(`^(\*\.)?[A-Za-z0-9][A-Za-z0-9.-]*$`)
@@ -80,6 +84,10 @@ func (e *Env) Run() []Check {
 
 	msbPath, msbErr := e.Runner.LookPath("msb")
 	dockerErr := e.dockerIsUsable()
+	shared, policyErr := runtimepolicy.Resolve(e.Checkout, e.RuntimeConfig)
+	if policyErr != nil {
+		add(Check{Name: "runtime policy", Status: statusFail, Detail: policyErr.Error()})
+	}
 
 	if msbErr != nil {
 		add(Check{Name: "msb", Status: statusFail, Detail: "not installed or not on PATH"})
@@ -106,8 +114,8 @@ func (e *Env) Run() []Check {
 		} else {
 			volumeNames = splitLines(out)
 		}
-		e.checkSharedState(add, imageTags)
-		e.checkVolumes(add, volumeNames)
+		e.checkSharedState(add, imageTags, shared, policyErr)
+		e.checkVolumes(add, volumeNames, shared)
 	}
 
 	e.checkDockerImages(add, dockerErr)
@@ -157,16 +165,7 @@ func (e *Env) checkDockerImages(add func(Check), dockerErr error) {
 	}
 }
 
-func (e *Env) checkSharedState(add func(Check), imageTags []string) {
-	expectedID, expectedQuota := "", ""
-	if e.Checkout != "" {
-		rt, err := config.LoadRuntime(filepath.Join(e.Checkout, "config", "runtime.json"))
-		if err != nil {
-			add(Check{Name: "runtime.json", Status: statusWarn, Detail: "cannot parse: " + err.Error()})
-		} else if rt.SharedState != nil {
-			expectedID, expectedQuota = rt.SharedState.ID, rt.SharedState.Quota
-		}
-	}
+func (e *Env) checkSharedState(add func(Check), imageTags []string, expected *plan.SharedState, policyErr error) {
 	for _, tag := range []string{"ai-sandboxes-claude:local", "ai-sandboxes-codex:local"} {
 		if !contains(imageTags, tag) {
 			add(Check{Name: "image identity " + tag, Status: statusSkip, Detail: "image not loaded in msb"})
@@ -187,25 +186,45 @@ func (e *Env) checkSharedState(add func(Check), imageTags []string) {
 			add(Check{Name: "image identity " + tag, Status: statusFail, Detail: "cannot inspect Docker image: " + err.Error()})
 			continue
 		}
-		if err := microsandbox.MatchDigests(string(dockerOut), meta.ConfigDigest); err != nil {
-			add(Check{Name: "image identity " + tag, Status: statusFail, Detail: "digest mismatch; run ./scripts/load-msb: " + err.Error()})
+		labelOut, labelErr := e.Runner.Run("docker", "image", "inspect", "--format", "{{json .Config.Labels}}", tag)
+		if labelErr != nil {
+			add(Check{Name: "shared state " + tag, Status: statusFail, Detail: "cannot read Docker image labels: " + labelErr.Error()})
+			continue
+		}
+		labels, err := runtimepolicy.DockerSharedStateLabels(labelOut)
+		if err != nil {
+			add(Check{Name: "shared state " + tag, Status: statusFail, Detail: err.Error()})
+			continue
+		}
+		if policyErr != nil {
+			if err := microsandbox.MatchDigests(string(dockerOut), meta.ConfigDigest); err != nil {
+				add(Check{Name: "image identity " + tag, Status: statusFail, Detail: err.Error()})
+			} else {
+				add(Check{Name: "image identity " + tag, Status: statusOK, Detail: "verified"})
+			}
+			add(Check{Name: "shared state " + tag, Status: statusSkip, Detail: "runtime policy could not be resolved"})
+			continue
+		}
+		if err := runtimepolicy.ReconcileBaseImage(string(dockerOut), meta.ConfigDigest, labels, expected); err != nil {
+			if errors.Is(err, microsandbox.ErrDigestMismatch) {
+				add(Check{Name: "image identity " + tag, Status: statusFail, Detail: err.Error()})
+				add(Check{Name: "shared state " + tag, Status: statusSkip, Detail: "image identity is not verified"})
+			} else {
+				add(Check{Name: "image identity " + tag, Status: statusOK, Detail: "verified"})
+				add(Check{Name: "shared state " + tag, Status: statusFail, Detail: err.Error()})
+			}
 			continue
 		}
 		add(Check{Name: "image identity " + tag, Status: statusOK, Detail: "verified"})
-		if expectedID != "" && expectedQuota != "" {
-			st, err := plan.ParseSharedStateRequest(expectedID, expectedQuota)
-			if err != nil {
-				add(Check{Name: "shared state " + tag, Status: statusFail, Detail: err.Error()})
-				continue
-			}
-			add(Check{Name: "shared state " + tag, Status: statusOK, Detail: st.Mount})
-		} else {
+		if expected == nil {
 			add(Check{Name: "shared state " + tag, Status: statusOK, Detail: "none"})
+		} else {
+			add(Check{Name: "shared state " + tag, Status: statusOK, Detail: expected.Mount})
 		}
 	}
 }
 
-func (e *Env) checkVolumes(add func(Check), volumeNames []string) {
+func (e *Env) checkVolumes(add func(Check), volumeNames []string, shared *plan.SharedState) {
 	for _, name := range []string{"claude-home-hardened", "codex-home"} {
 		if contains(volumeNames, name) {
 			add(Check{Name: "msb volume " + name, Status: statusOK, Detail: "present"})
@@ -213,15 +232,11 @@ func (e *Env) checkVolumes(add func(Check), volumeNames []string) {
 			add(Check{Name: "msb volume " + name, Status: statusWarn, Detail: "missing; created on first run"})
 		}
 	}
-	if e.Checkout != "" {
-		rt, err := config.LoadRuntime(filepath.Join(e.Checkout, "config", "runtime.json"))
-		if err == nil && rt.SharedState != nil {
-			volume := "agent-state-" + rt.SharedState.ID + "-v1"
-			if contains(volumeNames, volume) {
-				add(Check{Name: "msb volume " + volume, Status: statusOK, Detail: "present"})
-			} else {
-				add(Check{Name: "msb volume " + volume, Status: statusWarn, Detail: "missing; created on first run"})
-			}
+	if shared != nil {
+		if contains(volumeNames, shared.Volume) {
+			add(Check{Name: "msb volume " + shared.Volume, Status: statusOK, Detail: "present"})
+		} else {
+			add(Check{Name: "msb volume " + shared.Volume, Status: statusWarn, Detail: "missing; created on first run"})
 		}
 	}
 }
