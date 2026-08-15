@@ -37,6 +37,18 @@ cd ~/opt/ai-sandboxes
 assume fish; re-run `scripts/install-fish-functions` after any update that
 changes `shell/**`.
 
+If you plan to use `ai-sandbox codex login` (Codex browser sign-in),
+authorize a host SSH key with `msb` once:
+
+```console
+msb ssh authorize --file ~/.ssh/id_ed25519.pub
+```
+
+`msb ssh serve` refuses to start without this, and `codex login` uses it
+to open a scoped tunnel between the host browser and the guest OAuth
+callback listener. Only your listed key is accepted; nothing is exposed
+beyond `127.0.0.1`. See [ADR-0007](adr/0007-codex-auth-tunnel.md).
+
 Migrating an existing checkout already on disk is just `mv`, then running
 `scripts/install-fish-functions` again to refresh the embedded path.
 
