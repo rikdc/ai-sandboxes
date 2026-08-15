@@ -124,7 +124,6 @@ var agents = map[string]Agent{
 		WorkspaceMountOpts: "rw",
 		WorkspaceHash:      "sha256",
 		Command:            []string{"codex"},
-		CreateHomeVolume:   true,
 	},
 }
 

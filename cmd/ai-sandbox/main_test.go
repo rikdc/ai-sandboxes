@@ -173,7 +173,7 @@ func TestExecuteRunClaude(t *testing.T) {
 	}
 }
 
-func TestExecuteRunCodexCreatesVolumeAndInitsSharedState(t *testing.T) {
+func TestExecuteRunCodexSkipsHomeVolumePrecreate(t *testing.T) {
 	e, _ := testEnv(t)
 	// Create a checkout with runtime.json that configures shared state.
 	checkout := t.TempDir()
@@ -212,8 +212,11 @@ func TestExecuteRunCodexCreatesVolumeAndInitsSharedState(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
-	if !containsArg(client.created, "codex-home") {
-		t.Errorf("codex home volume was not created: %v", client.created)
+	// codex-home is lazily created by msb from the mount spec (kind=dir,quota=4G),
+	// matching claude's proven pattern. A pre-create here would produce a
+	// no-quota volume that msb then refuses to mount with the requested quota.
+	if containsArg(client.created, "codex-home") {
+		t.Errorf("codex home volume should not be pre-created: %v", client.created)
 	}
 	if !containsArg(client.initialized, "agent-state-work-v1") {
 		t.Errorf("shared state not initialized: %v", client.initialized)
