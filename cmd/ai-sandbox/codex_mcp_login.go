@@ -20,7 +20,7 @@ func codexMCPLoginCommand(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("codex mcp login", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	timeout := fs.Duration("timeout", 5*time.Minute, "abort login after this duration")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderFlagsFirst(args, mcpLoginValuedFlags)); err != nil {
 		return 2
 	}
 	rest := fs.Args()

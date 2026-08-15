@@ -11,6 +11,28 @@ import (
 	"github.com/rikdc/ai-sandboxes/internal/runtime/microsandbox"
 )
 
+func TestCodexMCPLoginFlagsBeforeOrAfterPositional(t *testing.T) {
+	// Regression: `flag.Parse` alone stops at the first positional, so
+	// `codex mcp login notion --timeout 2s` would previously bail with
+	// "server name required". reorderFlagsFirst fixes both orderings.
+	// Each case reaches at least as far as sandbox discovery (which then
+	// fails because there is no msb) — the parser must not reject any of
+	// them with a "server name" error.
+	cases := [][]string{
+		{"--timeout", "2s", "notion"},
+		{"notion", "--timeout", "2s"},
+		{"--timeout=2s", "notion"},
+		{"notion", "--timeout=2s"},
+	}
+	for _, args := range cases {
+		var out, err bytes.Buffer
+		code := codexMCPLoginCommand(args, &out, &err)
+		if code == 2 && strings.Contains(err.String(), "server name") {
+			t.Errorf("args=%v: parser refused a well-formed argv: %q", args, err.String())
+		}
+	}
+}
+
 func TestCodexMCPLoginRejectsEmptyName(t *testing.T) {
 	var out, err bytes.Buffer
 	code := codexMCPLoginCommand(nil, &out, &err)
