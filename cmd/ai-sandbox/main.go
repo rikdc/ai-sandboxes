@@ -19,6 +19,7 @@ import (
 	"github.com/rikdc/ai-sandboxes/internal/doctor"
 	"github.com/rikdc/ai-sandboxes/internal/plan"
 	"github.com/rikdc/ai-sandboxes/internal/runtime/microsandbox"
+	"github.com/rikdc/ai-sandboxes/internal/runtimepolicy"
 	"github.com/rikdc/ai-sandboxes/internal/session"
 )
 
@@ -416,25 +417,33 @@ func resolvePlan(ctx context.Context, opts runOptions, e execEnv, stderr io.Writ
 			fmt.Fprintf(stderr, "ai-sandbox: %s\n", err)
 			return nil, 1
 		}
-		shared, err = loadSharedState(root, e.getenv("AI_SANDBOX_RUNTIME_CONFIG"))
+		shared, err = runtimepolicy.Resolve(root, e.getenv("AI_SANDBOX_RUNTIME_CONFIG"))
 		if err != nil {
 			fmt.Fprintf(stderr, "%s: %s\n", opts.agent, err)
 			return nil, 2
 		}
-		if shared != nil {
-			if e.run == nil {
-				fmt.Fprintf(stderr, "%s: cannot verify image identity: no command runner configured\n", opts.agent)
-				return nil, 1
-			}
-			dockerOut, err := e.run(ctx, "docker", "image", "inspect", "--format", "{{.Id}}", agentCfg.Image)
-			if err != nil {
-				fmt.Fprintf(stderr, "%s: could not verify image identity: %v\n", opts.agent, err)
-				return nil, 1
-			}
-			if err := microsandbox.MatchDigests(string(dockerOut), meta.ConfigDigest); err != nil {
-				fmt.Fprintf(stderr, "%s: loaded msb image does not match Docker image; run ./scripts/load-msb to reload: %v\n", opts.agent, err)
-				return nil, 1
-			}
+		if e.run == nil {
+			fmt.Fprintf(stderr, "%s: cannot verify image identity: no command runner configured\n", opts.agent)
+			return nil, 1
+		}
+		dockerDigest, err := e.run(ctx, "docker", "image", "inspect", "--format", "{{.Id}}", agentCfg.Image)
+		if err != nil {
+			fmt.Fprintf(stderr, "%s: could not verify image identity: %v\n", opts.agent, err)
+			return nil, 1
+		}
+		labelOut, err := e.run(ctx, "docker", "image", "inspect", "--format", "{{json .Config.Labels}}", agentCfg.Image)
+		if err != nil {
+			fmt.Fprintf(stderr, "%s: could not read image shared-state labels: %v\n", opts.agent, err)
+			return nil, 1
+		}
+		labels, err := runtimepolicy.DockerSharedStateLabels(labelOut)
+		if err != nil {
+			fmt.Fprintf(stderr, "%s: %s\n", opts.agent, err)
+			return nil, 1
+		}
+		if err := runtimepolicy.ReconcileBaseImage(string(dockerDigest), meta.ConfigDigest, labels, shared); err != nil {
+			fmt.Fprintf(stderr, "%s: base image verification failed: %v\n", opts.agent, err)
+			return nil, 1
 		}
 	}
 
@@ -554,7 +563,7 @@ func doctorCommand(args []string, stdout, stderr io.Writer) int {
 	home := os.Getenv("HOME")
 	checkout := findCheckout(exe, cwd)
 	installDir := aiSandboxInstallDir(home, os.Getenv)
-	env := doctor.New(home, checkout, installDir)
+	env := doctor.New(home, checkout, installDir, os.Getenv("AI_SANDBOX_RUNTIME_CONFIG"))
 	checks := env.Run()
 	hadFailures := doctor.Report(stdout, checks)
 	if hadFailures {
@@ -573,54 +582,6 @@ func aiSandboxInstallDir(home string, getenv func(string) string) string {
 		}
 	}
 	return filepath.Join(home, ".local", "libexec", "ai-sandboxes")
-}
-
-// loadSharedState resolves the runtime shared-state policy. It refuses to
-// silently drop shared state when no source of truth is available: if the
-// launcher is running outside a checkout and no override is set, it errors
-// with an actionable message rather than continuing with an implicit "none".
-//
-// override comes from AI_SANDBOX_RUNTIME_CONFIG:
-//
-//   - "" (unset): use $checkout/config/runtime.json. If checkout is empty,
-//     that is a hard error — the previous behaviour ("silently return nil")
-//     let an installed binary run outside the checkout change policy without
-//     the operator knowing.
-//   - "none": explicitly opt out of shared state.
-//   - any other value: absolute path to a runtime.json to load.
-//
-// The Fish wrappers already inject AI_SANDBOXES_ROOT so the standalone CLI
-// contract matches theirs; direct invocation gains an explicit opt-in/out.
-func loadSharedState(checkout, override string) (*plan.SharedState, error) {
-	switch {
-	case override == "none":
-		return nil, nil
-	case override != "":
-		return sharedStateFromFile(override)
-	case checkout != "":
-		return sharedStateFromFile(filepath.Join(checkout, "config", "runtime.json"))
-	default:
-		return nil, fmt.Errorf(
-			"cannot locate ai-sandboxes checkout for runtime configuration; " +
-				"set AI_SANDBOXES_ROOT to the checkout, or " +
-				"AI_SANDBOX_RUNTIME_CONFIG=/path/to/runtime.json, or " +
-				"AI_SANDBOX_RUNTIME_CONFIG=none to explicitly opt out of shared state")
-	}
-}
-
-func sharedStateFromFile(path string) (*plan.SharedState, error) {
-	rt, err := config.LoadRuntime(path)
-	if err != nil {
-		// A missing file at an explicit override path is a hard error; a
-		// missing file inside a checkout is treated the same. The old
-		// "swallow ENOENT" behaviour hid the exact class of drift this
-		// change exists to prevent.
-		return nil, fmt.Errorf("could not load runtime configuration %s: %w", path, err)
-	}
-	if rt.SharedState == nil {
-		return nil, nil
-	}
-	return plan.ParseSharedStateRequest(rt.SharedState.ID, rt.SharedState.Quota)
 }
 
 // findCheckout walks upward from several anchors looking for the ai-sandboxes

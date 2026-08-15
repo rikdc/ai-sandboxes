@@ -1,0 +1,92 @@
+// Package runtimepolicy resolves the host-selected runtime policy and checks
+// that a loaded base image was built for that policy.
+package runtimepolicy
+
+import (
+	"encoding/json"
+	"fmt"
+	"path/filepath"
+	"strings"
+
+	"github.com/rikdc/ai-sandboxes/internal/config"
+	"github.com/rikdc/ai-sandboxes/internal/plan"
+	"github.com/rikdc/ai-sandboxes/internal/runtime/microsandbox"
+)
+
+const (
+	labelSharedStateID    = "io.ai-sandboxes.shared-state.id"
+	labelSharedStateQuota = "io.ai-sandboxes.shared-state.quota"
+)
+
+// Resolve returns the requested shared-state policy. An override must be the
+// literal "none" or an absolute path, so policy cannot vary with cwd.
+func Resolve(checkout, override string) (*plan.SharedState, error) {
+	if override == "none" {
+		return nil, nil
+	}
+	path := ""
+	if override != "" {
+		if !filepath.IsAbs(override) {
+			return nil, fmt.Errorf("AI_SANDBOX_RUNTIME_CONFIG must be an absolute path or \"none\": %q", override)
+		}
+		path = override
+	} else if checkout != "" {
+		path = filepath.Join(checkout, "config", "runtime.json")
+	} else {
+		return nil, fmt.Errorf("cannot locate ai-sandboxes checkout for runtime configuration; set AI_SANDBOXES_ROOT to the checkout, AI_SANDBOX_RUNTIME_CONFIG=/path/to/runtime.json, or AI_SANDBOX_RUNTIME_CONFIG=none")
+	}
+
+	rt, err := config.LoadRuntime(path)
+	if err != nil {
+		return nil, fmt.Errorf("could not load runtime configuration %s: %w", path, err)
+	}
+	if rt.SharedState == nil {
+		return nil, nil
+	}
+	return plan.ParseSharedStateRequest(rt.SharedState.ID, rt.SharedState.Quota)
+}
+
+// DockerSharedStateLabels parses the JSON emitted by
+// `docker image inspect --format '{{json .Config.Labels}}'`.
+func DockerSharedStateLabels(data []byte) (map[string]string, error) {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" {
+		return map[string]string{}, nil
+	}
+	var labels map[string]string
+	if err := json.Unmarshal([]byte(trimmed), &labels); err != nil {
+		return nil, fmt.Errorf("invalid docker labels JSON: %w", err)
+	}
+	return labels, nil
+}
+
+// ReconcileBaseImage verifies both Docker-to-msb transport identity and the
+// image's baked shared-state contract. It must run even when desired is nil.
+func ReconcileBaseImage(dockerDigest, msbDigest string, labels map[string]string, desired *plan.SharedState) error {
+	if err := microsandbox.MatchDigests(dockerDigest, msbDigest); err != nil {
+		return err
+	}
+	built, err := plan.SharedStateFromLabels(labels)
+	if err != nil {
+		return err
+	}
+	if sameSharedState(built, desired) {
+		return nil
+	}
+	builtID, builtQuota := "", ""
+	if built != nil {
+		builtID, builtQuota = built.ID, built.Quota
+	}
+	desiredID, desiredQuota := "", ""
+	if desired != nil {
+		desiredID, desiredQuota = desired.ID, desired.Quota
+	}
+	return fmt.Errorf("runtime policy requests id=%q quota=%q but image was built with id=%q quota=%q; rebuild with ./scripts/build", desiredID, desiredQuota, builtID, builtQuota)
+}
+
+func sameSharedState(a, b *plan.SharedState) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.ID == b.ID && a.Quota == b.Quota
+}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/rikdc/ai-sandboxes/internal/plan"
 	"github.com/rikdc/ai-sandboxes/internal/runtime/microsandbox"
+	"github.com/rikdc/ai-sandboxes/internal/runtimepolicy"
 )
 
 // fakeMsb stands in for the Microsandbox adapter in orchestration tests.
@@ -81,8 +82,19 @@ func testEnv(t *testing.T) (execEnv, string) {
 		cwd:    project,
 		home:   home,
 		getenv: testGetenv(nil),
+		run:    defaultDockerRun,
 	}
 	return e, home
+}
+
+func defaultDockerRun(_ context.Context, name string, args ...string) ([]byte, error) {
+	if name == "docker" && len(args) >= 4 && args[0] == "image" && args[1] == "inspect" {
+		if strings.Contains(args[3], ".Config.Labels") {
+			return []byte("null"), nil
+		}
+		return []byte("sha256:abc"), nil
+	}
+	return nil, fmt.Errorf("unexpected command %s %v", name, args)
 }
 
 func TestParseAgentArgs(t *testing.T) {
@@ -183,6 +195,8 @@ func TestExecuteRunCodexCreatesVolumeAndInitsSharedState(t *testing.T) {
 	e.getenv = testGetenv(map[string]string{"AI_SANDBOX_RUNTIME_CONFIG": ""})
 	e.run = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		switch {
+		case name == "docker" && len(args) > 3 && args[0] == "image" && args[1] == "inspect" && strings.Contains(args[3], ".Config.Labels"):
+			return []byte(`{"io.ai-sandboxes.shared-state.id":"work","io.ai-sandboxes.shared-state.quota":"4G"}`), nil
 		case name == "docker" && len(args) > 1 && args[0] == "image" && args[1] == "inspect":
 			return []byte("sha256:abc"), nil
 		case name == "msb" && len(args) > 1 && args[0] == "image" && args[1] == "inspect":
@@ -275,7 +289,7 @@ func TestExecutePlanEgressSymlinkedHome(t *testing.T) {
 		[]byte("api.anthropic.com\n"), 0o600)
 
 	t.Run("resolves through the symlinked home", func(t *testing.T) {
-		e := execEnv{cwd: project, home: link, getenv: testGetenv(nil)}
+		e := execEnv{cwd: project, home: link, getenv: testGetenv(nil), run: defaultDockerRun}
 		var out bytes.Buffer
 		code := executePlan(context.Background(), runOptions{agent: "claude"}, e, &out, &bytes.Buffer{}, newFakeMsb())
 		if code != 0 {
@@ -296,7 +310,7 @@ func TestExecutePlanEgressSymlinkedHome(t *testing.T) {
 		}
 		defer os.Rename(moved, dotconfig)
 
-		e := execEnv{cwd: project, home: link, getenv: testGetenv(nil)}
+		e := execEnv{cwd: project, home: link, getenv: testGetenv(nil), run: defaultDockerRun}
 		var errb bytes.Buffer
 		code := executePlan(context.Background(), runOptions{agent: "claude"}, e, &bytes.Buffer{}, &errb, newFakeMsb())
 		if code != 1 {
@@ -343,13 +357,13 @@ func TestExecuteRunInvalidRuntimeJSON(t *testing.T) {
 // configured shared_state in their checkout would silently lose it when they
 // invoked the standalone binary from elsewhere.
 func TestLoadSharedStateFailsWithoutSource(t *testing.T) {
-	if _, err := loadSharedState("", ""); err == nil {
-		t.Fatal("loadSharedState with no checkout and no override should fail")
+	if _, err := runtimepolicy.Resolve("", ""); err == nil {
+		t.Fatal("runtimepolicy.Resolve with no checkout and no override should fail")
 	}
 }
 
 func TestLoadSharedStateExplicitNone(t *testing.T) {
-	got, err := loadSharedState("", "none")
+	got, err := runtimepolicy.Resolve("", "none")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -364,7 +378,7 @@ func TestLoadSharedStateExplicitPath(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"shared_state":{"id":"demo","quota":"2G"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := loadSharedState("", path)
+	got, err := runtimepolicy.Resolve("", path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -377,7 +391,7 @@ func TestLoadSharedStateExplicitPathMissing(t *testing.T) {
 	// A configured override that cannot be loaded is a hard error: the whole
 	// point of the override is to make the source of policy explicit, so
 	// silently returning nil would defeat it.
-	if _, err := loadSharedState("", filepath.Join(t.TempDir(), "does-not-exist.json")); err == nil {
+	if _, err := runtimepolicy.Resolve("", filepath.Join(t.TempDir(), "does-not-exist.json")); err == nil {
 		t.Fatal("missing override path should fail")
 	}
 }
@@ -394,6 +408,42 @@ func TestExecutePlanPrints(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("plan output missing %q:\n%s", want, out.String())
 		}
+	}
+}
+
+func TestExecutePlanVerifiesBaseImageWhenSharedStateIsNone(t *testing.T) {
+	e, _ := testEnv(t)
+	e.run = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "docker" && len(args) >= 4 && args[0] == "image" && args[1] == "inspect" {
+			if strings.Contains(args[3], ".Config.Labels") {
+				return []byte("null"), nil
+			}
+			return []byte("sha256:not-msb"), nil
+		}
+		return nil, fmt.Errorf("unexpected command %s %v", name, args)
+	}
+	var errb bytes.Buffer
+	code := executePlan(context.Background(), runOptions{agent: "claude"}, e, &bytes.Buffer{}, &errb, newFakeMsb())
+	if code != 1 || !strings.Contains(errb.String(), "digest mismatch") {
+		t.Fatalf("code=%d stderr=%q, want digest mismatch with shared state disabled", code, errb.String())
+	}
+}
+
+func TestExecutePlanRejectsLabelsWhenSharedStateIsNone(t *testing.T) {
+	e, _ := testEnv(t)
+	e.run = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "docker" && len(args) >= 4 && args[0] == "image" && args[1] == "inspect" {
+			if strings.Contains(args[3], ".Config.Labels") {
+				return []byte(`{"io.ai-sandboxes.shared-state.id":"stale","io.ai-sandboxes.shared-state.quota":"2G"}`), nil
+			}
+			return []byte("sha256:abc"), nil
+		}
+		return nil, fmt.Errorf("unexpected command %s %v", name, args)
+	}
+	var errb bytes.Buffer
+	code := executePlan(context.Background(), runOptions{agent: "claude"}, e, &bytes.Buffer{}, &errb, newFakeMsb())
+	if code != 1 || !strings.Contains(errb.String(), "rebuild") {
+		t.Fatalf("code=%d stderr=%q, want stale-label failure", code, errb.String())
 	}
 }
 

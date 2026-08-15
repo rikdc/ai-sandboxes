@@ -36,6 +36,8 @@ Claude-specific commands, hooks, agents, and MCP settings are not converted into
 
 Set `shared_state` in `config/runtime.json` to the shape shown in `config/runtime.example.json` to give opted-in agent images a shared, persistent directory at `/var/lib/agent-state`. Its named volume is `agent-state-<id>-v1`.
 
+For a standalone launcher or diagnostic, set `AI_SANDBOX_RUNTIME_CONFIG` to an absolute path to a runtime configuration file. Set it to `none` to explicitly disable shared state. `ai-sandbox run`, `ai-sandbox plan`, and `ai-sandbox doctor` resolve this setting identically; rebuilding is required whenever the selected policy differs from the base image's shared-state labels.
+
 Shared state is visible to every image that opts into the same profile. It does not grant host filesystem or network access, but its contents are untrusted input. Keep credentials out of it. Remove the named volume with `msb volume remove` to reset it; removal is irreversible.
 
 ## Versions

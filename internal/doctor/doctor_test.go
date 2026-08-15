@@ -48,13 +48,13 @@ func fakeEnv(t *testing.T, withMsb, withEgress bool) (*Env, string) {
 				return []byte("26.1.0"), nil
 			case name == "docker" && len(args) > 0 && args[0] == "buildx":
 				return []byte("github.com/docker/buildx v0.20.0"), nil
-		case name == "docker" && len(args) >= 4 && args[0] == "image" && args[1] == "inspect" && args[2] == "--format":
-			if strings.Contains(args[3], ".Config.Labels") {
-				return []byte("null"), nil
-			}
-			return []byte("sha256:abc"), nil
-		case name == "docker" && len(args) > 0 && args[0] == "image":
-			return []byte(`[{}]`), nil
+			case name == "docker" && len(args) >= 4 && args[0] == "image" && args[1] == "inspect" && args[2] == "--format":
+				if strings.Contains(args[3], ".Config.Labels") {
+					return []byte("null"), nil
+				}
+				return []byte("sha256:abc"), nil
+			case name == "docker" && len(args) > 0 && args[0] == "image":
+				return []byte(`[{}]`), nil
 			case name == "msb" && len(args) > 1 && args[0] == "image" && args[1] == "list":
 				return []byte("ai-sandboxes-claude:local\nai-sandboxes-codex:local\n"), nil
 			case name == "msb" && len(args) > 1 && args[0] == "volume" && args[1] == "list":
@@ -227,21 +227,19 @@ func TestDoctorWarnsOnStaleWrapper(t *testing.T) {
 
 func TestDoctorDetectsImageDigestMismatch(t *testing.T) {
 	env, _ := fakeEnv(t, true, true)
+	baseRun := env.Runner.Run
 	// Docker and msb report different digests for the same tag.
 	env.Runner.Run = func(name string, args ...string) ([]byte, error) {
 		if name == "msb" && len(args) > 0 && args[0] == "image" && args[1] == "inspect" {
 			return []byte(`{"config":{"digest":"sha256:abc"}}`), nil
 		}
+		if name == "docker" && len(args) >= 4 && args[0] == "image" && args[1] == "inspect" && strings.Contains(args[3], ".Config.Labels") {
+			return []byte("null"), nil
+		}
 		if name == "docker" && len(args) > 0 && args[0] == "image" && args[1] == "inspect" {
 			return []byte("sha256:different"), nil
 		}
-		if name == "msb" && len(args) > 0 && args[0] == "image" && args[1] == "list" {
-			return []byte("ai-sandboxes-claude:local\nai-sandboxes-codex:local\n"), nil
-		}
-		if name == "msb" && len(args) > 0 && args[0] == "volume" && args[1] == "list" {
-			return []byte("claude-home-hardened\ncodex-home\n"), nil
-		}
-		return nil, errors.New("unexpected")
+		return baseRun(name, args...)
 	}
 	checks := env.Run()
 	if s := checkStatus(checks, "image identity ai-sandboxes-claude:local"); s != statusFail {
@@ -330,6 +328,29 @@ func TestDoctorDetectsSharedStateLabelPresentButRuntimeNone(t *testing.T) {
 	checks := env.Run()
 	if got := checkStatus(checks, "shared state ai-sandboxes-claude:local"); got != statusFail {
 		t.Fatalf("shared state claude = %s, want fail when image has stale labels", got)
+	}
+}
+
+func TestDoctorUsesRuntimeConfigOverride(t *testing.T) {
+	env, _ := fakeEnv(t, true, true)
+	override := filepath.Join(t.TempDir(), "runtime.json")
+	if err := os.WriteFile(override, []byte(`{"shared_state":{"id":"override","quota":"2G"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env.RuntimeConfig = override
+	baseRun := env.Runner.Run
+	env.Runner.Run = func(name string, args ...string) ([]byte, error) {
+		if name == "docker" && len(args) >= 4 && args[0] == "image" && args[1] == "inspect" && args[2] == "--format" && strings.Contains(args[3], ".Config.Labels") {
+			return []byte(`{"io.ai-sandboxes.shared-state.id":"override","io.ai-sandboxes.shared-state.quota":"2G"}`), nil
+		}
+		return baseRun(name, args...)
+	}
+	checks := env.Run()
+	if got := checkStatus(checks, "shared state ai-sandboxes-claude:local"); got != statusOK {
+		t.Fatalf("shared state claude = %s, want override policy accepted", got)
+	}
+	if got := checkStatus(checks, "msb volume agent-state-override-v1"); got != statusWarn {
+		t.Fatalf("override volume = %s, want missing-volume warning", got)
 	}
 }
 
