@@ -484,12 +484,20 @@ func TestDispatch(t *testing.T) {
 		t.Fatalf("doctor --help: code=%d out=%q", code, out.String())
 	}
 	out.Reset()
-	if code := run([]string{"codex"}, &out, &err); code != 2 || !strings.Contains(err.String(), "expected subcommand 'login'") {
+	if code := run([]string{"codex"}, &out, &err); code != 2 || !strings.Contains(err.String(), "expected subcommand 'login' or 'mcp login") {
 		t.Fatalf("codex without subcommand: code=%d err=%q", code, err.String())
 	}
 	err.Reset()
-	if code := run([]string{"codex", "bogus"}, &out, &err); code != 2 || !strings.Contains(err.String(), "expected subcommand 'login'") {
+	if code := run([]string{"codex", "bogus"}, &out, &err); code != 2 || !strings.Contains(err.String(), "unknown subcommand") {
 		t.Fatalf("codex bogus: code=%d err=%q", code, err.String())
+	}
+	err.Reset()
+	if code := run([]string{"codex", "mcp"}, &out, &err); code != 2 || !strings.Contains(err.String(), "expected subcommand 'login <name>'") {
+		t.Fatalf("codex mcp bare: code=%d err=%q", code, err.String())
+	}
+	err.Reset()
+	if code := run([]string{"codex", "mcp", "login"}, &out, &err); code != 2 || !strings.Contains(err.String(), "server name required") {
+		t.Fatalf("codex mcp login without name: code=%d err=%q", code, err.String())
 	}
 	err.Reset()
 	out.Reset()

@@ -53,11 +53,23 @@ parsed:
 	case "doctor":
 		return doctorCommand(args[1:], stdout, stderr)
 	case "codex":
-		if len(args) < 2 || args[1] != "login" {
-			fmt.Fprintf(stderr, "ai-sandbox codex: expected subcommand 'login'\n")
+		if len(args) < 2 {
+			fmt.Fprintf(stderr, "ai-sandbox codex: expected subcommand 'login' or 'mcp login <name>'\n")
 			return 2
 		}
-		return codexLoginCommand(args[2:], stdout, stderr)
+		switch args[1] {
+		case "login":
+			return codexLoginCommand(args[2:], stdout, stderr)
+		case "mcp":
+			if len(args) < 3 || args[2] != "login" {
+				fmt.Fprintf(stderr, "ai-sandbox codex mcp: expected subcommand 'login <name>'\n")
+				return 2
+			}
+			return codexMCPLoginCommand(args[3:], stdout, stderr)
+		default:
+			fmt.Fprintf(stderr, "ai-sandbox codex: unknown subcommand %q\n", args[1])
+			return 2
+		}
 	case "help", "--help", "-h":
 		usage(stdout)
 		return 0
@@ -79,6 +91,8 @@ func usage(w io.Writer) {
 		"  doctor                           validate host prerequisites without mutation\n"+
 		"  codex login [--timeout D]        open scoped tunnel + run browser sign-in\n"+
 		"                                   against a running 'run codex' sandbox\n"+
+		"  codex mcp login <server-name>    open scoped tunnel + run MCP OAuth sign-in\n"+
+		"    [--timeout D]                  for the named server against a running codex sandbox\n"+
 		"  version                          print the version\n"+
 		"  help                             show this help\n\n"+
 		"Agents: claude, codex. Put agent arguments after `--`; they are\n"+
