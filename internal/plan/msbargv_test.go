@@ -148,6 +148,8 @@ func TestCodexMsbArgvGolden(t *testing.T) {
 	}
 	want := []string{
 		"run", "--tty", "--pull", "never", "--user", "node",
+		"--label", "ai-sandbox.agent=codex",
+		"--label", "ai-sandbox.workspace=2d3837f6cd02",
 		"--cpus", "4", "--memory", "8G", "--root-disk", "20G", "--security", "restricted",
 		"--no-net", "--net-rule", "allow@host:udp:53", "--net-rule", "allow@host:tcp:53",
 		"--net-rule", "allow@api.openai.com:tcp:443", "--net-rule", "allow@github.com:tcp:443",
@@ -178,6 +180,8 @@ func TestCodexMsbArgvWithSharedStateAndArgs(t *testing.T) {
 	}
 	want := []string{
 		"run", "--tty", "--pull", "never", "--user", "node",
+		"--label", "ai-sandbox.agent=codex",
+		"--label", "ai-sandbox.workspace=2d3837f6cd02",
 		"--cpus", "4", "--memory", "8G", "--root-disk", "20G", "--security", "restricted",
 		"--no-net", "--net-rule", "allow@host:udp:53", "--net-rule", "allow@host:tcp:53",
 		"--net-rule", "allow@api.openai.com:tcp:443", "--net-rule", "allow@github.com:tcp:443",

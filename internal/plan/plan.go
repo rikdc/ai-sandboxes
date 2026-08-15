@@ -63,6 +63,12 @@ type RuntimePlan struct {
 	Environment    []string     `json:"environment,omitempty"`
 	Command        []string     `json:"command"`
 	AgentArgs      []string     `json:"agent_args,omitempty"`
+	// Labels are "key=value" strings passed to `msb run --label`. Codex
+	// sessions carry ai-sandbox.agent and ai-sandbox.workspace labels so
+	// `ai-sandbox codex login` can find the caller's sandbox with
+	// `msb list --label`. Nil for agents that do not need label-based
+	// discovery.
+	Labels []string `json:"labels,omitempty"`
 }
 
 // Input to Resolve. Workspace must already be canonical and validated by the
@@ -120,6 +126,18 @@ func Resolve(cfg config.Agent, in Input) (*RuntimePlan, error) {
 	}
 	homeMount := fmt.Sprintf("%s:%s:%s", cfg.HomeVolume, cfg.HomePath, homeOpts)
 
+	var labels []string
+	if cfg.Name == "codex" {
+		hash, herr := WorkspaceHash(cfg.WorkspaceHash, in.Workspace)
+		if herr != nil {
+			return nil, herr
+		}
+		labels = []string{
+			"ai-sandbox.agent=codex",
+			"ai-sandbox.workspace=" + hash,
+		}
+	}
+
 	return &RuntimePlan{
 		AgentName:      cfg.Name,
 		Image:          image,
@@ -137,6 +155,7 @@ func Resolve(cfg config.Agent, in Input) (*RuntimePlan, error) {
 		Environment:    cfg.Environment,
 		Command:        cfg.Command,
 		AgentArgs:      in.AgentArgs,
+		Labels:         labels,
 	}, nil
 }
 
@@ -184,6 +203,9 @@ func (p *RuntimePlan) MsbArgv() []string {
 		argv = append(argv, "--tty")
 	}
 	argv = append(argv, "--pull", "never", "--user", p.User)
+	for _, l := range p.Labels {
+		argv = append(argv, "--label", l)
+	}
 	argv = append(argv, resourceFlags(p.Resources, p.Security)...)
 	argv = append(argv, networkFlags(p.Network)...)
 	argv = append(argv, "--mount-dir", p.WorkspaceMount)
