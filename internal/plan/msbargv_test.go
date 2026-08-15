@@ -18,8 +18,8 @@ func TestClaudeMsbArgvGolden(t *testing.T) {
 	want := []string{
 		"run", "--tty", "--pull", "never", "--user", "node",
 		"--label", "ai-sandbox.agent=claude",
-			"--label", "ai-sandbox.workspace=e85645dcb849",
-			"--cpus", "4", "--memory", "8G", "--root-disk", "10G", "--security", "restricted",
+		"--label", "ai-sandbox.workspace=e85645dcb849",
+		"--cpus", "4", "--memory", "8G", "--root-disk", "10G", "--security", "restricted",
 		"--no-net", "--net-rule", "allow@host:udp:53", "--net-rule", "allow@host:tcp:53",
 		"--net-rule", "allow@api.anthropic.com:tcp:443", "--net-rule", "allow@github.com:tcp:443",
 		"--mount-dir", "/Users/me/dev/my-project:/workspace/my-project-e85645dcb849:rw,quota=10G",
@@ -51,8 +51,8 @@ func TestClaudeMsbArgvGoldenWithSharedState(t *testing.T) {
 	want := []string{
 		"run", "--tty", "--pull", "never", "--user", "node",
 		"--label", "ai-sandbox.agent=claude",
-			"--label", "ai-sandbox.workspace=e85645dcb849",
-			"--cpus", "4", "--memory", "8G", "--root-disk", "10G", "--security", "restricted",
+		"--label", "ai-sandbox.workspace=e85645dcb849",
+		"--cpus", "4", "--memory", "8G", "--root-disk", "10G", "--security", "restricted",
 		"--no-net", "--net-rule", "allow@host:udp:53", "--net-rule", "allow@host:tcp:53",
 		"--net-rule", "allow@api.anthropic.com:tcp:443", "--net-rule", "allow@github.com:tcp:443",
 		"--mount-dir", "/Users/me/dev/my-project:/workspace/my-project-e85645dcb849:rw,quota=10G",
@@ -80,8 +80,8 @@ func TestClaudeMsbArgvPublicEgress(t *testing.T) {
 	want := []string{
 		"run", "--tty", "--pull", "never", "--user", "node",
 		"--label", "ai-sandbox.agent=claude",
-			"--label", "ai-sandbox.workspace=e85645dcb849",
-			"--cpus", "4", "--memory", "8G", "--root-disk", "10G", "--security", "restricted",
+		"--label", "ai-sandbox.workspace=e85645dcb849",
+		"--cpus", "4", "--memory", "8G", "--root-disk", "10G", "--security", "restricted",
 		"--net", "public",
 		"--mount-dir", "/Users/me/dev/my-project:/workspace/my-project-e85645dcb849:rw,quota=10G",
 		"--mount-named", "claude-home-hardened:/home/node:kind=dir,quota=4G",
@@ -130,8 +130,8 @@ func TestClaudeSessionMsbArgvGolden(t *testing.T) {
 	want := []string{
 		"run", "--tty", "--pull", "never", "--user", "node",
 		"--label", "ai-sandbox.agent=claude",
-			"--label", "ai-sandbox.workspace=e85645dcb849",
-			"--cpus", "4", "--memory", "8G", "--root-disk", "10G", "--security", "restricted",
+		"--label", "ai-sandbox.workspace=e85645dcb849",
+		"--cpus", "4", "--memory", "8G", "--root-disk", "10G", "--security", "restricted",
 		"--no-net", "--net-rule", "allow@host:udp:53", "--net-rule", "allow@host:tcp:53",
 		"--net-rule", "allow@api.anthropic.com:tcp:443", "--net-rule", "allow@github.com:tcp:443",
 		"--mount-dir", "/Users/me/dev/my-project:/workspace/my-project-e85645dcb849:rw,quota=10G",

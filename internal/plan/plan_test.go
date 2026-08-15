@@ -237,9 +237,9 @@ func TestResolveSharedState(t *testing.T) {
 
 func TestSharedStateFromLabels(t *testing.T) {
 	cases := []struct {
-		name   string
-		labels map[string]string
-		want   *SharedState
+		name    string
+		labels  map[string]string
+		want    *SharedState
 		wantErr bool
 	}{
 		{name: "absent", labels: nil, want: nil},
@@ -347,12 +347,12 @@ func TestRefuseOverlap(t *testing.T) {
 		workspace string
 		wantErr   bool
 	}{
-		{workspace: checkout, wantErr: true},            // equal to protected root
-		{workspace: inside, wantErr: true},              // inside a protected root
-		{workspace: containing, wantErr: false},         // contains nothing protected
-		{workspace: nested, wantErr: false},             // unrelated
-		{workspace: ok1, wantErr: false},                // no overlap
-		{workspace: ok2, wantErr: true},                 // equal to the second root
+		{workspace: checkout, wantErr: true},    // equal to protected root
+		{workspace: inside, wantErr: true},      // inside a protected root
+		{workspace: containing, wantErr: false}, // contains nothing protected
+		{workspace: nested, wantErr: false},     // unrelated
+		{workspace: ok1, wantErr: false},        // no overlap
+		{workspace: ok2, wantErr: true},         // equal to the second root
 	}
 	for _, c := range cases {
 		err := RefuseOverlap(c.workspace, roots)

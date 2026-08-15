@@ -30,9 +30,9 @@ type SharedState struct {
 
 // Resources is the per-VM resource allocation.
 type Resources struct {
-	CPUs        int    `json:"cpus,omitempty"`
-	Memory      string `json:"memory,omitempty"`
-	RootDisk    string `json:"root_disk"`
+	CPUs     int    `json:"cpus,omitempty"`
+	Memory   string `json:"memory,omitempty"`
+	RootDisk string `json:"root_disk"`
 }
 
 // Network is the resolved network policy: either public, or no-network plus an

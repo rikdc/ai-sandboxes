@@ -38,8 +38,8 @@ hosts for any provider — that is provider configuration, not something
 the chosen provider's OAuth flow touches to the relevant agent's egress
 allowlist file, one hostname per line.
 
-For the suggested providers this plan verifies against, the hostnames
-actually required were:
+For the suggested providers this plan verifies against, the expected
+starting allowlist is:
 
 - **Notion (Codex)**: `api.notion.com`, `www.notion.so` (MCP endpoint, OAuth
   authorize/token — record the exact hostnames you observed if they differ
@@ -404,7 +404,7 @@ Before approving the PR, confirm:
 |-|-|-|
 |`internal/plan/plan.go`|Apply `ai-sandbox.agent` + `ai-sandbox.workspace` labels to every agent (was: codex only).|Blocker for Claude MCP: `FindSandbox("claude", …)` would otherwise always return `ErrNoSandbox`.|
 |`internal/runtime/microsandbox/discovery.go`|`FindCodexSandbox` → `FindSandbox(agent, hash)`; errors renamed.|The label was always agent-parametric; the codex naming was accidental specialisation.|
-|`internal/runtime/microsandbox/tunnel.go`|`pickLoopbackPort` → `PickLoopbackPort`. Readiness is now process-aware: the fixed host port is preflighted with a real `net.Listen`, and both `msb ssh serve` and the OpenSSH forward are monitored so an unrelated listener can never be mistaken for the child becoming ready.|Closed the false-success sequence where a stale listener on the requested port satisfied a bare TCP check while the real child had already exited (e.g. OpenSSH on a bind collision with `ExitOnForwardFailure=yes`).|
+|`internal/runtime/microsandbox/tunnel.go`|`pickLoopbackPort` → `PickLoopbackPort`. Readiness is now process-aware: the fixed host port is preflighted with a real `net.Listen`, and both `msb ssh serve` and the OpenSSH forward are monitored, so an unrelated listener is very unlikely to be mistaken for the child becoming ready (a 300 ms grace window is a heuristic, not a guarantee, on this single-user host threat model).|Closed the false-success sequence where a stale listener on the requested port satisfied a bare TCP check while the real child had already exited (e.g. OpenSSH on a bind collision with `ExitOnForwardFailure=yes`).|
 |`cmd/ai-sandbox/callback_op.go` (new)|`CallbackOperation` + `executeCallbackOperation`. Owns SSH-authorized preflight, workspace resolve/validate, sandbox discovery, tunnel open, `msb exec` with timeout/signal handling. Retries only a self-picked ephemeral port that lost the pick/bind race; every other failure (including a caller-fixed port) surfaces immediately.|Shared orchestration for every callback-based auth flow.|
 |`cmd/ai-sandbox/codex_login.go`|Collapsed to a `CallbackOperation` builder. Behaviour unchanged.|Extraction, not rewrite.|
 |`cmd/ai-sandbox/codex_mcp_login.go` (new)|`codex mcp login <name>` — ephemeral port, guest argv `codex -c mcp_oauth_callback_port=P mcp login <name>`.|Per-client wrapper for Codex MCP.|
