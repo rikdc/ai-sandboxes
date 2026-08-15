@@ -50,6 +50,10 @@ probe_c() {
   local name="spike42-c"
   local serve_pid="" ssh_rc=""
   trap '[ -n "$serve_pid" ] && ssh_tunnel_close "$serve_pid"; stop_probe_vm "$name"' RETURN
+  if [ ! -f "$HOME/.microsandbox/ssh/authorized_keys" ]; then
+    record 'C: msb ssh serve + ssh -L' SKIP "msb ssh not authorized; run 'msb ssh authorize --file ~/.ssh/id_ed25519.pub' and re-run"
+    return
+  fi
   boot_probe_vm "$name" >/dev/null
   start_guest_listener "$name" 127.0.0.1 "$SPIKE_GUEST_PORT"
   local out
