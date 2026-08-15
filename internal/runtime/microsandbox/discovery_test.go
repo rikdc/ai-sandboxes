@@ -29,12 +29,12 @@ exit 0
 	return stub, recordFile
 }
 
-func TestFindCodexSandboxSingleMatch(t *testing.T) {
+func TestFindSandboxSingleMatch(t *testing.T) {
 	payload := `[{"created_at":"2026-08-15T00:51:27Z","image":"ai-sandboxes-codex:local","name":"codex-abc","status":"Running"}]`
 	stub, rec := writeListStub(t, t.TempDir(), payload)
 	c := &Client{Msb: stub, Env: []string{"MSB_STUB_RECORD=" + rec}}
 
-	sb, err := c.FindCodexSandbox("2d3837f6cd02")
+	sb, err := c.FindSandbox("codex", "2d3837f6cd02")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -58,17 +58,17 @@ func TestFindCodexSandboxSingleMatch(t *testing.T) {
 	}
 }
 
-func TestFindCodexSandboxNoMatch(t *testing.T) {
+func TestFindSandboxNoMatch(t *testing.T) {
 	stub, rec := writeListStub(t, t.TempDir(), `[]`)
 	c := &Client{Msb: stub, Env: []string{"MSB_STUB_RECORD=" + rec}}
 
-	_, err := c.FindCodexSandbox("nope")
-	if !errors.Is(err, ErrNoCodexSandbox) {
-		t.Errorf("err = %v, want ErrNoCodexSandbox", err)
+	_, err := c.FindSandbox("codex", "nope")
+	if !errors.Is(err, ErrNoSandbox) {
+		t.Errorf("err = %v, want ErrNoSandbox", err)
 	}
 }
 
-func TestFindCodexSandboxAmbiguous(t *testing.T) {
+func TestFindSandboxAmbiguous(t *testing.T) {
 	payload := `[
 	  {"name":"codex-1","image":"ai-sandboxes-codex:local","status":"Running"},
 	  {"name":"codex-2","image":"ai-sandboxes-codex:local","status":"Running"}
@@ -76,17 +76,17 @@ func TestFindCodexSandboxAmbiguous(t *testing.T) {
 	stub, rec := writeListStub(t, t.TempDir(), payload)
 	c := &Client{Msb: stub, Env: []string{"MSB_STUB_RECORD=" + rec}}
 
-	_, err := c.FindCodexSandbox("2d3837f6cd02")
-	if !errors.Is(err, ErrMultipleCodexSandboxes) {
-		t.Errorf("err = %v, want ErrMultipleCodexSandboxes", err)
+	_, err := c.FindSandbox("codex", "2d3837f6cd02")
+	if !errors.Is(err, ErrMultipleSandboxes) {
+		t.Errorf("err = %v, want ErrMultipleSandboxes", err)
 	}
 }
 
-func TestFindCodexSandboxMalformedJSON(t *testing.T) {
+func TestFindSandboxMalformedJSON(t *testing.T) {
 	stub, rec := writeListStub(t, t.TempDir(), `not json`)
 	c := &Client{Msb: stub, Env: []string{"MSB_STUB_RECORD=" + rec}}
 
-	_, err := c.FindCodexSandbox("2d3837f6cd02")
+	_, err := c.FindSandbox("codex", "2d3837f6cd02")
 	if err == nil || !strings.Contains(err.Error(), "parse msb list output") {
 		t.Errorf("err = %v, want parse error", err)
 	}

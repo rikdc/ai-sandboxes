@@ -54,11 +54,11 @@ func sshForwardArgv(hostPort, guestPort, servePort int) []string {
 	}
 }
 
-// pickLoopbackPort asks the kernel for a free TCP port on 127.0.0.1.
+// PickLoopbackPort asks the kernel for a free TCP port on 127.0.0.1.
 // There is an unavoidable TOCTOU window between close and the caller
 // binding the port; acceptable because the port is only ever used for a
 // short-lived local SSH endpoint.
-func pickLoopbackPort() (int, error) {
+func PickLoopbackPort() (int, error) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return 0, err
@@ -97,7 +97,7 @@ type Tunnel struct {
 // from 127.0.0.1:hostPort to guest 127.0.0.1:guestPort through the serve
 // endpoint. Returns a *Tunnel whose Close tears both subprocesses down.
 func (c *Client) OpenLoopbackTunnel(sandbox string, hostPort, guestPort int) (*Tunnel, error) {
-	servePort, err := pickLoopbackPort()
+	servePort, err := PickLoopbackPort()
 	if err != nil {
 		return nil, fmt.Errorf("pick host port: %w", err)
 	}

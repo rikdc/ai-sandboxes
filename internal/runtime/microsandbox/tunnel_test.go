@@ -57,7 +57,7 @@ func TestSshForwardArgv(t *testing.T) {
 }
 
 func TestPickLoopbackPort(t *testing.T) {
-	port, err := pickLoopbackPort()
+	port, err := PickLoopbackPort()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestWaitForListenerSucceeds(t *testing.T) {
 func TestWaitForListenerTimesOut(t *testing.T) {
 	// Pick a port then immediately release it, giving us a socket unlikely
 	// to be occupied for the short polling window.
-	port, err := pickLoopbackPort()
+	port, err := PickLoopbackPort()
 	if err != nil {
 		t.Fatal(err)
 	}
