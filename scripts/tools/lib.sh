@@ -10,3 +10,19 @@
 path_is_absent() {
   test ! -e "$1" && test ! -L "$1"
 }
+
+# KNOWN_ADAPTERS is the authoritative list of tool-install adapters. Three
+# sites act on the adapter string (validate-selection.sh, install-selected.sh,
+# render-dockerfile.sh); the value flows into an `install-$adapter.sh` path,
+# so any site that dispatches on it must reject unknown values. Adding a new
+# adapter means updating this list plus the per-adapter branches in those
+# three scripts; scripts/tools/tests/test-adapters.sh enforces the invariant.
+KNOWN_ADAPTERS=(github-release-tar https-tar awscli-zip)
+
+is_known_adapter() {
+  local candidate=$1 known
+  for known in "${KNOWN_ADAPTERS[@]}"; do
+    test "$candidate" = "$known" && return 0
+  done
+  return 1
+}

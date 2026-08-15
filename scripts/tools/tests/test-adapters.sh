@@ -482,4 +482,31 @@ fi
 grep -q 'existing aws-cli prefix' "$work/err" || fail "awscli install-dir error message missing"
 pass "awscli-zip refuses existing install-dir prefix"
 
+# ----- known-adapter list is consistent across all three dispatch sites ------
+# lib.sh owns the canonical KNOWN_ADAPTERS list. validate-selection.sh and
+# install-selected.sh must carry a per-adapter case branch for each entry
+# (each has adapter-specific body logic that cannot be factored out); render-
+# dockerfile.sh consumes the list via is_known_adapter, so it stays in sync
+# by construction. This test catches the "added an adapter to the catalog but
+# forgot one of the dispatch sites" drift the case statements are prone to.
+(
+  . "$repo/scripts/tools/lib.sh"
+  test "${#KNOWN_ADAPTERS[@]}" -gt 0 || exit 1
+  for adapter in "${KNOWN_ADAPTERS[@]}"; do
+    grep -Eq "^[[:space:]]+${adapter}\)" "$repo/scripts/tools/validate-selection.sh" \
+      || { echo "validate-selection.sh missing case branch for $adapter" >&2; exit 1; }
+    grep -Eq "(:|\|)${adapter}(\)|\|)" "$repo/scripts/tools/install-selected.sh" \
+      || { echo "install-selected.sh missing case branch for $adapter" >&2; exit 1; }
+  done
+) || fail "KNOWN_ADAPTERS drifted from validate-selection.sh or install-selected.sh"
+pass "KNOWN_ADAPTERS is covered by every dispatch site"
+
+# ----- is_known_adapter accepts known values and rejects unknown -------------
+(
+  . "$repo/scripts/tools/lib.sh"
+  ! is_known_adapter "totally-made-up" || exit 1
+  is_known_adapter "https-tar" || exit 1
+) || fail "is_known_adapter misbehaves"
+pass "is_known_adapter accepts known and rejects unknown"
+
 echo ok
