@@ -6,7 +6,7 @@
 
 **Architecture:** Add a self-contained, opt-in shell spike under `scripts/spikes/issue-42-transport/` that boots a throwaway MicroVM, starts a probe listener inside it, and exercises three candidate transports (`--port H:G` loopback, `--port H:G` with a `0.0.0.0` guest bind, and `msb ssh serve` + `ssh -L`). Results are printed as a pass/fail matrix and appended to a `RESULTS.md` the operator commits back to the issue.
 
-**Tech Stack:** bash, `msb` (Microsandbox 0.6.8+ CLI, already installed at `/opt/homebrew/bin/msb`), OpenSSH client, `python3` inside a stock image for the probe listener.
+**Tech Stack:** bash, `msb` (Microsandbox 0.6.8+ CLI, already installed at `/opt/homebrew/bin/msb`), OpenSSH client, `node` inside the already-loaded `node:22-bookworm` image for the probe listener.
 
 **Spec:** github.com/rikdc/ai-sandboxes issue #42 (final comment) — argues that `--port H:G` targets the guest network interface, not guest loopback, and proposes a Go-managed SSH `-L` tunnel scoped to a login operation. This plan produces the evidence that gates that follow-up.
 
@@ -29,7 +29,7 @@
 - Create: `scripts/spikes/issue-42-transport/RESULTS.md`
 
 **Interfaces:**
-- Consumes: `msb` on PATH, `python3` and `ssh` on host PATH, an available stock image tag (default `python:3.12-slim`, overridable via `SPIKE_IMAGE`).
+- Consumes: `msb` and `ssh` on host PATH, an available image tag with `node` inside (default `node:22-bookworm`, already loaded by the agent images; overridable via `SPIKE_IMAGE`).
 - Produces: `run.sh` entrypoint that executes all probes in sequence and prints a final `PASS/FAIL` matrix; `lib.sh` exporting `boot_probe_vm`, `stop_probe_vm`, `start_guest_listener HOST_BIND`, `curl_host PORT`, all used unchanged by later tasks.
 
 - [ ] **Step 1: Write the scaffolding**
@@ -58,7 +58,7 @@ Override the guest image with `SPIKE_IMAGE=<tag>`; defaults to
 # Shared helpers for the issue-42 transport spike. Sourced by run.sh.
 set -o pipefail
 
-SPIKE_IMAGE="${SPIKE_IMAGE:-python:3.12-slim}"
+SPIKE_IMAGE="${SPIKE_IMAGE:-node:22-bookworm}"
 SPIKE_HOST_PORT="${SPIKE_HOST_PORT:-14551}"
 SPIKE_GUEST_PORT="${SPIKE_GUEST_PORT:-1455}"
 SPIKE_SSH_PORT="${SPIKE_SSH_PORT:-14552}"
@@ -83,7 +83,7 @@ stop_probe_vm() {
 start_guest_listener() {
   local name="$1" bind="$2" port="$3"
   msb exec "$name" -- /bin/sh -c \
-    "nohup python3 -m http.server $port --bind $bind >/tmp/probe.log 2>&1 &"
+    "nohup node -e \"require('http').createServer((_,r)=>r.end('ok')).listen($port,'$bind')\" >/tmp/probe.log 2>&1 &"
   # Give the listener a moment to bind before probing.
   sleep 1
 }

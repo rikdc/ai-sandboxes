@@ -2,7 +2,7 @@
 # Shared helpers for the issue-42 transport spike. Sourced by run.sh.
 set -o pipefail
 
-SPIKE_IMAGE="${SPIKE_IMAGE:-python:3.12-slim}"
+SPIKE_IMAGE="${SPIKE_IMAGE:-node:22-bookworm}"
 SPIKE_HOST_PORT="${SPIKE_HOST_PORT:-14551}"
 SPIKE_GUEST_PORT="${SPIKE_GUEST_PORT:-1455}"
 SPIKE_SSH_PORT="${SPIKE_SSH_PORT:-14552}"
@@ -23,11 +23,11 @@ stop_probe_vm() {
 }
 
 # start_guest_listener NAME BIND_ADDR PORT
-# Starts a background python http.server inside the guest bound to BIND_ADDR:PORT.
+# Starts a background Node HTTP listener inside the guest bound to BIND_ADDR:PORT.
 start_guest_listener() {
   local name="$1" bind="$2" port="$3"
   msb exec "$name" -- /bin/sh -c \
-    "nohup python3 -m http.server $port --bind $bind >/tmp/probe.log 2>&1 &"
+    "nohup node -e \"require('http').createServer((_,r)=>r.end('ok')).listen($port,'$bind')\" >/tmp/probe.log 2>&1 &"
   # Give the listener a moment to bind before probing.
   sleep 1
 }

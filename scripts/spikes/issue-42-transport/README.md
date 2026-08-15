@@ -4,12 +4,14 @@ Boots throwaway Microsandbox VMs to determine which transport reaches a
 guest-loopback listener. Results go into `RESULTS.md` in this directory,
 which is then attached to issue #42.
 
-Prerequisites: `msb`, `python3`, `ssh` on PATH. Skip on CI when `msb` absent.
+Prerequisites: `msb` and `ssh` on host PATH. Skip on CI when `msb` absent.
 
 Run: `bash scripts/spikes/issue-42-transport/run.sh`
 
+The guest listener uses `node` (already present in `node:22-bookworm`).
 Override the guest image with `SPIKE_IMAGE=<tag>`; defaults to
-`python:3.12-slim`.
+`node:22-bookworm` because it is already loaded by the claude/codex
+agent images and requires no extra pull.
 
 ## What the probes prove
 
