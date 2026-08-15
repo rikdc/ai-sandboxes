@@ -14,13 +14,6 @@ import (
 	"github.com/rikdc/ai-sandboxes/internal/runtime/microsandbox"
 )
 
-// ephemeralPortRetries bounds how many times executeCallbackOperation will
-// retry PickLoopbackPort + OpenLoopbackTunnel when the caller asked for an
-// ephemeral host port (HostPort == 0). OpenSSH's ExitOnForwardFailure=yes
-// means a collision surfaces as an error; three attempts is enough that a
-// second collision on the same run indicates a real problem.
-const ephemeralPortRetries = 3
-
 // CallbackOperation describes one host->guest tunnel + exec sequence used
 // by browser-callback auth flows. The orchestrator opens a scoped msb-ssh
 // -L tunnel, execs the guest command through msb exec, and tears the
@@ -104,7 +97,7 @@ func executeCallbackOperation(ctx context.Context, op CallbackOperation, e execE
 		}
 	}
 
-	tun, guestPort, err := openTunnel(client, sandbox.Name, op.HostPort, op.GuestPort)
+	tun, guestPort, err := openTunnelFn(client, sandbox.Name, op.HostPort, op.GuestPort)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: %s\n", prefix, err)
 		return 1
@@ -140,26 +133,28 @@ func executeCallbackOperation(ctx context.Context, op CallbackOperation, e execE
 }
 
 // openTunnel returns a live tunnel and the guest port used. When hostPort
-// is zero, it picks a free ephemeral port, uses the same value on both
-// sides, and retries a few times if the tunnel open collides with a
-// concurrent binder. When hostPort is non-zero it is treated as fixed and
-// no retry happens.
-func openTunnel(client *microsandbox.Client, sandboxName string, hostPort, guestPort int) (*microsandbox.Tunnel, int, error) {
+// is zero it picks a free ephemeral port and uses the same value on both
+// sides; otherwise it treats hostPort/guestPort as fixed. It does not
+// retry — every failure mode (SSH not authorised, `msb ssh serve` not
+// starting, forward bind collision) surfaces as an error the caller can
+// act on. Bind collisions on a freshly-picked ephemeral port are so rare
+// in practice that a retry loop mostly serves to mask the real errors.
+//
+// Package-level indirection so tests can substitute a mock.
+var openTunnelFn = defaultOpenTunnel
+
+func defaultOpenTunnel(client *microsandbox.Client, sandboxName string, hostPort, guestPort int) (*microsandbox.Tunnel, int, error) {
 	if hostPort != 0 {
 		tun, err := client.OpenLoopbackTunnel(sandboxName, hostPort, guestPort)
 		return tun, guestPort, err
 	}
-	var lastErr error
-	for i := 0; i < ephemeralPortRetries; i++ {
-		p, err := microsandbox.PickLoopbackPort()
-		if err != nil {
-			return nil, 0, fmt.Errorf("pick host port: %w", err)
-		}
-		tun, err := client.OpenLoopbackTunnel(sandboxName, p, p)
-		if err == nil {
-			return tun, p, nil
-		}
-		lastErr = err
+	p, err := microsandbox.PickLoopbackPort()
+	if err != nil {
+		return nil, 0, fmt.Errorf("pick host port: %w", err)
 	}
-	return nil, 0, fmt.Errorf("open tunnel after %d attempts: %w", ephemeralPortRetries, lastErr)
+	tun, err := client.OpenLoopbackTunnel(sandboxName, p, p)
+	if err != nil {
+		return nil, 0, err
+	}
+	return tun, p, nil
 }
