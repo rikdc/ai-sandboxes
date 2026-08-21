@@ -5,10 +5,12 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -98,6 +100,13 @@ func TestHelperProcess(t *testing.T) {
 	case "exit":
 		os.Exit(1)
 	case "hang":
+		time.Sleep(10 * time.Second)
+	case "ignore-sigint":
+		// Consume and discard SIGINT so it can never terminate this process,
+		// standing in for a child that swallows the signal (a handler, or a
+		// shell wrapper that doesn't forward it) instead of exiting on it.
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, syscall.SIGINT)
 		time.Sleep(10 * time.Second)
 	}
 	os.Exit(0)
@@ -213,6 +222,30 @@ func TestMonitoredProcessStopIdempotent(t *testing.T) {
 	}
 	if err := mp.stop(); err != nil {
 		t.Errorf("second stop = %v, want nil (idempotent)", err)
+	}
+}
+
+// TestMonitoredProcessStopEscalatesToKill covers the case that motivated
+// stopGraceWindow: a child that receives SIGINT and ignores it. Before
+// stopGraceWindow existed, stop would block on <-mp.done forever in this
+// case; this test fails (times out) against that implementation.
+func TestMonitoredProcessStopEscalatesToKill(t *testing.T) {
+	cmd := runHelper(t, "ignore-sigint")
+	mp, err := startMonitored(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- mp.stop() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("stop = %v, want nil", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("stop did not return within 5s; a SIGINT-ignoring child should be escalated to Kill")
 	}
 }
 

@@ -4,6 +4,7 @@
 package doctor
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -241,14 +242,33 @@ func (e *Env) checkVolumes(add func(Check), volumeNames []string, shared *plan.S
 	}
 }
 
+// wrapperContract describes what a correctly generated Fish wrapper for one
+// agent must contain, mirroring scripts/install-fish-functions' two wrapper
+// shapes: pass-through wrappers (claude, codex) append "-- $argv" after a
+// quoted agent name, while claude-session hardcodes an unquoted "claude" and
+// forwards $argv directly (its own argv already starts with --profile).
+type wrapperContract struct {
+	file         string
+	agentToken   string
+	hasSeparator bool
+}
+
+var wrapperContracts = []wrapperContract{
+	{file: "claude.fish", agentToken: "claude", hasSeparator: true},
+	{file: "codex.fish", agentToken: "codex", hasSeparator: true},
+	{file: "claude-session.fish", agentToken: "claude", hasSeparator: false},
+}
+
 func (e *Env) checkLauncher(add func(Check)) {
 	if e.Home == "" {
 		add(Check{Name: "launcher placement", Status: statusFail, Detail: "cannot determine home directory"})
 		return
 	}
 	installedBin := filepath.Join(e.InstallDir, "ai-sandbox")
+	binOK := false
 	if _, err := os.Stat(installedBin); err == nil {
 		add(Check{Name: "ai-sandbox binary", Status: statusOK, Detail: installedBin})
+		binOK = true
 	} else if path, lerr := e.Runner.LookPath("ai-sandbox"); lerr == nil {
 		add(Check{Name: "ai-sandbox binary", Status: statusWarn,
 			Detail: "installed copy missing at " + installedBin + "; the Fish wrapper invokes it by absolute path. Falling back to PATH copy at " + path + ". Re-run scripts/install-ai-sandbox to restore the trusted install."})
@@ -256,26 +276,229 @@ func (e *Env) checkLauncher(add func(Check)) {
 		add(Check{Name: "ai-sandbox binary", Status: statusFail,
 			Detail: "not found; run scripts/install-ai-sandbox to build and install it to " + installedBin})
 	}
+
+	e.checkInstalledRevision(add, installedBin, binOK)
+
 	functionsDir := filepath.Join(e.Home, ".config", "fish", "functions")
 	trustedDir := filepath.Join(e.Home, ".config", "ai-sandboxes", "trusted")
-	for _, agent := range []string{"claude", "codex"} {
-		wrapper := filepath.Join(functionsDir, agent+".fish")
-		data, err := os.ReadFile(wrapper)
-		if err != nil {
-			add(Check{Name: "launcher " + agent, Status: statusWarn, Detail: "no installed wrapper; run scripts/install-fish-functions"})
+	for _, c := range wrapperContracts {
+		e.checkWrapper(add, c, filepath.Join(functionsDir, c.file), installedBin)
+	}
+
+	e.checkTrustGuard(add, trustedDir)
+}
+
+// checkInstalledRevision compares the revision the installed binary reports
+// (via `ai-sandbox version`) against the checkout's own git HEAD, so a
+// binary that predates the current checkout is caught even though its file
+// merely existing would otherwise look healthy.
+func (e *Env) checkInstalledRevision(add func(Check), installedBin string, binOK bool) {
+	const name = "ai-sandbox binary revision"
+	if !binOK {
+		add(Check{Name: name, Status: statusSkip, Detail: "installed binary not found"})
+		return
+	}
+	if e.Checkout == "" {
+		add(Check{Name: name, Status: statusSkip, Detail: "checkout not found"})
+		return
+	}
+	checkoutRev, err := gitRevision(e.Runner, e.Checkout)
+	if err != nil {
+		add(Check{Name: name, Status: statusWarn, Detail: "cannot determine checkout revision (not a git checkout?): " + err.Error()})
+		return
+	}
+	out, err := e.Runner.Run(installedBin, "version")
+	if err != nil {
+		add(Check{Name: name, Status: statusFail, Detail: "installed binary failed to report its version: " + err.Error()})
+		return
+	}
+	_, installedRev, ok := parseVersionOutput(string(out))
+	if !ok {
+		add(Check{Name: name, Status: statusFail, Detail: "installed binary version output missing a revision: " + strings.TrimSpace(string(out))})
+		return
+	}
+	if installedRev == "unknown" || checkoutRev == "unknown" {
+		add(Check{Name: name, Status: statusWarn,
+			Detail: fmt.Sprintf("revision unknown (installed=%s, checkout=%s); rebuild from a git checkout with scripts/install-ai-sandbox", installedRev, checkoutRev)})
+		return
+	}
+	if installedRev != checkoutRev {
+		add(Check{Name: name, Status: statusFail,
+			Detail: fmt.Sprintf("installed binary is stale (installed rev %s, checkout rev %s); run scripts/install-ai-sandbox", installedRev, checkoutRev)})
+		return
+	}
+	add(Check{Name: name, Status: statusOK, Detail: installedRev})
+}
+
+// gitRevision returns the checkout's HEAD commit, suffixed "+dirty" if the
+// worktree has uncommitted or untracked changes, matching exactly what
+// scripts/install-ai-sandbox embeds into the binary it builds.
+func gitRevision(r Runner, checkout string) (string, error) {
+	out, err := r.Run("git", "-C", checkout, "rev-parse", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	rev := strings.TrimSpace(string(out))
+	if rev == "" {
+		return "", errors.New("git rev-parse HEAD returned no output")
+	}
+	statusOut, err := r.Run("git", "-C", checkout, "status", "--porcelain")
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(string(statusOut)) != "" {
+		rev += "+dirty"
+	}
+	return rev, nil
+}
+
+var versionOutputRE = regexp.MustCompile(`^ai-sandbox (\S+) \(revision (\S+)\)`)
+
+// parseVersionOutput extracts the version and revision from `ai-sandbox
+// version`'s output ("ai-sandbox 0.1.0 (revision <rev>)").
+func parseVersionOutput(s string) (ver, rev string, ok bool) {
+	m := versionOutputRE.FindStringSubmatch(strings.TrimSpace(s))
+	if m == nil {
+		return "", "", false
+	}
+	return m[1], m[2], true
+}
+
+// wrapperCommandRE matches the `command env AI_SANDBOXES_ROOT=...` line
+// scripts/install-fish-functions generates, capturing everything after the
+// `=` for takeFishToken to walk token by token.
+var wrapperCommandRE = regexp.MustCompile(`(?m)^\s*command env AI_SANDBOXES_ROOT=(.*)$`)
+
+// parseWrapperCommandLine extracts the embedded checkout root, installed
+// binary path, agent token, and whether a "--" separator precedes $argv from
+// a generated wrapper's body. It is the exact inverse of
+// scripts/install-fish-functions' fish_quote and heredoc shape, chosen over
+// re-rendering the wrapper in Go so there is only one implementation of Fish
+// quoting to keep correct (the shell one).
+func parseWrapperCommandLine(content string) (root, bin, agentToken string, hasSeparator, ok bool) {
+	m := wrapperCommandRE.FindStringSubmatch(content)
+	if m == nil {
+		return "", "", "", false, false
+	}
+	rest := m[1]
+	root, rest, ok = takeFishToken(rest)
+	if !ok {
+		return "", "", "", false, false
+	}
+	rest = strings.TrimPrefix(rest, " ")
+	bin, rest, ok = takeFishToken(rest)
+	if !ok {
+		return "", "", "", false, false
+	}
+	rest = strings.TrimSpace(rest)
+	if !strings.HasPrefix(rest, "run ") {
+		return "", "", "", false, false
+	}
+	rest = strings.TrimPrefix(rest, "run ")
+	if strings.HasPrefix(rest, "'") {
+		agentToken, rest, ok = takeFishToken(rest)
+		if !ok {
+			return "", "", "", false, false
+		}
+	} else {
+		fields := strings.SplitN(rest, " ", 2)
+		agentToken = fields[0]
+		rest = ""
+		if len(fields) > 1 {
+			rest = fields[1]
+		}
+	}
+	rest = strings.TrimSpace(rest)
+	hasSeparator = rest == "--" || strings.HasPrefix(rest, "-- ")
+	return root, bin, agentToken, hasSeparator, true
+}
+
+// takeFishToken parses a single-quoted Fish token from the start of s,
+// unescaping \\ and \' exactly as scripts/install-fish-functions' fish_quote
+// escapes them, and returns the remainder of s after the closing quote.
+func takeFishToken(s string) (value, rest string, ok bool) {
+	if !strings.HasPrefix(s, "'") {
+		return "", s, false
+	}
+	var b strings.Builder
+	i := 1
+	for i < len(s) {
+		c := s[i]
+		if c == '\\' && i+1 < len(s) && (s[i+1] == '\\' || s[i+1] == '\'') {
+			b.WriteByte(s[i+1])
+			i += 2
 			continue
 		}
-		if strings.Contains(string(data), "ai-sandbox run") {
-			add(Check{Name: "launcher " + agent, Status: statusOK, Detail: "installed pass-through wrapper"})
-		} else {
-			add(Check{Name: "launcher " + agent, Status: statusWarn, Detail: "stale wrapper; re-run scripts/install-fish-functions"})
+		if c == '\'' {
+			return b.String(), s[i+1:], true
 		}
+		b.WriteByte(c)
+		i++
 	}
-	if _, err := os.Stat(filepath.Join(trustedDir, "guard.fish")); err != nil {
+	return "", s, false
+}
+
+func (e *Env) checkWrapper(add func(Check), c wrapperContract, wrapperPath, installedBin string) {
+	name := "launcher " + strings.TrimSuffix(c.file, ".fish")
+	data, err := os.ReadFile(wrapperPath)
+	if err != nil {
+		add(Check{Name: name, Status: statusWarn, Detail: "no installed wrapper; run scripts/install-fish-functions"})
+		return
+	}
+	root, bin, agentToken, hasSeparator, ok := parseWrapperCommandLine(string(data))
+	if !ok {
+		add(Check{Name: name, Status: statusWarn, Detail: "stale wrapper (does not use the ai-sandbox run contract); re-run scripts/install-fish-functions"})
+		return
+	}
+	resolvedRoot := root
+	if r, err := filepath.EvalSymlinks(root); err == nil {
+		resolvedRoot = r
+	}
+	resolvedCheckout := e.Checkout
+	if r, err := filepath.EvalSymlinks(e.Checkout); err == nil {
+		resolvedCheckout = r
+	}
+	if e.Checkout != "" && resolvedRoot != resolvedCheckout {
+		add(Check{Name: name, Status: statusWarn, Detail: "wrapper points at checkout " + root + ", current checkout is " + e.Checkout + "; re-run scripts/install-fish-functions"})
+		return
+	}
+	if bin != installedBin {
+		add(Check{Name: name, Status: statusFail, Detail: "wrapper invokes " + bin + " instead of the installed binary " + installedBin + "; re-run scripts/install-fish-functions"})
+		return
+	}
+	if agentToken != c.agentToken || hasSeparator != c.hasSeparator {
+		add(Check{Name: name, Status: statusFail, Detail: "wrapper does not match the expected " + c.agentToken + " contract; re-run scripts/install-fish-functions"})
+		return
+	}
+	add(Check{Name: name, Status: statusOK, Detail: "installed pass-through wrapper for " + root})
+}
+
+// checkTrustGuard compares the installed guard.fish byte-for-byte against
+// the checkout's copy: scripts/install-fish-functions installs it with a
+// plain `install`, so any drift means the installed guard predates (or was
+// modified after) the checkout it is meant to protect.
+func (e *Env) checkTrustGuard(add func(Check), trustedDir string) {
+	installedPath := filepath.Join(trustedDir, "guard.fish")
+	installed, err := os.ReadFile(installedPath)
+	if err != nil {
 		add(Check{Name: "trust guard", Status: statusWarn, Detail: "missing; re-run scripts/install-fish-functions"})
-	} else {
-		add(Check{Name: "trust guard", Status: statusOK, Detail: "installed"})
+		return
 	}
+	if e.Checkout == "" {
+		add(Check{Name: "trust guard", Status: statusSkip, Detail: "checkout not found; cannot verify against source"})
+		return
+	}
+	sourcePath := filepath.Join(e.Checkout, "shell", "fish", "trusted", "guard.fish")
+	source, err := os.ReadFile(sourcePath)
+	if err != nil {
+		add(Check{Name: "trust guard", Status: statusWarn, Detail: "cannot read checkout's guard.fish: " + err.Error()})
+		return
+	}
+	if !bytes.Equal(installed, source) {
+		add(Check{Name: "trust guard", Status: statusFail, Detail: "installed guard differs from the checkout's; re-run scripts/install-fish-functions"})
+		return
+	}
+	add(Check{Name: "trust guard", Status: statusOK, Detail: "installed"})
 }
 
 func (e *Env) checkEgress(add func(Check)) {

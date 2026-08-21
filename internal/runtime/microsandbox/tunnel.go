@@ -107,7 +107,8 @@ func preflightPort(host string, port int) error {
 // a background goroutine. Readiness polling races a listener check against
 // process death instead of trusting a successful TCP dial in isolation, so a
 // connection that only succeeds because some unrelated process already held
-// the port can never be mistaken for the child becoming ready.
+// the port is much less likely to be mistaken for the child becoming ready
+// (see listenerGraceWindow for the heuristic's limits).
 type monitoredProcess struct {
 	cmd  *exec.Cmd
 	done chan struct{}
@@ -156,6 +157,12 @@ func (mp *monitoredProcess) exited() bool {
 // for readiness.
 const listenerGraceWindow = 300 * time.Millisecond
 
+// stopGraceWindow bounds how long stop waits for a SIGINT'd process to exit
+// on its own before escalating to Kill. Without this, a child that receives
+// but ignores SIGINT (a signal handler swallowing it, or a shell wrapper
+// that doesn't forward it) would hang stop -- and therefore Close -- forever.
+const stopGraceWindow = 2 * time.Second
+
 func (mp *monitoredProcess) waitReady(host string, port int, budget time.Duration) error {
 	deadline := time.Now().Add(budget)
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
@@ -185,17 +192,33 @@ func (mp *monitoredProcess) waitReady(host string, port int, budget time.Duratio
 
 // stop signals the process, waits for the monitor goroutine to observe its
 // exit exactly once, and classifies the result. Safe to call multiple times
-// and safe to call after the process already exited on its own.
+// and safe to call after the process already exited on its own. Escalates
+// to Kill if the process is still running stopGraceWindow after SIGINT, so a
+// child that ignores SIGINT cannot hang this indefinitely.
 func (mp *monitoredProcess) stop() error {
 	if mp == nil || mp.cmd == nil || mp.cmd.Process == nil {
 		return nil
 	}
+	var sigErr, killErr error
 	if !mp.exited() {
-		if err := mp.cmd.Process.Signal(os.Interrupt); err != nil && !errors.Is(err, os.ErrProcessDone) {
-			_ = mp.cmd.Process.Kill()
+		sigErr = mp.cmd.Process.Signal(os.Interrupt)
+		if sigErr != nil && !errors.Is(sigErr, os.ErrProcessDone) {
+			killErr = mp.cmd.Process.Kill()
+		} else {
+			select {
+			case <-mp.done:
+			case <-time.After(stopGraceWindow):
+				killErr = mp.cmd.Process.Kill()
+			}
 		}
 	}
 	<-mp.done
+	// A Kill failure that isn't just "already reaped" means we could not
+	// reliably terminate the child; surface it rather than pretending
+	// cleanup succeeded.
+	if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+		return fmt.Errorf("kill after interrupt (interrupt result: %v): %w", sigErr, killErr)
+	}
 	if mp.err != nil {
 		// Non-zero exit from a signalled/killed process is expected; only
 		// surface errors that indicate we could not reap the child.

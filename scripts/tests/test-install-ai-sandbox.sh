@@ -93,4 +93,21 @@ run_install "$install4" "$bin4_link"
 expect_status 0 'bin dir is itself a symlink'
 test -L "$real_bin4/ai-sandbox" || fail 'symlinked bin dir: symlink not created through the directory symlink'
 
+# 6. An existing symlink at the symlink path pointing somewhere else: install
+#    must refuse rather than silently repointing someone else's symlink, and
+#    must fail before replacing the (nonexistent, in this case) libexec
+#    binary.
+install5="$mockdir/install5"
+bin5="$mockdir/bin5"
+mkdir -p "$bin5"
+ln -s "/somewhere/else/ai-sandbox" "$bin5/ai-sandbox"
+run_install "$install5" "$bin5"
+if test "$rc" = 0; then
+  fail 'conflicting symlink elsewhere: install should have refused'
+fi
+grep -Fq 'ai-sandbox' "$mockdir/err.log" || fail 'conflicting symlink elsewhere: stderr should name the conflict'
+target=$(readlink "$bin5/ai-sandbox") || fail 'conflicting symlink elsewhere: could not read symlink'
+test "$target" = "/somewhere/else/ai-sandbox" || fail 'conflicting symlink elsewhere: the pre-existing symlink must not be modified'
+test -e "$install5/ai-sandbox" && fail 'conflicting symlink elsewhere: libexec binary must not be installed when the symlink preflight fails'
+
 echo ok

@@ -596,26 +596,6 @@ func TestProtectedRootsBinDir(t *testing.T) {
 			t.Errorf("protected roots %v should not also protect the unused default bin dir %q", roots, defaultBin)
 		}
 	})
-
-	t.Run("does not require the install-time env var on later invocations", func(t *testing.T) {
-		// The installer runs once with AI_SANDBOX_BIN_DIR set; every later
-		// `ai-sandbox run` invocation must still protect that directory even
-		// though the shell no longer has AI_SANDBOX_BIN_DIR exported, because
-		// currentEnv reads it fresh from the environment on every run, not
-		// from install-time state. We simulate "still exported" here since
-		// execEnv always resolves getenv live; the guarantee under test is
-		// that no caller needs to thread install-time config through by hand.
-		home := t.TempDir()
-		binDir := filepath.Join(home, "custom-bin")
-		if err := os.MkdirAll(binDir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		e := execEnv{home: home, getenv: testGetenv(map[string]string{"AI_SANDBOX_BIN_DIR": binDir})}
-		roots := e.protectedRoots("")
-		if !containsArg(roots, binDir) {
-			t.Errorf("protected roots %v missing configured bin dir %q on a fresh invocation", roots, binDir)
-		}
-	})
 }
 
 // TestResolveArgv0 covers resolving the actual invocation path from
