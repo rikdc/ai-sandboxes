@@ -46,16 +46,30 @@ esac
 # Preflight the symlink target before touching the authoritative libexec
 # binary below. `ln -sfn` unlinks whatever is already at $symlink_path, so
 # without this check a pre-existing regular file or directory the user
-# placed there (or a symlink pointing somewhere else entirely) would be
-# silently destroyed. Failing here, before the build+swap, also means a
-# conflict is reported as a clean no-op: the previous install is left fully
-# intact rather than replaced with no working PATH entrypoint.
+# placed there would be silently destroyed. This installer owns only a
+# symlink that already points at this install_path: anything else (a
+# regular file, a directory, or a symlink pointing somewhere else entirely)
+# is a conflict and must be refused, not silently replaced. Failing here,
+# before the build+swap, also means a conflict is reported as a clean
+# no-op: the previous install is left fully intact rather than replaced
+# with no working PATH entrypoint.
 if [ -e "$symlink_dir" ] && [ ! -d "$symlink_dir" ]; then
   die "$symlink_dir exists and is not a directory; refusing to create the ai-sandbox symlink there"
 fi
-if { [ -e "$symlink_path" ] || [ -L "$symlink_path" ]; } && [ ! -L "$symlink_path" ]; then
+if [ -L "$symlink_path" ]; then
+  existing_target=$(readlink "$symlink_path") || die "could not read existing symlink $symlink_path"
+  if [ "$existing_target" != "$install_path" ]; then
+    die "$symlink_path already points at $existing_target, not $install_path; remove it or set AI_SANDBOX_BIN_DIR to a different directory"
+  fi
+elif [ -e "$symlink_path" ]; then
   die "$symlink_path already exists and is not a symlink; remove it or set AI_SANDBOX_BIN_DIR to a different directory"
 fi
+
+# Create the symlink directory before touching the authoritative libexec
+# binary below, so a failure here leaves the previous install fully intact
+# rather than swapping the binary and then failing to create its PATH
+# entrypoint.
+mkdir -p "$symlink_dir" || die "could not create $symlink_dir"
 
 # The temporary binary must live on the same filesystem as $install_path so the
 # final `mv` is a rename (atomic swap). /tmp is often a separate filesystem, so
@@ -79,7 +93,6 @@ esac
 chmod 0755 "$tmp_bin" || die 'could not set mode on built binary'
 mv -f "$tmp_bin" "$install_path" || die "could not install to $install_path"
 
-mkdir -p "$symlink_dir" || die "could not create $symlink_dir"
 ln -sfn "$install_path" "$symlink_path" || die "could not symlink $symlink_path -> $install_path"
 
 printf 'installed %s (%s)\n' "$install_path" "$built_version"
