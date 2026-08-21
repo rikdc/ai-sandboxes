@@ -46,16 +46,20 @@ Shared state is visible to every image that opts into the same profile. It does 
 
 ### Agent-version release markers
 
-After ARM64 image verification succeeds on `main`, a change to `CODEX_VERSION`
-or `CLAUDE_CODE_VERSION` creates an immutable GitHub Release. Its tag is
-`agent-versions-codex-<CODEX_VERSION>-claude-<CLAUDE_CODE_VERSION>` and it
-points to the verified upstream commit. The release includes a `release.json`
-asset with this schema:
+`BASE_VERSION` is the project's own release line, bumped by hand when cutting
+a release (e.g. `git tag v$BASE_VERSION`). After ARM64 image verification
+succeeds on `main`, a change to `CODEX_VERSION` or `CLAUDE_CODE_VERSION`
+creates an immutable GitHub Release riding on top of that same line, tagged
+`v<BASE_VERSION>+codex-<CODEX_VERSION>-claude-<CLAUDE_CODE_VERSION>` and
+pointing at the verified upstream commit — one linear tag lineage instead of
+a separate namespace for agent-version bumps. The release includes a
+`release.json` asset with this schema:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "upstream_commit": "40-character lowercase Git commit SHA",
+  "base_version": "exact BASE_VERSION value",
   "codex_version": "exact CODEX_VERSION value",
   "claude_code_version": "exact CLAUDE_CODE_VERSION value",
   "created_at": "RFC 3339 UTC timestamp"
@@ -63,8 +67,11 @@ asset with this schema:
 ```
 
 The tag and marker are immutable. A workflow rerun reuses an existing release
-only when its downloaded marker exactly matches the commit and both versions;
-otherwise it fails instead of changing a release or tag.
+only when its downloaded marker exactly matches the commit and all three
+versions; otherwise it fails instead of changing a release or tag. A
+prerelease `BASE_VERSION` (any value containing `-`, e.g. `0.1.0-alpha`) keeps
+these releases out of GitHub's "Latest" slot automatically, the same as any
+other prerelease.
 
 Every six hours, the **Agent version watch** workflow reads the `latest` npm
 dist-tags for `@openai/codex` and `@anthropic-ai/claude-code`. When either pin

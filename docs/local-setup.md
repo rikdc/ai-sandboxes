@@ -124,8 +124,9 @@ end
 
 ## Release markers
 
-`versions.env` pins the agent runtime versions. When a version bump merges to
-`main`, CI publishes an immutable GitHub Release
-(`agent-versions-codex-<X>-claude-<Y>`) carrying the verified commit — a
+`versions.env` pins the agent runtime versions and the project's own
+`BASE_VERSION` release line. When a version bump merges to `main`, CI
+publishes an immutable GitHub Release
+(`v<BASE_VERSION>+codex-<X>-claude-<Y>`) carrying the verified commit — a
 record, not something a local image pulls from. Local images are always built
 from your checkout via `./scripts/build`.

@@ -34,14 +34,23 @@ download_dir=$(mktemp -d) || exit 1
 trap 'rm -rf -- "$marker_dir" "$download_dir"' EXIT
 marker="$marker_dir/release.json"
 
-tag="agent-versions-codex-${CODEX_VERSION}-claude-${CLAUDE_CODE_VERSION}"
+# One linear tag lineage: agent-version bumps publish as a build-metadata
+# suffix on the current project release line (BASE_VERSION), not as a
+# separate tag namespace. A prerelease base (e.g. 0.1.0-alpha) keeps these
+# releases out of GitHub's "Latest" slot automatically, the same as any
+# other prerelease — no separate --latest handling needed here.
+tag="v${BASE_VERSION}+codex-${CODEX_VERSION}-claude-${CLAUDE_CODE_VERSION}"
 timestamp=$(date --utc +%Y-%m-%dT%H:%M:%SZ) || {
   printf '%s\n' 'error: could not compute release timestamp' >&2
   exit 1
 }
+prerelease_args=()
+case $BASE_VERSION in
+  *-*) prerelease_args=(--prerelease) ;;
+esac
 
 .github/workflows/release-marker create "$marker" "$commit" \
-  "$CODEX_VERSION" "$CLAUDE_CODE_VERSION" "$timestamp" || {
+  "$BASE_VERSION" "$CODEX_VERSION" "$CLAUDE_CODE_VERSION" "$timestamp" || {
   printf '%s\n' 'error: failed to create release marker' >&2
   exit 1
 }
@@ -56,7 +65,7 @@ if gh release view "$tag" --repo "$repository" >/dev/null 2>&1; then
   gh release download "$tag" --repo "$repository" \
     --pattern release.json --dir "$download_dir" || exit 1
   .github/workflows/release-marker validate "$download_dir/release.json" \
-    "$commit" "$CODEX_VERSION" "$CLAUDE_CODE_VERSION" || exit 1
+    "$commit" "$BASE_VERSION" "$CODEX_VERSION" "$CLAUDE_CODE_VERSION" || exit 1
   exit 0
 fi
 
@@ -66,8 +75,9 @@ if gh api "repos/$repository/git/ref/tags/$tag" >/dev/null 2>&1; then
 fi
 
 gh release create "$tag" --repo "$repository" --target "$commit" \
-  --title "Agent versions: Codex ${CODEX_VERSION}, Claude Code ${CLAUDE_CODE_VERSION}" \
-  --notes "Machine-readable agent runtime release marker for ${commit}." \
+  --title "v${BASE_VERSION} — Codex ${CODEX_VERSION}, Claude Code ${CLAUDE_CODE_VERSION}" \
+  --notes "Machine-readable agent runtime release marker for v${BASE_VERSION} at ${commit}." \
+  "${prerelease_args[@]}" \
   "$marker" || {
   printf '%s\n' 'error: failed to publish release marker' >&2
   exit 1

@@ -12,8 +12,8 @@ usage() {
   cat >&2 <<'EOF'
 usage:
   release-marker changed OLD_VERSIONS_ENV NEW_VERSIONS_ENV
-  release-marker create OUTPUT COMMIT CODEX_VERSION CLAUDE_CODE_VERSION CREATED_AT
-  release-marker validate FILE COMMIT CODEX_VERSION CLAUDE_CODE_VERSION
+  release-marker create OUTPUT COMMIT BASE_VERSION CODEX_VERSION CLAUDE_CODE_VERSION CREATED_AT
+  release-marker validate FILE COMMIT BASE_VERSION CODEX_VERSION CLAUDE_CODE_VERSION
 EOF
   exit 64
 }
@@ -47,12 +47,12 @@ read_version() {
 }
 
 validate_inputs() {
-  local commit=$1 codex_version=$2 claude_version=$3
+  local commit=$1 base_version=$2 codex_version=$3 claude_version=$4
   [[ "$commit" =~ $commit_pattern ]] || {
     printf '%s\n' 'error: commit must be a lowercase, 40-character SHA' >&2
     return 1
   }
-  for version in "$codex_version" "$claude_version"; do
+  for version in "$base_version" "$codex_version" "$claude_version"; do
     valid_version "$version" || {
       printf '%s\n' 'error: version contains unsupported tag characters' >&2
       return 1
@@ -75,39 +75,43 @@ main() {
       return 1
       ;;
     create)
-      test "$#" = 6 || usage
+      test "$#" = 7 || usage
       output=$2
-      validate_inputs "$3" "$4" "$5" || return 1
-      if ! [[ "$6" =~ $timestamp_pattern ]] ||
-        ! jq --null-input --arg created_at "$6" \
+      validate_inputs "$3" "$4" "$5" "$6" || return 1
+      if ! [[ "$7" =~ $timestamp_pattern ]] ||
+        ! jq --null-input --arg created_at "$7" \
           '($created_at | fromdateiso8601 != null)' >/dev/null; then
         printf '%s\n' 'error: created_at must be an RFC 3339 UTC timestamp' >&2
         return 1
       fi
       jq --null-input \
         --arg commit "$3" \
-        --arg codex "$4" \
-        --arg claude "$5" \
-        --arg created_at "$6" \
-        '{schema_version: 1,
+        --arg base "$4" \
+        --arg codex "$5" \
+        --arg claude "$6" \
+        --arg created_at "$7" \
+        '{schema_version: 2,
           upstream_commit: $commit,
+          base_version: $base,
           codex_version: $codex,
           claude_code_version: $claude,
           created_at: $created_at}' >"$output" || return 1
       ;;
     validate)
-      test "$#" = 5 || usage
-      validate_inputs "$3" "$4" "$5" || return 1
+      test "$#" = 6 || usage
+      validate_inputs "$3" "$4" "$5" "$6" || return 1
       jq --exit-status \
         --arg commit "$3" \
-        --arg codex "$4" \
-        --arg claude "$5" \
+        --arg base "$4" \
+        --arg codex "$5" \
+        --arg claude "$6" \
         'type == "object" and
          (keys | sort) == [
-           "claude_code_version", "codex_version", "created_at",
-           "schema_version", "upstream_commit"] and
-         .schema_version == 1 and
+           "base_version", "claude_code_version", "codex_version",
+           "created_at", "schema_version", "upstream_commit"] and
+         .schema_version == 2 and
          .upstream_commit == $commit and
+         .base_version == $base and
          .codex_version == $codex and
          .claude_code_version == $claude and
          (.created_at | type == "string" and
