@@ -199,18 +199,26 @@ func (mp *monitoredProcess) stop() error {
 	if mp == nil || mp.cmd == nil || mp.cmd.Process == nil {
 		return nil
 	}
+	var sigErr, killErr error
 	if !mp.exited() {
-		if err := mp.cmd.Process.Signal(os.Interrupt); err != nil && !errors.Is(err, os.ErrProcessDone) {
-			_ = mp.cmd.Process.Kill()
+		sigErr = mp.cmd.Process.Signal(os.Interrupt)
+		if sigErr != nil && !errors.Is(sigErr, os.ErrProcessDone) {
+			killErr = mp.cmd.Process.Kill()
 		} else {
 			select {
 			case <-mp.done:
 			case <-time.After(stopGraceWindow):
-				_ = mp.cmd.Process.Kill()
+				killErr = mp.cmd.Process.Kill()
 			}
 		}
 	}
 	<-mp.done
+	// A Kill failure that isn't just "already reaped" means we could not
+	// reliably terminate the child; surface it rather than pretending
+	// cleanup succeeded.
+	if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+		return fmt.Errorf("kill after interrupt (interrupt result: %v): %w", sigErr, killErr)
+	}
 	if mp.err != nil {
 		// Non-zero exit from a signalled/killed process is expected; only
 		// surface errors that indicate we could not reap the child.

@@ -2,11 +2,17 @@ package doctor
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// testRevision is the git HEAD fakeEnv's stubbed git commands and installed
+// binary both report by default, so a fresh fakeEnv looks like a healthy,
+// up-to-date install unless a test overrides one side of the comparison.
+const testRevision = "deadbeef1234567890abcdef1234567890abcdef"
 
 // fakeEnv builds an Env with a stubbed runner and a temp home/checkout layout,
 // so doctor runs without Docker or Microsandbox.
@@ -61,6 +67,12 @@ func fakeEnv(t *testing.T, withMsb, withEgress bool) (*Env, string) {
 				return []byte("claude-home-hardened\ncodex-home\n"), nil
 			case name == "msb" && len(args) > 1 && args[0] == "image" && args[1] == "inspect":
 				return []byte(imageInspect), nil
+			case name == "git" && len(args) >= 4 && args[0] == "-C" && args[2] == "rev-parse" && args[3] == "HEAD":
+				return []byte(testRevision + "\n"), nil
+			case name == "git" && len(args) >= 4 && args[0] == "-C" && args[2] == "status" && args[3] == "--porcelain":
+				return []byte(""), nil
+			case len(args) == 1 && args[0] == "version" && strings.HasSuffix(name, "ai-sandbox"):
+				return []byte(fmt.Sprintf("ai-sandbox 0.1.0 (revision %s)\n", testRevision)), nil
 			}
 			return nil, errors.New("unexpected command " + name + " " + strings.Join(args, " "))
 		},
@@ -82,8 +94,11 @@ func checkStatus(checks []Check, name string) string {
 
 func TestDoctorHealthy(t *testing.T) {
 	env, home := fakeEnv(t, true, true)
-	installWrapper(t, home, "claude", "command ai-sandbox run claude -- $argv")
-	installWrapper(t, home, "codex", "command ai-sandbox run codex -- $argv")
+	bin := installBinary(t, env.InstallDir)
+	installRealWrapper(t, home, "claude", env.Checkout, bin)
+	installRealWrapper(t, home, "codex", env.Checkout, bin)
+	installRealWrapper(t, home, "claude-session", env.Checkout, bin)
+	installTrustGuard(t, home, env.Checkout, "guard contents\n")
 
 	checks := env.Run()
 	for _, c := range checks {
@@ -99,6 +114,18 @@ func TestDoctorHealthy(t *testing.T) {
 	}
 	if s := checkStatus(checks, "launcher claude"); s != statusOK {
 		t.Errorf("launcher claude = %s", s)
+	}
+	if s := checkStatus(checks, "launcher codex"); s != statusOK {
+		t.Errorf("launcher codex = %s", s)
+	}
+	if s := checkStatus(checks, "launcher claude-session"); s != statusOK {
+		t.Errorf("launcher claude-session = %s", s)
+	}
+	if s := checkStatus(checks, "trust guard"); s != statusOK {
+		t.Errorf("trust guard = %s", s)
+	}
+	if s := checkStatus(checks, "ai-sandbox binary revision"); s != statusOK {
+		t.Errorf("ai-sandbox binary revision = %s", s)
 	}
 	if s := checkStatus(checks, "image identity ai-sandboxes-claude:local"); s != statusOK {
 		t.Errorf("image identity claude = %s", s)
@@ -222,6 +249,362 @@ func TestDoctorWarnsOnStaleWrapper(t *testing.T) {
 	checks := env.Run()
 	if s := checkStatus(checks, "launcher claude"); s != statusWarn {
 		t.Errorf("launcher claude = %s, want warn", s)
+	}
+}
+
+// installTrustGuard writes matching guard.fish content into both the
+// checkout (the source of truth) and the installed trusted dir, so tests
+// that don't care about guard drift start from a passing baseline.
+func installTrustGuard(t *testing.T, home, checkout, content string) {
+	t.Helper()
+	checkoutDir := filepath.Join(checkout, "shell", "fish", "trusted")
+	if err := os.MkdirAll(checkoutDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(checkoutDir, "guard.fish"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	installedDir := filepath.Join(home, ".config", "ai-sandboxes", "trusted")
+	if err := os.MkdirAll(installedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(installedDir, "guard.fish"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestDoctorRevisionMatches covers the healthy case explicitly: installed
+// binary and checkout report the same git HEAD.
+func TestDoctorRevisionMatches(t *testing.T) {
+	env, _ := fakeEnv(t, true, true)
+	installBinary(t, env.InstallDir)
+	checks := env.Run()
+	if s := checkStatus(checks, "ai-sandbox binary revision"); s != statusOK {
+		t.Errorf("ai-sandbox binary revision = %s, want ok", s)
+	}
+}
+
+// TestDoctorRevisionStale is the regression test for "the installed binary
+// predates the checkout": the installed binary reports an older commit than
+// the checkout's current HEAD, so doctor must fail with an actionable
+// message rather than treating file existence as health.
+func TestDoctorRevisionStale(t *testing.T) {
+	env, _ := fakeEnv(t, true, true)
+	bin := installBinary(t, env.InstallDir)
+	baseRun := env.Runner.Run
+	env.Runner.Run = func(name string, args ...string) ([]byte, error) {
+		if name == bin && len(args) == 1 && args[0] == "version" {
+			return []byte("ai-sandbox 0.1.0 (revision old0000000000000000000000000000000000000)\n"), nil
+		}
+		return baseRun(name, args...)
+	}
+	checks := env.Run()
+	var detail string
+	for _, c := range checks {
+		if c.Name == "ai-sandbox binary revision" {
+			detail = c.Detail
+		}
+	}
+	if s := checkStatus(checks, "ai-sandbox binary revision"); s != statusFail {
+		t.Fatalf("ai-sandbox binary revision = %s, want fail; detail=%s", s, detail)
+	}
+	if !strings.Contains(detail, "scripts/install-ai-sandbox") {
+		t.Errorf("stale revision detail = %q, want it to name the remediation command", detail)
+	}
+}
+
+// TestDoctorRevisionDirtyBuildTreatedAsStale covers "a build from a dirty
+// worktree must be explicitly identified as dirty or unknown, never
+// masquerade as clean": the checkout has uncommitted changes (git status
+// reports output), so its revision carries "+dirty" and cannot match a
+// binary built from a plain commit.
+func TestDoctorRevisionDirtyBuildTreatedAsStale(t *testing.T) {
+	env, _ := fakeEnv(t, true, true)
+	installBinary(t, env.InstallDir)
+	baseRun := env.Runner.Run
+	env.Runner.Run = func(name string, args ...string) ([]byte, error) {
+		if name == "git" && len(args) >= 4 && args[2] == "status" && args[3] == "--porcelain" {
+			return []byte(" M some/file.go\n"), nil
+		}
+		return baseRun(name, args...)
+	}
+	checks := env.Run()
+	if s := checkStatus(checks, "ai-sandbox binary revision"); s != statusFail {
+		t.Errorf("ai-sandbox binary revision = %s, want fail (dirty checkout != clean installed rev)", s)
+	}
+}
+
+// TestDoctorRevisionUnknownWarns covers a binary that wasn't built through
+// scripts/install-ai-sandbox (no ldflags revision) or a checkout that isn't
+// a git repository: doctor must warn, not silently pass or hard-fail.
+func TestDoctorRevisionUnknownWarns(t *testing.T) {
+	env, _ := fakeEnv(t, true, true)
+	bin := installBinary(t, env.InstallDir)
+	baseRun := env.Runner.Run
+	env.Runner.Run = func(name string, args ...string) ([]byte, error) {
+		if name == bin && len(args) == 1 && args[0] == "version" {
+			return []byte("ai-sandbox 0.1.0 (revision unknown)\n"), nil
+		}
+		return baseRun(name, args...)
+	}
+	checks := env.Run()
+	if s := checkStatus(checks, "ai-sandbox binary revision"); s != statusWarn {
+		t.Errorf("ai-sandbox binary revision = %s, want warn for an unknown installed revision", s)
+	}
+}
+
+// TestDoctorRevisionUnknownForNonGitCheckout covers a checkout that isn't a
+// git repository at all: gitRevision fails, and doctor must warn instead of
+// failing the whole check or claiming a match.
+func TestDoctorRevisionUnknownForNonGitCheckout(t *testing.T) {
+	env, _ := fakeEnv(t, true, true)
+	installBinary(t, env.InstallDir)
+	baseRun := env.Runner.Run
+	env.Runner.Run = func(name string, args ...string) ([]byte, error) {
+		if name == "git" && len(args) >= 4 && args[2] == "rev-parse" {
+			return nil, errors.New("not a git repository")
+		}
+		return baseRun(name, args...)
+	}
+	checks := env.Run()
+	if s := checkStatus(checks, "ai-sandbox binary revision"); s != statusWarn {
+		t.Errorf("ai-sandbox binary revision = %s, want warn for a non-git checkout", s)
+	}
+}
+
+// TestDoctorWrapperWrongBinaryRejected is the regression test for a wrapper
+// that contains "ai-sandbox run" (so a substring check would accept it) but
+// invokes a different installed binary than the one doctor resolved.
+func TestDoctorWrapperWrongBinaryRejected(t *testing.T) {
+	env, home := fakeEnv(t, true, true)
+	wrongBin := filepath.Join(t.TempDir(), "ai-sandbox")
+	installRealWrapper(t, home, "claude", env.Checkout, wrongBin)
+	checks := env.Run()
+	var detail string
+	for _, c := range checks {
+		if c.Name == "launcher claude" {
+			detail = c.Detail
+		}
+	}
+	if s := checkStatus(checks, "launcher claude"); s != statusFail {
+		t.Fatalf("launcher claude = %s, want fail; detail=%s", s, detail)
+	}
+	if !strings.Contains(detail, wrongBin) {
+		t.Errorf("wrong-binary detail = %q, want it to name the wrapper's embedded binary path", detail)
+	}
+}
+
+// TestDoctorWrapperOldCheckoutRejected covers "the checkout has been moved":
+// the wrapper's embedded AI_SANDBOXES_ROOT still points at the old location.
+func TestDoctorWrapperOldCheckoutRejected(t *testing.T) {
+	env, home := fakeEnv(t, true, true)
+	bin := filepath.Join(env.InstallDir, "ai-sandbox")
+	oldCheckout := filepath.Join(t.TempDir(), "old-checkout")
+	installRealWrapper(t, home, "claude", oldCheckout, bin)
+	checks := env.Run()
+	if s := checkStatus(checks, "launcher claude"); s != statusWarn {
+		t.Errorf("launcher claude = %s, want warn for a wrapper pointing at a moved checkout", s)
+	}
+}
+
+// TestDoctorClaudeSessionMissingDetected covers the third installed
+// wrapper, claude-session, which the pre-existing doctor never checked at
+// all.
+func TestDoctorClaudeSessionMissingDetected(t *testing.T) {
+	env, home := fakeEnv(t, true, true)
+	bin := installBinary(t, env.InstallDir)
+	installRealWrapper(t, home, "claude", env.Checkout, bin)
+	installRealWrapper(t, home, "codex", env.Checkout, bin)
+	// claude-session deliberately not installed.
+	checks := env.Run()
+	if s := checkStatus(checks, "launcher claude-session"); s != statusWarn {
+		t.Errorf("launcher claude-session = %s, want warn when missing", s)
+	}
+}
+
+// TestDoctorClaudeSessionStaleDetected covers a claude-session wrapper that
+// still points at an old checkout.
+func TestDoctorClaudeSessionStaleDetected(t *testing.T) {
+	env, home := fakeEnv(t, true, true)
+	bin := installBinary(t, env.InstallDir)
+	oldCheckout := filepath.Join(t.TempDir(), "old-checkout")
+	installRealWrapper(t, home, "claude-session", oldCheckout, bin)
+	checks := env.Run()
+	if s := checkStatus(checks, "launcher claude-session"); s != statusWarn {
+		t.Errorf("launcher claude-session = %s, want warn for a stale wrapper", s)
+	}
+}
+
+// TestDoctorTrustGuardMissingDetected covers "missing ... trust guard
+// detected": no guard.fish installed at all.
+func TestDoctorTrustGuardMissingDetected(t *testing.T) {
+	env, _ := fakeEnv(t, true, true)
+	checks := env.Run()
+	if s := checkStatus(checks, "trust guard"); s != statusWarn {
+		t.Errorf("trust guard = %s, want warn when missing", s)
+	}
+}
+
+// TestDoctorTrustGuardModifiedDetected covers "modified trust guard
+// detected": the installed guard differs from the checkout's copy, so
+// merely existing is not enough to call it healthy.
+func TestDoctorTrustGuardModifiedDetected(t *testing.T) {
+	env, home := fakeEnv(t, true, true)
+	installTrustGuard(t, home, env.Checkout, "original guard\n")
+	installedPath := filepath.Join(home, ".config", "ai-sandboxes", "trusted", "guard.fish")
+	if err := os.WriteFile(installedPath, []byte("tampered guard\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	checks := env.Run()
+	if s := checkStatus(checks, "trust guard"); s != statusFail {
+		t.Errorf("trust guard = %s, want fail when the installed guard differs from the checkout", s)
+	}
+}
+
+// TestDoctorWrapperCustomInstallAndBinDirs covers "custom
+// AI_SANDBOX_INSTALL_DIR and AI_SANDBOX_BIN_DIR configurations must
+// continue to work" for wrapper and revision validation, not just plain
+// binary existence (already covered by TestDoctorHonoursInstallDirOverride).
+func TestDoctorWrapperCustomInstallAndBinDirs(t *testing.T) {
+	env, home := fakeEnv(t, true, true)
+	env.InstallDir = filepath.Join(t.TempDir(), "custom-install")
+	bin := installBinary(t, env.InstallDir)
+	installRealWrapper(t, home, "claude", env.Checkout, bin)
+	checks := env.Run()
+	if s := checkStatus(checks, "launcher claude"); s != statusOK {
+		t.Errorf("launcher claude = %s, want ok with a custom install dir", s)
+	}
+	if s := checkStatus(checks, "ai-sandbox binary revision"); s != statusOK {
+		t.Errorf("ai-sandbox binary revision = %s, want ok with a custom install dir", s)
+	}
+}
+
+// TestDoctorWrapperPathsWithApostropheAndSpace covers checkout and install
+// paths containing an apostrophe and a space: the wrapper embeds them
+// through fish_quote's escaping, and doctor's takeFishToken must be its
+// exact inverse rather than breaking on the escape sequence.
+func TestDoctorWrapperPathsWithApostropheAndSpace(t *testing.T) {
+	home := t.TempDir()
+	checkout := filepath.Join(t.TempDir(), "o'brien's checkout")
+	if err := os.MkdirAll(filepath.Join(checkout, "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(checkout, "versions.env"), []byte("CODEX_VERSION=0.147.0\n"), 0o644)
+	os.WriteFile(filepath.Join(checkout, "config", "runtime.json"), []byte(`{"shared_state": null}`), 0o644)
+
+	installDir := filepath.Join(t.TempDir(), "install 'dir'")
+	bin := installBinary(t, installDir)
+	installRealWrapper(t, home, "claude", checkout, bin)
+
+	env := &Env{
+		Home:       home,
+		Checkout:   checkout,
+		InstallDir: installDir,
+		Runner: Runner{
+			LookPath: func(string) (string, error) { return "", errors.New("not found") },
+			Run: func(name string, args ...string) ([]byte, error) {
+				switch {
+				case name == "git" && len(args) >= 4 && args[2] == "rev-parse":
+					return []byte(testRevision + "\n"), nil
+				case name == "git" && len(args) >= 4 && args[2] == "status":
+					return []byte(""), nil
+				case name == bin && len(args) == 1 && args[0] == "version":
+					return []byte(fmt.Sprintf("ai-sandbox 0.1.0 (revision %s)\n", testRevision)), nil
+				}
+				return nil, errors.New("unexpected command " + name + " " + strings.Join(args, " "))
+			},
+		},
+	}
+	checks := env.Run()
+	if s := checkStatus(checks, "launcher claude"); s != statusOK {
+		var detail string
+		for _, c := range checks {
+			if c.Name == "launcher claude" {
+				detail = c.Detail
+			}
+		}
+		t.Errorf("launcher claude = %s (detail=%s), want ok for a checkout/install path with apostrophes and spaces", s, detail)
+	}
+}
+
+// TestDoctorWrapperSymlinkedCheckout covers a checkout accessed through a
+// symlink: the wrapper embeds the path as scripts/install-fish-functions
+// resolved it at install time (which may be the symlink, not its target),
+// while doctor's own checkout resolution follows symlinks. Both sides must
+// be normalized the same way for a fresh install to read as healthy.
+func TestDoctorWrapperSymlinkedCheckout(t *testing.T) {
+	env, home := fakeEnv(t, true, true)
+	bin := installBinary(t, env.InstallDir)
+	link := filepath.Join(t.TempDir(), "checkout-link")
+	if err := os.Symlink(env.Checkout, link); err != nil {
+		t.Skipf("symlinks not supported: %v", err)
+	}
+	// The wrapper was generated while AI_SANDBOXES_ROOT resolved through the
+	// symlink; doctor's env.Checkout is already the resolved target.
+	installRealWrapper(t, home, "claude", link, bin)
+	checks := env.Run()
+	if s := checkStatus(checks, "launcher claude"); s != statusOK {
+		var detail string
+		for _, c := range checks {
+			if c.Name == "launcher claude" {
+				detail = c.Detail
+			}
+		}
+		t.Errorf("launcher claude = %s (detail=%s), want ok when the wrapper's embedded root resolves to the same checkout via a symlink", s, detail)
+	}
+}
+
+// TestDoctorReadOnly asserts Run never modifies any file it inspects: it
+// snapshots mtimes and content of the binary, both wrappers, and the trust
+// guard before and after Run, and requires them to be byte-for-byte and
+// mtime-for-mtime identical.
+func TestDoctorReadOnly(t *testing.T) {
+	env, home := fakeEnv(t, true, true)
+	bin := installBinary(t, env.InstallDir)
+	installRealWrapper(t, home, "claude", env.Checkout, bin)
+	installTrustGuard(t, home, env.Checkout, "guard contents\n")
+
+	paths := []string{
+		bin,
+		filepath.Join(home, ".config", "fish", "functions", "claude.fish"),
+		filepath.Join(home, ".config", "ai-sandboxes", "trusted", "guard.fish"),
+		filepath.Join(env.Checkout, "shell", "fish", "trusted", "guard.fish"),
+	}
+	type snapshot struct {
+		content []byte
+		modTime int64
+	}
+	before := make(map[string]snapshot, len(paths))
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fi, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[p] = snapshot{content: data, modTime: fi.ModTime().UnixNano()}
+	}
+
+	env.Run()
+
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fi, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := before[p]
+		if string(data) != string(want.content) {
+			t.Errorf("%s content changed after doctor.Run", p)
+		}
+		if fi.ModTime().UnixNano() != want.modTime {
+			t.Errorf("%s mtime changed after doctor.Run", p)
+		}
 	}
 }
 
@@ -377,4 +760,56 @@ func installWrapper(t *testing.T, home, agent, body string) {
 	dir := filepath.Join(home, ".config", "fish", "functions")
 	os.MkdirAll(dir, 0o755)
 	os.WriteFile(filepath.Join(dir, agent+".fish"), []byte("function "+agent+"\n  "+body+"\nend\n"), 0o644)
+}
+
+// fishQuoteForTest mirrors scripts/install-fish-functions' fish_quote, so
+// fixtures built with it are exact inverses of doctor's takeFishToken.
+func fishQuoteForTest(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `'`, `\'`)
+	return "'" + s + "'"
+}
+
+// renderWrapperCommandLine builds the "command env AI_SANDBOXES_ROOT=..."
+// line scripts/install-fish-functions generates for a given root/bin/agent,
+// so wrapper-parsing tests exercise fixtures shaped exactly like the real
+// installer's output instead of a hand-rolled approximation.
+func renderWrapperCommandLine(root, bin, agentToken string, quoteAgent, hasSeparator bool) string {
+	agentPart := agentToken
+	if quoteAgent {
+		agentPart = fishQuoteForTest(agentToken)
+	}
+	suffix := "$argv"
+	if hasSeparator {
+		suffix = "-- $argv"
+	}
+	return fmt.Sprintf("command env AI_SANDBOXES_ROOT=%s %s run %s %s",
+		fishQuoteForTest(root), fishQuoteForTest(bin), agentPart, suffix)
+}
+
+// installRealWrapper writes a wrapper for agent shaped exactly like
+// scripts/install-fish-functions would generate it for the given root/bin,
+// honouring each agent's real contract (claude-session hardcodes an
+// unquoted "claude" and has no "--" separator).
+func installRealWrapper(t *testing.T, home, agent, root, bin string) {
+	t.Helper()
+	quoteAgent, hasSeparator, agentToken := true, true, agent
+	if agent == "claude-session" {
+		quoteAgent, hasSeparator, agentToken = false, false, "claude"
+	}
+	installWrapper(t, home, agent, renderWrapperCommandLine(root, bin, agentToken, quoteAgent, hasSeparator))
+}
+
+// installBinary writes a stand-in file at env's InstallDir so ai-sandbox
+// binary existence checks (which only os.Stat the path) see it as present.
+func installBinary(t *testing.T, installDir string) string {
+	t.Helper()
+	if err := os.MkdirAll(installDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(installDir, "ai-sandbox")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin
 }

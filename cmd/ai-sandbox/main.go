@@ -25,6 +25,14 @@ import (
 
 const version = "0.1.0"
 
+// revision is the exact git commit this binary was built from, injected by
+// scripts/install-ai-sandbox via -ldflags "-X main.revision=...". A build
+// from a dirty worktree carries a "+dirty" suffix (see that script); a build
+// that didn't go through it (e.g. `go build` or `go run` during development)
+// keeps this zero value so doctor's revision check degrades to a warning
+// instead of a false staleness report.
+var revision = "unknown"
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -90,7 +98,7 @@ parsed:
 		usage(stdout)
 		return 0
 	case "version", "--version", "-V":
-		fmt.Fprintf(stdout, "ai-sandbox %s\n", version)
+		fmt.Fprintf(stdout, "ai-sandbox %s (revision %s)\n", version, revision)
 		return 0
 	default:
 		fmt.Fprintf(stderr, "ai-sandbox: unknown command %q\n", args[0])

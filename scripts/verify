@@ -31,6 +31,7 @@ bash scripts/session/tests/test-claude-entrypoint-seed-merge.sh || exit 1
 bash scripts/session/tests/test-codex-entrypoint-skills.sh || exit 1
 bash scripts/tests/test-publish-release-marker.sh || exit 1
 bash scripts/tests/test-update.sh || exit 1
+bash scripts/tests/test-install-ai-sandbox.sh || exit 1
 if git grep -nEi '(api[_-]?key|access[_-]?token|secret)[[:space:]]*=[[:space:]]*[^[:space:]]+' -- ':!README.md' ':!scripts/verify'; then
   exit 1
 fi

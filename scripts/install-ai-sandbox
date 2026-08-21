@@ -78,8 +78,22 @@ tmpdir=$(mktemp -d "$install_dir/.install.XXXXXX") || die 'could not create a st
 trap 'rm -rf -- "$tmpdir"' EXIT
 tmp_bin="$tmpdir/ai-sandbox"
 
-printf 'building ai-sandbox...\n'
-go build -o "$tmp_bin" ./cmd/ai-sandbox || die 'go build ./cmd/ai-sandbox failed'
+# Identify the exact source revision being built so doctor can later tell a
+# stale installed binary from a current one. A build from a dirty worktree
+# (uncommitted or untracked changes) is marked "+dirty" rather than the bare
+# commit hash, so it can never be mistaken for a clean build of that commit.
+# Anything short of a clean git rev-parse (no git, not a repo, detached
+# checkout without history) falls back to "unknown" rather than guessing.
+revision=unknown
+if command -v git >/dev/null 2>&1 && git -C "$repo_root" rev-parse HEAD >/dev/null 2>&1; then
+  revision=$(git -C "$repo_root" rev-parse HEAD)
+  if [ -n "$(git -C "$repo_root" status --porcelain 2>/dev/null)" ]; then
+    revision="${revision}+dirty"
+  fi
+fi
+
+printf 'building ai-sandbox (revision %s)...\n' "$revision"
+go build -ldflags "-X main.revision=$revision" -o "$tmp_bin" ./cmd/ai-sandbox || die 'go build ./cmd/ai-sandbox failed'
 
 # Validate the freshly built binary before atomically swapping it in. If the
 # binary is corrupt or was built against a broken tree we want the existing
