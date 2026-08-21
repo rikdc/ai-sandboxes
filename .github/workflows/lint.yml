@@ -61,6 +61,8 @@ jobs:
           cache: true
       - name: Build
         run: go build ./...
+      - name: Gofmt
+        run: test -z "$(gofmt -l .)"
       - name: Vet
         run: go vet ./...
       - name: Test

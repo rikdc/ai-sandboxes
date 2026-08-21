@@ -47,8 +47,9 @@ never boots its own VM.
   to the LAN or public Internet.
 - The mechanism is Codex-specific today. Generalising to MCP OAuth
   callbacks (Slack, Notion, …) is possible — the tunnel API takes any
-  host/guest port pair — but each provider needs its own subcommand or
-  discovery mechanism, so that work is scoped to a follow-up plan.
+  host/guest port pair. **Update:** ADR-0008 supersedes the claim that
+  each provider needs its own subcommand; `codex mcp login <name>`
+  covers every Codex MCP provider through one wrapper.
 - A one-time host setup is required: `msb ssh authorize --file <pubkey>`
   writes the SSH pubkey `msb ssh serve` will accept. `codex login` fails
   fast with the exact remediation command when the file is absent, so

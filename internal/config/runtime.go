@@ -40,7 +40,7 @@ func ValidateSharedState(id, quota string) error {
 
 // SharedStateIDRE and SharedStateQuotaRE are exported for doctor and plan to
 // reuse without duplicating the pattern.
-func SharedStateIDRE() *regexp.Regexp { return sharedStateIDRE }
+func SharedStateIDRE() *regexp.Regexp    { return sharedStateIDRE }
 func SharedStateQuotaRE() *regexp.Regexp { return sharedStateQuotaRE }
 
 // strictSharedState mirrors SharedState but decodes with DisallowUnknownFields.

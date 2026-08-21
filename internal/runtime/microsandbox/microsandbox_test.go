@@ -31,7 +31,7 @@ func TestParseImageMetadata(t *testing.T) {
 	want := map[string]string{
 		"io.ai-sandboxes.shared-state.id":    "demo",
 		"io.ai-sandboxes.shared-state.quota": "2G",
-		"other": "value",
+		"other":                              "value",
 	}
 	if !reflect.DeepEqual(meta.Labels, want) {
 		t.Errorf("labels = %v, want %v", meta.Labels, want)

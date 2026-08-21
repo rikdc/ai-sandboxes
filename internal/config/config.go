@@ -103,17 +103,17 @@ var agents = map[string]Agent{
 		Command: []string{"claude"},
 	},
 	"codex": {
-		Name:               "codex",
-		Image:              "ai-sandboxes-codex:local",
-		User:               "node",
-		TTY:                true,
-		PullNever:          true,
-		CPUs:               4,
-		Memory:             "8G",
-		RootDiskQuota:      "20G",
-		WorkspaceQuota:     "20G",
-		HomeQuota:          "4G",
-		Security:           "restricted",
+		Name:           "codex",
+		Image:          "ai-sandboxes-codex:local",
+		User:           "node",
+		TTY:            true,
+		PullNever:      true,
+		CPUs:           4,
+		Memory:         "8G",
+		RootDiskQuota:  "20G",
+		WorkspaceQuota: "20G",
+		HomeQuota:      "4G",
+		Security:       "restricted",
 		// Codex is deny-by-default: its network is resolved from
 		// ~/.config/microvms/codex-egress, matching claude's model, with
 		// CODEX_MSB_PUBLIC_EGRESS=1 as the escape hatch.

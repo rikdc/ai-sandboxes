@@ -16,22 +16,22 @@ type Sandbox struct {
 	Status string `json:"status"`
 }
 
-// ErrNoCodexSandbox is returned when no running codex sandbox matches the
-// requested workspace hash.
-var ErrNoCodexSandbox = errors.New("no running codex sandbox for this workspace")
+// ErrNoSandbox is returned when no running sandbox matches the requested
+// agent + workspace hash.
+var ErrNoSandbox = errors.New("no running sandbox for this agent and workspace")
 
-// ErrMultipleCodexSandboxes is returned when more than one running codex
-// sandbox matches the requested workspace hash — the caller must resolve the
-// ambiguity by stopping the extras before `codex login` can attach.
-var ErrMultipleCodexSandboxes = errors.New("multiple running codex sandboxes for this workspace")
+// ErrMultipleSandboxes is returned when more than one running sandbox matches
+// the requested agent + workspace hash — the caller must resolve the ambiguity
+// by stopping the extras before an attach operation can proceed.
+var ErrMultipleSandboxes = errors.New("multiple running sandboxes for this agent and workspace")
 
-// FindCodexSandbox returns the single running codex sandbox for the given
-// workspace hash, matched against the ai-sandbox.agent and
-// ai-sandbox.workspace labels set by `plan.Resolve` for codex agents.
-func (c *Client) FindCodexSandbox(workspaceHash string) (*Sandbox, error) {
+// FindSandbox returns the single running sandbox for the given agent + workspace
+// hash, matched against the ai-sandbox.agent and ai-sandbox.workspace labels set
+// by `plan.Resolve`.
+func (c *Client) FindSandbox(agent, workspaceHash string) (*Sandbox, error) {
 	out, err := c.runCapture(
 		"list", "--running", "--format", "json",
-		"--label", "ai-sandbox.agent=codex",
+		"--label", "ai-sandbox.agent="+agent,
 		"--label", "ai-sandbox.workspace="+workspaceHash,
 	)
 	if err != nil {
@@ -43,10 +43,10 @@ func (c *Client) FindCodexSandbox(workspaceHash string) (*Sandbox, error) {
 	}
 	switch len(sandboxes) {
 	case 0:
-		return nil, ErrNoCodexSandbox
+		return nil, ErrNoSandbox
 	case 1:
 		return &sandboxes[0], nil
 	default:
-		return nil, ErrMultipleCodexSandboxes
+		return nil, ErrMultipleSandboxes
 	}
 }
