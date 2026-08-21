@@ -71,36 +71,61 @@ go test ./...               # control-plane unit tests
 ./scripts/lint-dockerfiles  # run Hadolint locally
 ```
 
-### Codex authentication
+### How auth works
 
-Codex's browser sign-in binds its OAuth callback on `127.0.0.1:1455`
-inside the guest, which the host browser cannot reach directly. Run the
-login subcommand in a second terminal while the sandbox is running:
+Codex and Claude Code each run their own browser-based OAuth sign-in:
+account login (Codex only) and MCP server login (both). In every case
+the CLI binds its OAuth callback on a loopback port *inside the guest*,
+which the host browser cannot reach directly. `ai-sandbox` bridges that
+gap with an SSH tunnel scoped to the single login operation — opened
+just before the sign-in flow starts, torn down the moment it finishes
+or fails. No port is ever published to the LAN or the public Internet,
+and no listener is left running afterward. See
+[ADR-0007](docs/adr/0007-codex-auth-tunnel.md) (the tunnel primitive
+and Codex account login) and
+[ADR-0008](docs/adr/0008-codex-mcp-oauth-tunnel.md) (MCP login for
+both clients) for the design rationale.
 
-```console
-# terminal 1
-ai-sandbox run codex
-# terminal 2 (once ~/.microsandbox/ssh/authorized_keys is set up)
-ai-sandbox codex login
-```
-
-One-time host setup:
+One-time host setup, required before any of the subcommands below:
 
 ```console
 msb ssh authorize --file ~/.ssh/id_ed25519.pub
 ```
 
-`codex login` opens an SSH tunnel scoped to the login operation
-(host `127.0.0.1:1455` → guest `127.0.0.1:1455`), runs the sign-in
-flow inside the guest, and tears the tunnel down on exit. Nothing is
-published to the LAN or public Internet. See
-[ADR-0007](docs/adr/0007-codex-auth-tunnel.md) for why this is a
-tunnel rather than a published port.
+**Codex account login** — Codex's browser sign-in binds its OAuth
+callback on `127.0.0.1:1455` inside the guest. Run the login
+subcommand in a second terminal while the sandbox is running:
+
+```console
+# terminal 1
+ai-sandbox run codex
+# terminal 2
+ai-sandbox codex login
+```
+
+`codex login` tunnels host `127.0.0.1:1455` → guest `127.0.0.1:1455`
+for the duration of the sign-in.
 
 After the first successful sign-in, exit and re-run `codex` in
 terminal 1. The already-running `codex` process reads the auth token
 at startup and won't pick up the newly-written credential until it
 restarts. Subsequent runs re-use the persisted token from the
 `codex-home` volume, so this is a one-time cost per credential.
+
+**MCP server login (Codex or Claude Code)** — signs an already-running
+sandbox into an MCP server's own OAuth (e.g. Slack, Notion), using the
+same tunnel mechanism:
+
+```console
+# Codex: ai-sandbox picks an ephemeral loopback port per invocation
+ai-sandbox codex mcp login <server-name>
+
+# Claude Code: the port must match what you registered with
+# `claude mcp add --scope user --callback-port <P> --transport http <server-name> <url>`
+ai-sandbox claude mcp login --callback-port <P> <server-name>
+```
+
+Each MCP server's registry lives in that CLI's own persisted config —
+`ai-sandbox` never reads or writes it.
 
 Claude and Codex default to an intentionally restricted network. Use `CLAUDE_MSB_PUBLIC_EGRESS=1 claude` or `CODEX_MSB_PUBLIC_EGRESS=1 codex` only when a session needs public Internet access. The mounted project is writable, so keep secrets out of it and review agent changes with Git.
