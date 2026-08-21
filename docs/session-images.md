@@ -140,6 +140,16 @@ estimated-size limits. `tools` validation is delegated to
 own `config/tools.json`/`config/runtime.json` mechanism already uses — so
 the two mechanisms cannot drift apart.
 
+**Non-goal: no ingress fields.** This schema has no `ports` field and
+none is planned. A session profile cannot declare a LAN or public bind,
+and cannot request any inbound listener on the guest. The only inbound
+path `ai-sandbox` ever opens is the operation-scoped SSH tunnel used for
+OAuth callbacks during login (see [How auth
+works](../README.md#how-auth-works) and
+[ADR-0007](adr/0007-codex-auth-tunnel.md)/[ADR-0008](adr/0008-codex-mcp-oauth-tunnel.md)),
+which is unrelated to the profile schema, is never workspace- or
+profile-declared, and is torn down when the login operation ends.
+
 ## Lifecycle
 
 ### 1. Build (cache miss only)
