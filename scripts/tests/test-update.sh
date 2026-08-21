@@ -340,7 +340,7 @@ MOCK_GIT_NEW_HEAD="$new_head"
 run_update "$gitpath" --check
 expect_status 1 'check behind'
 expect_stdout_contains '2 commits behind origin/main' 'check behind summary'
-expect_stdout_contains 'Codex 0.145.0 -> 0.147.0, Claude Code 2.1.224 -> 2.1.231' 'check behind deltas'
+expect_stdout_contains "Codex 0.145.0 -> $CODEX_VERSION, Claude Code 2.1.224 -> $CLAUDE_CODE_VERSION" 'check behind deltas'
 grep -Fq 'git merge' "$git_log" && fail 'check behind should not merge'
 grep -Fq 'git fetch' "$git_log" || fail 'check behind must fetch first'
 
