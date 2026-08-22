@@ -10,7 +10,12 @@ ARG SHARED_STATE_ID
 ARG SHARED_STATE_QUOTA
 LABEL io.ai-sandboxes.shared-state.id="$SHARED_STATE_ID" \
       io.ai-sandboxes.shared-state.quota="$SHARED_STATE_QUOTA"
-COPY config/tool-catalog.json config/tools.json config/runtime.json /opt/tools/
+# The tool catalog is repository-owned policy; tools.json and runtime.json
+# come from the "userconfig" named local context (the resolved user
+# configuration directory, see scripts/lib/config-dir.sh) so user files are
+# never copied into the checkout or swept into the main build context.
+COPY config/tool-catalog.json /opt/tools/tool-catalog.json
+COPY --from=userconfig tools.json runtime.json /opt/tools/
 COPY --chmod=0755 scripts/tools/ /usr/local/lib/ai-sandboxes/tools/
 RUN /usr/local/lib/ai-sandboxes/tools/validate-selection.sh \
     /opt/tools/tool-catalog.json \

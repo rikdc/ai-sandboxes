@@ -49,8 +49,14 @@ base_sanitized=$(sanitized_path)
 repo="$mockdir/repo"
 mkdir -p "$repo/scripts" "$repo/.github/workflows" "$mockdir/gitbin" "$mockdir/extras/bin"
 cp scripts/update "$repo/scripts/update"
+mkdir -p "$repo/scripts/lib" || exit 1
+cp scripts/lib/config-dir.sh "$repo/scripts/lib/config-dir.sh" || exit 1
 cp .github/workflows/release-marker "$repo/.github/workflows/release-marker"
 cp versions.env "$repo/versions.env"
+mkdir -p "$repo/config" || exit 1
+for f in marketplaces.json tools.json runtime.json; do
+  printf '{}\n' >"$repo/config/$f" || exit 1
+done
 
 old_head='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 new_head='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
@@ -76,6 +82,20 @@ export MOCK_GIT_REMOTES MOCK_GIT_BRANCH MOCK_GIT_STATUS MOCK_GIT_FETCH_STATUS \
   MOCK_GIT_CHANGED_PATHS MOCK_GIT_OLD_ENV MOCK_GIT_NEW_ENV MOCK_GIT_OLD_HEAD \
   MOCK_GIT_NEW_HEAD MOCK_BUILD_STATUS MOCK_LOADMSB_STATUS MOCK_WRAPPER_STATUS \
   MOCK_BINARY_STATUS MOCK_CLAUDE_VERSION MOCK_CODEX_VERSION
+
+# A pristine user configuration directory whose files match the mock repo's
+# checked-in neutral defaults, plus the digest over it: scenarios seed the
+# installed-config-sha256 marker with this value to mean "images were built
+# from exactly this configuration". The digest helper comes from the shared
+# library under test.
+user_config="$home/.config/ai-sandboxes"
+mkdir -p "$user_config"
+for f in marketplaces.json tools.json runtime.json; do
+  printf '{}\n' >"$user_config/$f" || exit 1
+done
+# shellcheck disable=SC1091 # Resolved after cd to the repository root.
+. ./scripts/lib/config-dir.sh
+pristine_config_digest=$(ai_sandboxes_config_digest "$user_config") || exit 1
 
 # Scenario defaults; individual cases override what they need.
 MOCK_GIT_REMOTES='origin'
@@ -283,6 +303,12 @@ run_update() {
     mkdir -p "$state_dir/ai-sandboxes"
     printf '%s\n' "$MOCK_SEED_MARKER" >"$state_dir/ai-sandboxes/installed-head"
   fi
+  # By default the configuration marker matches the on-disk configuration
+  # (no drift); a scenario passes MOCK_RECORDED_DIGEST to simulate images
+  # built from different configuration bytes.
+  mkdir -p "$state_dir/ai-sandboxes"
+  printf '%s\n' "${MOCK_RECORDED_DIGEST:-$pristine_config_digest}" \
+    >"$state_dir/ai-sandboxes/installed-config-sha256"
   printf '%s\n' "$MOCK_GIT_OLD_HEAD" >"$MOCK_GIT_HEAD_STATE"
   PATH="$extra_path:$base_sanitized" "$repo/scripts/update" "$@" >"$out_log" 2>"$err_log"
   rc=$?
@@ -670,5 +696,55 @@ MOCK_GIT_NEW_HEAD="$new_head"
 run_update "$gitpath" --check --repair
 expect_status 64 'check plus repair usage'
 expect_stderr_contains 'usage' 'check plus repair usage message'
+
+# 23. Configuration drift, git current: --check reports it (exit 1) even
+#     though git has nothing to do.
+MOCK_GIT_NEW_HEAD="$old_head"
+MOCK_SEED_MARKER="$old_head"
+printf '{"shared_state":{"id":"drift","quota":"1G"}}\n' >"$user_config/runtime.json"
+run_update "$gitpath" --check
+expect_status 1 'config drift check'
+expect_stdout_contains 'configuration changed since last installation' 'config drift check notice'
+grep -Fq 'git merge' "$git_log" && fail 'config drift check should not merge'
+
+# 23b. The same drift in default mode reconciles by rebuilding and reloading
+#      only — the binary and fish wrappers track source changes, not
+#      configuration — and records the new digest afterwards.
+cat >"$mockdir/scenario23b.op" <<'EOF'
+build
+load-msb
+docker run --rm --user node -e HOME=/home/node ai-sandboxes-claude:local bash -lc test "$DISABLE_UPDATES" = 1; claude --version
+docker run --rm --user node -e HOME=/home/node ai-sandboxes-codex:local codex --version
+EOF
+run_update "$allpath"
+expect_status 0 'config-only reconcile'
+expect_op_sequence 'config-only reconcile operations' "$mockdir/scenario23b.op"
+grep -Fq 'install-ai-sandbox' "$op_log" \
+  && fail 'configuration drift must not reinstall the ai-sandbox binary'
+grep -Fq 'install-fish-functions' "$op_log" \
+  && fail 'configuration drift must not reinstall the fish wrappers'
+expect_stdout_contains 'configuration changed since last installation; reconciling' 'config-only reconcile notice'
+new_digest=$(ai_sandboxes_config_digest "$user_config") || exit 1
+test "$(cat "$state_dir/ai-sandboxes/installed-config-sha256")" = "$new_digest" \
+  || fail 'config-only reconcile must record the new configuration digest'
+printf '{}\n' >"$user_config/runtime.json"
+MOCK_GIT_NEW_HEAD="$new_head"
+MOCK_SEED_MARKER=''
+
+# 24. A failed run keeps the stale digest recorded, so the next --check still
+#     reports drift instead of silently going quiet.
+MOCK_GIT_NEW_HEAD="$old_head"
+MOCK_SEED_MARKER="$old_head"
+MOCK_KEEP_MARKER=1
+MOCK_RECORDED_DIGEST='deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef'
+MOCK_BUILD_STATUS=1
+run_update "$gitpath"
+expect_status 2 'failed config reconcile'
+test "$(cat "$state_dir/ai-sandboxes/installed-config-sha256")" = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef' \
+  || fail 'a failed update must leave the stale configuration digest in place'
+MOCK_BUILD_STATUS=0
+MOCK_RECORDED_DIGEST=''
+MOCK_KEEP_MARKER=0
+MOCK_GIT_NEW_HEAD="$new_head"
 
 echo ok

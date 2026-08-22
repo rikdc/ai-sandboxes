@@ -19,6 +19,9 @@ die() {
 repo_root=$(cd "$(dirname "$0")/.." && pwd) || die 'could not resolve repository root'
 cd "$repo_root" || die "could not cd to $repo_root"
 
+# shellcheck disable=SC1091 # Resolved relative to the repository root above.
+. "$repo_root/scripts/lib/config-dir.sh"
+
 step() {
   local script=$1 description=$2 status
   printf '==> %s (%s)\n' "$script" "$description"
@@ -44,40 +47,73 @@ preflight() {
     *) die "unsupported architecture '$(uname -m)': images are built for arm64" ;;
   esac
   # A dirty tree would make the reconciliation marker a lie: it names HEAD,
-  # but the artifacts were built from uncommitted edits. Refuse, mirroring
-  # scripts/update, so "marker == HEAD" always means "built from HEAD".
-  # Untracked files cannot influence any build input, so they are ignored.
-  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    test -z "$(git status --porcelain --untracked-files=no)" \
-      || die 'working tree has uncommitted changes; commit or stash before running ./scripts/install'
-  fi
+  # but the artifacts were built from edits never committed to it. Untracked
+  # files count too: they ride along in the checkout's Docker build context
+  # and can change what COPY picks up. Refuse both, mirroring scripts/update,
+  # so "marker == HEAD" always means "built from a clean HEAD".
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+    || die 'not inside a git worktree; ./scripts/install only manages a git clone'
+  git rev-parse --quiet --verify HEAD >/dev/null 2>&1 \
+    || die 'could not resolve HEAD; this repository has no commits'
+  test -z "$(git status --porcelain)" \
+    || die 'working tree is not clean (uncommitted or untracked files); commit, stash, or clean before running ./scripts/install'
+  # Resolve and seed the user-owned configuration directory before anything
+  # is built: the images copy marketplaces/tools/runtime from there, so a
+  # problem with configuration ownership or permissions should surface as a
+  # one-line diagnosis up front. Seeding copies only the checked-in neutral
+  # defaults for missing files and never touches existing user content.
+  config_dir=$(ai_sandboxes_resolve_config_dir "$name") || exit $?
+  ai_sandboxes_init_config_files "$name" "$repo_root" "$config_dir"
+  printf 'configuration directory: %s\n' "$config_dir"
 }
 
-# Invalidate any previous reconciliation marker before the first mutating
-# step. The marker is written again only after every step succeeded, so if
-# this run dies mid-way the stale file must not keep claiming that the old
+state_dir() {
+  printf '%s\n' "${XDG_STATE_HOME:-$HOME/.local/state}/ai-sandboxes"
+}
+
+# Invalidate any previous reconciliation markers before the first mutating
+# step. Both are written again only after every step succeeded, so if this
+# run dies mid-way the stale files must not keep claiming that the old
 # installation is still current: update --check must then report unknown
 # install state and reconcile, never "up to date".
 invalidate_prior_state() {
-  local state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/ai-sandboxes"
-  mkdir -p "$state_dir" || die "could not create state directory $state_dir"
-  rm -f "$state_dir/installed-head" \
-    || die "could not remove stale reconciliation marker $state_dir/installed-head; refusing to reinstall on top of unknown prior state"
+  local state
+  state=$(state_dir)
+  mkdir -p "$state" || die "could not create state directory $state"
+  rm -f "$state/installed-head" \
+    || die "could not remove stale reconciliation marker $state/installed-head; refusing to reinstall on top of unknown prior state"
+  rm -f "$state/installed-config-sha256" \
+    || die "could not remove stale configuration marker $state/installed-config-sha256; refusing to reinstall on top of unknown prior state"
 }
 
+# Record both reconciliation markers after every step succeeded: the HEAD at
+# which the on-disk install is reconciled and the digest of the user
+# configuration the images were built from. update --check compares against
+# both to decide whether reconciliation work is pending.
 record_state() {
-  # Same reconciliation marker scripts/update maintains: written only after
+  local sha state marker config_digest config_marker
+  state=$(state_dir)
+  mkdir -p "$state" || die "could not create state directory $state"
+
+  write_marker() {
+    local file=$1 value=$2 t
+    t=$(mktemp "$file.XXXXXX") || die 'could not create temporary marker file'
+    printf '%s\n' "$value" >"$t" || { rm -f "$t"; die 'could not write temporary marker file'; }
+    mv -f "$t" "$file" || { rm -f "$t"; die "could not update reconciliation marker $file"; }
+  }
+
+  # Same reconciliation markers scripts/update maintains: written only after
   # every step succeeded, so update --check never mistakes this installation
   # for incomplete state and force-reinstalls (including the fish wrappers
   # the user declined).
-  local sha state_dir marker tmp
-  sha=$(git rev-parse HEAD 2>/dev/null) || return 0
-  state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/ai-sandboxes"
-  mkdir -p "$state_dir" || die "could not create state directory $state_dir"
-  marker="$state_dir/installed-head"
-  tmp=$(mktemp "$marker.XXXXXX") || die 'could not create temporary marker file'
-  printf '%s\n' "$sha" >"$tmp" || { rm -f "$tmp"; die 'could not write temporary marker file'; }
-  mv -f "$tmp" "$marker" || { rm -f "$tmp"; die "could not update reconciliation marker $marker"; }
+  if sha=$(git rev-parse HEAD 2>/dev/null); then
+    marker="$state/installed-head"
+    write_marker "$marker" "$sha"
+  fi
+  if config_digest=$(ai_sandboxes_config_digest "$config_dir"); then
+    config_marker="$state/installed-config-sha256"
+    write_marker "$config_marker" "$config_digest"
+  fi
 }
 
 preflight || exit $?

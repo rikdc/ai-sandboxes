@@ -77,8 +77,9 @@ Migrating an existing checkout already on disk is just `mv`, then running
 
 - `./scripts/install` — run everything: binary install, image build,
   verification, and Microsandbox reload.
-- `./scripts/build` — rebuild all images after changing `config/` or
-  `versions.env`.
+- `./scripts/build` — rebuild all images after changing
+  `~/.config/ai-sandboxes/` (your marketplaces, tools, runtime configuration)
+  or the checkout's `versions.env`.
 - `./scripts/verify` — the ARM64 verification the same code runs in CI.
 - `./scripts/load-msb` — reload Microsandbox after a rebuild.
 

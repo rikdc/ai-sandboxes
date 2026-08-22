@@ -22,6 +22,17 @@ trap cleanup EXIT
 state_dir="$sandbox/state"
 export XDG_STATE_HOME="$state_dir"
 marker="$state_dir/ai-sandboxes/installed-head"
+config_marker="$state_dir/ai-sandboxes/installed-config-sha256"
+# The install preflight resolves and seeds the user configuration directory;
+# point it inside the sandbox so tests never touch the invoking user's real
+# configuration. The sandbox copy of the repository needs the checked-in
+# neutral defaults for that seeding to work.
+user_config="$sandbox/userconfig"
+export AI_SANDBOX_CONFIG_DIR="$user_config"
+mkdir -p "$sandbox/config" || exit 1
+for f in marketplaces.json tools.json runtime.json; do
+  printf '{}\n' >"$sandbox/config/$f" || exit 1
+done
 
 journal="$sandbox/journal"
 exitcodes="$sandbox/exitcodes"
@@ -29,6 +40,10 @@ mkdir -p "$exitcodes" "$sandbox/scripts" "$sandbox/.git" || exit 1
 
 cp "$repo_root/scripts/install" "$sandbox/scripts/install" || fail 'could not copy scripts/install'
 chmod 0755 "$sandbox/scripts/install"
+mkdir -p "$sandbox/scripts/lib" || exit 1
+cp "$repo_root/scripts/lib/config-dir.sh" "$sandbox/scripts/lib/config-dir.sh" \
+  || fail 'could not copy scripts/lib/config-dir.sh'
+seed_digest=1111111111111111111111111111111111111111111111111111111111111111
 
 # Recording stubs for the four orchestrated steps. Each appends its name to
 # the journal before exiting with the code set for it in $exitcodes (0 when
@@ -59,6 +74,9 @@ bindir="$sandbox/bin"
 mkdir -p "$bindir" || exit 1
 cat >"$bindir/git" <<'EOF' || exit 1
 #!/usr/bin/env bash
+if test -n "${GIT_FAIL:-}"; then
+  exit 1
+fi
 case "${1:-}" in
   rev-parse) printf 'abc1234\n' ;;
   status) printf '%s' "$GIT_STATUS" ;;
@@ -111,14 +129,14 @@ IFS=$old_ifs
 
 run_install() {
   : >"$journal"
-  # Each scenario starts with no reconciliation marker unless it explicitly
-  # seeds one (the failed-reinstall scenarios below): seeding proves a prior
+  # Each scenario starts with no reconciliation markers unless it explicitly
+  # seeds them (the failed-reinstall scenarios below): seeding proves a prior
   # successful installation cannot survive a failed reinstall as valid state.
+  rm -f "$marker" "$config_marker"
   if test "${SEED_MARKER:-0}" = 1; then
     mkdir -p "$state_dir/ai-sandboxes"
     printf 'abc1234\n' >"$marker"
-  else
-    rm -f "$marker"
+    printf '%s\n' "$seed_digest" >"$config_marker"
   fi
   PATH="$bindir:$farm" "$sandbox/scripts/install" >"$sandbox/out.log" 2>"$sandbox/err.log"
   rc=$?
@@ -161,6 +179,8 @@ expect_journal 'missing msb preflight' ''
 expect_stderr "prerequisite 'msb' not found" 'missing msb preflight message'
 test "$(cat "$marker" 2>/dev/null)" = 'abc1234' \
   || fail 'aborted preflight must leave an existing marker untouched'
+test "$(cat "$config_marker" 2>/dev/null)" = "$seed_digest" \
+  || fail 'aborted preflight must leave an existing configuration marker untouched'
 cat >"$bindir/msb" <<'EOF' || exit 1
 #!/usr/bin/env bash
 exit 0
@@ -177,6 +197,16 @@ for tool in git go docker; do
     || fail "aborted preflight must leave an existing marker untouched ($tool)"
   mv "$bindir/$tool.hidden" "$bindir/$tool"
 done
+
+# 1b. Outside a git worktree, or with an unresolvable HEAD, install refuses
+#     before mutating anything.
+GIT_FAIL=1 run_install
+expect_status 1 'non-git directory'
+expect_journal 'non-git directory' ''
+expect_stderr 'git worktree' 'non-git message'
+test "$(cat "$marker" 2>/dev/null)" = 'abc1234' \
+  || fail 'non-git refusal must leave an existing marker untouched'
+unset GIT_FAIL
 
 # 2. An unreachable Docker daemon is caught in the preflight too.
 DOCKER_INFO_STATUS=1 run_install
@@ -196,15 +226,21 @@ expect_status 1 'unsupported architecture'
 expect_journal 'unsupported architecture' ''
 expect_stderr 'unsupported architecture' 'architecture message'
 
-# 4b. Uncommitted tracked changes are refused: the marker names HEAD, so
-#     building from a dirty tree would record artifacts as built from HEAD.
+# 4b. Uncommitted tracked changes and untracked files are both refused: the
+#     marker names HEAD, so building from a dirty tree would record artifacts
+#     as built from HEAD, and untracked files ride along in the Docker build
+#     context and can change what COPY picks up.
 GIT_STATUS=$' M scripts/install' run_install
 expect_status 1 'dirty tree'
 expect_journal 'dirty tree' ''
-expect_stderr 'uncommitted changes' 'dirty tree message'
+expect_stderr 'uncommitted or untracked' 'dirty tree message'
 test "$(cat "$marker" 2>/dev/null)" = 'abc1234' \
   || fail 'dirty-tree refusal must leave an existing marker untouched'
-
+GIT_STATUS='?? stray-file' run_install
+expect_status 1 'untracked file'
+expect_journal 'untracked file' ''
+expect_stderr 'uncommitted or untracked' 'untracked message'
+unset GIT_STATUS
 # 5. Success path: all four steps run — load-msb before verify, so images are
 #    imported exactly once — and the reconciliation marker records HEAD.
 clear_exit_codes
@@ -214,6 +250,11 @@ expect_journal 'success run' "$(printf 'install-ai-sandbox\nbuild\nload-msb\nver
 grep -qF './scripts/install-fish-functions' "$sandbox/out.log" \
   || fail 'success run: closing output does not mention install-fish-functions'
 test "$(cat "$marker")" = 'abc1234' || fail "marker contents were $(cat "$marker" 2>/dev/null)"
+printf '%s\n' "$(cat "$config_marker" 2>/dev/null)" | grep -qE '^[0-9a-f]{64}$' \
+  || fail "configuration marker contents were $(cat "$config_marker" 2>/dev/null)"
+for f in marketplaces.json tools.json runtime.json; do
+  test -f "$user_config/$f" || fail "success run must seed $f into the user configuration"
+done
 test ! -e "$state_dir/ai-sandboxes/fish-wrappers-head" \
   || fail 'install must not mark fish wrappers as managed'
 
@@ -228,6 +269,7 @@ expect_journal 'failing build' "$(printf 'install-ai-sandbox\nbuild')"
 expect_stderr 'build failed' 'failing build'
 expect_stderr 'scripts/install' 'failing build'
 test ! -e "$marker" || fail 'failed reinstall must invalidate the prior marker'
+test ! -e "$config_marker" || fail 'failed reinstall must invalidate the configuration marker'
 
 # 7. A failure on the very first step runs nothing else.
 set_exit_code install-ai-sandbox 1
@@ -235,6 +277,7 @@ run_install
 expect_status 1 'failing first step'
 expect_journal 'failing first step' 'install-ai-sandbox'
 test ! -e "$marker" || fail 'failed first step must invalidate the prior marker'
+test ! -e "$config_marker" || fail 'failed first step must invalidate the configuration marker'
 
 # 8. A failure on the final step still reports failure even though everything
 #    before it succeeded.
@@ -244,5 +287,6 @@ run_install
 expect_status 7 'failing last step'
 expect_journal 'failing last step' "$(printf 'install-ai-sandbox\nbuild\nload-msb\nverify')"
 test ! -e "$marker" || fail 'failed final step must invalidate the prior marker'
+test ! -e "$config_marker" || fail 'failed final step must invalidate the configuration marker'
 
 printf '%s\n' 'test-install: all scenarios passed'

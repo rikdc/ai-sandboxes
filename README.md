@@ -64,11 +64,16 @@ From a project directory, run `claude` or `codex`.
 
 ## Configure
 
-- Copy and edit `config/marketplaces.example.json` to add reviewed Claude marketplaces or Codex skills.
-- Choose optional tools in `config/tools.json`; their allowed sources are in `config/tool-catalog.json`.
-- Configure optional shared state in `config/runtime.json` (see `config/runtime.example.json`).
+Your configuration lives outside the checkout, in
+`~/.config/ai-sandboxes/` (override with `AI_SANDBOX_CONFIG_DIR`). The first
+install or build creates it and seeds any missing file from the neutral
+defaults checked into `config/`, which are not read at build time.
+
+- Edit `~/.config/ai-sandboxes/marketplaces.json`, starting from `config/marketplaces.example.json`, to add reviewed Claude marketplaces or Codex skills.
+- Choose optional tools in `~/.config/ai-sandboxes/tools.json`; their allowed sources are reviewed in `config/tool-catalog.json`.
+- Configure optional shared state in `~/.config/ai-sandboxes/runtime.json` (see `config/runtime.example.json`).
 - Keep personal or team session configuration in a separate repository as an explicit `session.json`, then run `claude-session --profile /absolute/path/to/session.json` from the project you want Claude to edit. See [session images](docs/session-images.md).
-- After changing configuration or versions, run `./scripts/install` (or the individual build/verify/load commands) again.
+- `./scripts/update` detects configuration changes by digest and rebuilds and reloads automatically; you can also run `./scripts/install` (or the individual build/verify/load commands) again.
 
 See [configuration details](docs/configuration.md) and [Claude security and recovery](docs/claude-security.md) for the operational reference.
 

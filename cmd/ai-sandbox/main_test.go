@@ -49,10 +49,10 @@ func (f *fakeMsb) ImageMetadata(_ string) (*microsandbox.ImageMetadata, error) {
 
 // testGetenv returns a getenv stub that always opts a test out of shared
 // state (via AI_SANDBOX_RUNTIME_CONFIG=none) unless the caller provides an
-// explicit override map. Without this default, every test running outside a
-// synthetic checkout would trip the "no runtime configuration source" error
-// added to loadSharedState — which is exactly the drift guard we want in
-// production, not in unit tests that intentionally have no runtime.json.
+// explicit override map. Without this default, every test running on a host
+// whose user configuration directory happens to contain a runtime.json would
+// pick up that real policy; tests that exercise policy set
+// AI_SANDBOX_CONFIG_DIR explicitly instead.
 func testGetenv(override map[string]string) func(string) string {
 	return func(k string) string {
 		if v, ok := override[k]; ok {
@@ -175,7 +175,14 @@ func TestExecuteRunClaude(t *testing.T) {
 
 func TestExecuteRunCodexSkipsHomeVolumePrecreate(t *testing.T) {
 	e, _ := testEnv(t)
-	// Create a checkout with runtime.json that configures shared state.
+	// Configure shared state through the user configuration directory; the
+	// checkout's config files are neutral defaults and are never consulted.
+	configDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configDir, "runtime.json"),
+		[]byte(`{"shared_state":{"id":"work","quota":"4G"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AI_SANDBOX_CONFIG_DIR", configDir)
 	checkout := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(checkout, "config"), 0o755); err != nil {
 		t.Fatal(err)
@@ -184,9 +191,6 @@ func TestExecuteRunCodexSkipsHomeVolumePrecreate(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(checkout, "docker-bake.hcl"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(checkout, "config", "runtime.json"), []byte(`{"shared_state":{"id":"work","quota":"4G"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	e.checkout = checkout
@@ -331,7 +335,13 @@ func TestExecutePlanEgressSymlinkedHome(t *testing.T) {
 
 func TestExecuteRunInvalidRuntimeJSON(t *testing.T) {
 	e, _ := testEnv(t)
-	// Create a checkout with an invalid runtime.json.
+	// Place an invalid runtime.json in the user configuration directory.
+	configDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configDir, "runtime.json"),
+		[]byte(`{"shared_state":{"id":"bad id","quota":"4G"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AI_SANDBOX_CONFIG_DIR", configDir)
 	checkout := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(checkout, "config"), 0o755); err != nil {
 		t.Fatal(err)
@@ -340,9 +350,6 @@ func TestExecuteRunInvalidRuntimeJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(checkout, "docker-bake.hcl"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(checkout, "config", "runtime.json"), []byte(`{"shared_state":{"id":"bad id","quota":"4G"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	e.checkout = checkout
@@ -354,14 +361,38 @@ func TestExecuteRunInvalidRuntimeJSON(t *testing.T) {
 	}
 }
 
-// TestLoadSharedStateFailsWithoutSource guards the M1 fix: an installed
-// binary run outside any checkout, with AI_SANDBOX_RUNTIME_CONFIG unset, must
-// fail loudly. The old behaviour returned nil silently, so a user who had
-// configured shared_state in their checkout would silently lose it when they
-// invoked the standalone binary from elsewhere.
-func TestLoadSharedStateFailsWithoutSource(t *testing.T) {
-	if _, err := runtimepolicy.Resolve("", ""); err == nil {
-		t.Fatal("runtimepolicy.Resolve with no checkout and no override should fail")
+// TestLoadSharedStateNeutralWithoutUserConfig pins the post-externalization
+// behaviour: with no override and no runtime.json in the user configuration
+// directory, policy resolution adopts the neutral default (nil) instead of
+// failing. The checkout is never consulted — its config files are defaults
+// shipped by the repository, not user policy.
+func TestLoadSharedStateNeutralWithoutUserConfig(t *testing.T) {
+	t.Setenv("AI_SANDBOX_CONFIG_DIR", t.TempDir())
+	got, err := runtimepolicy.Resolve("", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("shared state should be nil without any runtime.json, got %+v", got)
+	}
+}
+
+// TestLoadSharedStateFromUserConfigDir covers the default source: a
+// runtime.json in the resolved user configuration directory drives shared
+// state with no override set.
+func TestLoadSharedStateFromUserConfigDir(t *testing.T) {
+	configDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configDir, "runtime.json"),
+		[]byte(`{"shared_state":{"id":"user","quota":"1G"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AI_SANDBOX_CONFIG_DIR", configDir)
+	got, err := runtimepolicy.Resolve("", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil || got.Volume != "agent-state-user-v1" {
+		t.Fatalf("unexpected shared state: %+v", got)
 	}
 }
 
