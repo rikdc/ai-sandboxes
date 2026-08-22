@@ -51,12 +51,23 @@ CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
   go build -trimpath -ldflags "-X main.revision=$revision" -o "$tmpdir/ai-sandbox" ./cmd/ai-sandbox \
   || die 'cross-compiling ./cmd/ai-sandbox for darwin/arm64 failed'
 
-# Validate the freshly built binary before packaging it.
-built_version=$("$tmpdir/ai-sandbox" version 2>/dev/null) || die 'built binary failed to report its version'
-case "$built_version" in
-  ai-sandbox\ *) ;;
-  *) die "built binary produced unexpected version output: $built_version" ;;
+# Validate the freshly built binary before packaging it. A darwin/arm64
+# binary cannot execute on other hosts (the ubuntu-latest release runner),
+# so the portable check inspects the Mach-O 64-bit magic directly; on the
+# supported host it is additionally executed to prove it reports a version.
+binary_magic=$(od -An -tx1 -N4 "$tmpdir/ai-sandbox" | tr -d ' \n') \
+  || die 'could not read the built binary'
+case $binary_magic in
+  cffaedfe) ;;
+  *) die "built binary is not a darwin Mach-O executable ($binary_magic)" ;;
 esac
+if [ "$(uname -s)-$(uname -m)" = Darwin-arm64 ]; then
+  built_version=$("$tmpdir/ai-sandbox" version 2>/dev/null) || die 'built binary failed to report its version'
+  case "$built_version" in
+    ai-sandbox\ *) ;;
+    *) die "built binary produced unexpected version output: $built_version" ;;
+  esac
+fi
 
 chmod 0755 "$tmpdir/ai-sandbox" || die 'could not set mode on built binary'
 tar -czf "$out_dir/ai-sandbox-darwin-arm64.tar.gz" -C "$tmpdir" ai-sandbox \

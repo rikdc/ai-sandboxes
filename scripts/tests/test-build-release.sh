@@ -19,6 +19,7 @@ trap cleanup EXIT
 run_build() {
   ./scripts/build-release "$1" "$2" >"$dist/out.log" 2>"$dist/err.log"
   rc=$?
+  return "$rc"
 }
 
 # 1. Fresh build: tarball and checksum exist, the extracted binary runs on
