@@ -73,8 +73,13 @@ home="$mockdir/home"
 mkdir -p "$state_dir" "$home"
 export XDG_STATE_HOME="$state_dir"
 # Isolate the legacy-wrapper probe ($HOME/.config/fish/functions/claude.fish)
-# from whatever the invoking user happens to have installed.
+# and every configuration-directory resolution from whatever the invoking
+# user (or a self-hosted runner) happens to have installed or exported:
+# without the explicit override below, update would hash the host's real
+# configuration instead of this harness's fixture and report phantom drift.
 export HOME="$home"
+unset XDG_CONFIG_HOME
+export AI_SANDBOX_CONFIG_DIR="$user_config"
 
 export MOCK_GIT_LOG="$git_log" MOCK_UPDATE_LOG="$op_log" MOCK_GIT_HEAD_STATE="$head_state"
 export MOCK_GIT_REMOTES MOCK_GIT_BRANCH MOCK_GIT_STATUS MOCK_GIT_FETCH_STATUS \
