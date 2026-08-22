@@ -26,4 +26,8 @@ export SHARED_STATE_ID SHARED_STATE_QUOTA
 # Dockerfiles copy only the expected JSON files from it, so user files are
 # never copied into the checkout or swept into the repository build context.
 export USER_CONFIG_DIR="$config_dir"
-docker buildx bake --load base tools claude codex
+# Grant Bake read access to exactly the resolved configuration directory:
+# it is a named local context outside the checkout, which newer Bake treats
+# as an fs entitlement. Scoping the grant to this one path keeps the default
+# deny for everything else on the host.
+docker buildx bake --allow="fs.read=$config_dir" --load base tools claude codex

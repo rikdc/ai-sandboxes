@@ -106,6 +106,7 @@ if docker run --rm --user node ai-sandboxes-claude:local sh -c 'touch /opt/claud
 fi
 docker run --rm --user node -e HOME=/home/node ai-sandboxes-codex:local codex --version || exit 1
 USER_CONFIG_DIR="$marketplace_config_dir" docker buildx bake --load \
+  --allow="fs.read=$marketplace_config_dir" \
   --set "tools.args.SHARED_STATE_ID=$expected_state_id" \
   --set "tools.args.SHARED_STATE_QUOTA=$expected_state_quota" \
   --set "claude.tags=$marketplace_test_image" \
