@@ -109,8 +109,14 @@ if config_dir=$(_ai_sandboxes_locate_config_dir "$name") \
   && ai_sandboxes_config_files_present "$config_dir"; then
   current_config_digest=$(ai_sandboxes_config_digest "$config_dir") || die "could not compute the configuration digest for $config_dir"
 fi
+# Drift is fail-closed: an empty digest on either side (configuration
+# directory absent or incomplete, marker missing or malformed) is unknown
+# state, not health — empty == empty would otherwise let a wiped
+# configuration pass as "up to date" against images built from something.
 config_drift=0
-if test "$current_config_digest" != "$recorded_config_digest"; then
+if test -z "$current_config_digest" \
+  || test -z "$recorded_config_digest" \
+  || test "$current_config_digest" != "$recorded_config_digest"; then
   config_drift=1
 fi
 

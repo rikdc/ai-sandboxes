@@ -314,6 +314,10 @@ run_update() {
   mkdir -p "$state_dir/ai-sandboxes"
   printf '%s\n' "${MOCK_RECORDED_DIGEST:-$pristine_config_digest}" \
     >"$state_dir/ai-sandboxes/installed-config-sha256"
+  if test "${MOCK_DELETE_CONFIG:-0}" = 1; then
+    rm -f "$state_dir/ai-sandboxes/installed-config-sha256"
+    rm -rf "$user_config"
+  fi
   printf '%s\n' "$MOCK_GIT_OLD_HEAD" >"$MOCK_GIT_HEAD_STATE"
   PATH="$extra_path:$base_sanitized" "$repo/scripts/update" "$@" >"$out_log" 2>"$err_log"
   rc=$?
@@ -733,6 +737,29 @@ new_digest=$(ai_sandboxes_config_digest "$user_config") || exit 1
 test "$(cat "$state_dir/ai-sandboxes/installed-config-sha256")" = "$new_digest" \
   || fail 'config-only reconcile must record the new configuration digest'
 printf '{}\n' >"$user_config/runtime.json"
+MOCK_GIT_NEW_HEAD="$new_head"
+MOCK_SEED_MARKER=''
+
+# 23c. Both configuration sources gone — the directory deleted AND the
+#      digest marker removed: unknown state must count as drift, never as
+#      "up to date".
+MOCK_GIT_NEW_HEAD="$old_head"
+MOCK_SEED_MARKER="$old_head"
+MOCK_KEEP_MARKER=1
+MOCK_DELETE_CONFIG=1
+run_update "$gitpath" --check
+expect_status 1 'missing config state check'
+expect_stdout_contains 'configuration changed since last installation' 'missing config state notice'
+grep -Fq 'git merge' "$git_log" && fail 'missing config state check should not merge'
+MOCK_DELETE_CONFIG=0
+MOCK_KEEP_MARKER=0
+# Restore the fixture: later scenarios need a complete configuration whose
+# digest matches the pristine one computed at harness start.
+mkdir -p "$user_config"
+for f in marketplaces.json tools.json runtime.json; do
+  printf '{}\n' >"$user_config/$f" || exit 1
+done
+test "$(ai_sandboxes_config_digest "$user_config")" = "$pristine_config_digest"   || fail 'restored fixture digest must match the pristine digest'
 MOCK_GIT_NEW_HEAD="$new_head"
 MOCK_SEED_MARKER=''
 
