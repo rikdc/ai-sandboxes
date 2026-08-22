@@ -10,6 +10,9 @@ RUN npm install --global --omit=dev "@openai/codex@${CODEX_VERSION}" \
  && install -d -m 0755 /usr/local/lib/ai-sandboxes
 # marketplaces.json comes from the "userconfig" named local context (the
 # resolved user configuration directory, see scripts/lib/config-dir.sh).
+# userconfig is a BuildKit named local context passed by docker-bake.hcl,
+# not a FROM alias in this file; hadolint cannot know that.
+# hadolint ignore=DL3022
 COPY --from=userconfig --chown=node:node marketplaces.json /opt/marketplaces.json
 COPY --chown=node:node --chmod=0755 scripts/marketplaces/install-codex.sh /usr/local/lib/ai-sandboxes/install-codex-marketplaces.sh
 USER node

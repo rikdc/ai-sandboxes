@@ -15,6 +15,9 @@ LABEL io.ai-sandboxes.shared-state.id="$SHARED_STATE_ID" \
 # configuration directory, see scripts/lib/config-dir.sh) so user files are
 # never copied into the checkout or swept into the main build context.
 COPY config/tool-catalog.json /opt/tools/tool-catalog.json
+# userconfig is a BuildKit named local context passed by docker-bake.hcl,
+# not a FROM alias in this file; hadolint cannot know that.
+# hadolint ignore=DL3022
 COPY --from=userconfig tools.json runtime.json /opt/tools/
 COPY --chmod=0755 scripts/tools/ /usr/local/lib/ai-sandboxes/tools/
 RUN /usr/local/lib/ai-sandboxes/tools/validate-selection.sh \

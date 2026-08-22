@@ -13,6 +13,9 @@ RUN /tmp/install-claude-binary.sh "$CLAUDE_CODE_VERSION" "$CLAUDE_RELEASE_KEY_FI
  && install -d -o node -g node -m 0755 /opt/claude-plugin-cache /opt/claude-plugin-seed /opt/claude-build-home /opt/claude-marketplaces
 # marketplaces.json comes from the "userconfig" named local context (the
 # resolved user configuration directory, see scripts/lib/config-dir.sh).
+# userconfig is a BuildKit named local context passed by docker-bake.hcl,
+# not a FROM alias in this file; hadolint cannot know that.
+# hadolint ignore=DL3022
 COPY --from=userconfig --chown=node:node marketplaces.json /opt/marketplaces.json
 COPY --chown=node:node --chmod=0755 scripts/marketplaces/install-claude.sh /usr/local/lib/ai-sandboxes/install-claude-marketplaces.sh
 USER node
