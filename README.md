@@ -11,17 +11,26 @@ needs it.
 
 ## Get started
 
-Requires Apple Silicon, Docker Desktop, Git, Fish, Microsandbox (`msb`), and
+Requires Apple Silicon, Docker Desktop, Git, Microsandbox (`msb`), and
 Go to build the `ai-sandbox` control plane.
 
 ```console
-./scripts/install-ai-sandbox   # build the control plane and install it to ~/.local/libexec/ai-sandboxes/ai-sandbox
-./scripts/build
-./scripts/verify
-./scripts/load-msb
+./scripts/install
 ```
 
-Install the Fish launchers (`claude`, `codex`, and `claude-session`):
+That preflights the prerequisites (Git, Go, Docker with a reachable daemon
+and buildx, `msb`), then runs the full sequence: build and install the
+control plane binary to `~/.local/libexec/ai-sandboxes/ai-sandbox`, build the
+base/tools/claude/codex images, load them into Microsandbox once, and verify.
+It fails before mutating anything when a prerequisite is missing, fails fast
+when a step fails, and names the individual script to re-run. Each step
+remains available for maintainers: `scripts/install-ai-sandbox`,
+`scripts/build`, `scripts/load-msb`, `scripts/verify`.
+
+Install the Fish launchers (`claude`, `codex`, and `claude-session`) — this
+one is host-shell-specific, so it is opt-in rather than part of
+`./scripts/install`. Running it once marks the wrappers as managed;
+`scripts/update` refreshes them only after that first opt-in:
 
 ```console
 ./scripts/install-fish-functions
@@ -39,7 +48,7 @@ the ai-sandboxes checkout or either installed directory: a launcher somewhere
 a guest agent can also write is one that guest can rewrite, and the next
 invocation would then run with full host access. The wrapper checks for this
 overlap at startup and refuses to run when it finds one. Re-run
-`./scripts/install-fish-functions` after updating ai-sandboxes.
+`./scripts/install-fish-functions` after moving the checkout.
 
 Claude and Codex both use an HTTPS allowlist by default. Create the files
 before first run:
@@ -55,11 +64,16 @@ From a project directory, run `claude` or `codex`.
 
 ## Configure
 
-- Copy and edit `config/marketplaces.example.json` to add reviewed Claude marketplaces or Codex skills.
-- Choose optional tools in `config/tools.json`; their allowed sources are in `config/tool-catalog.json`.
-- Configure optional shared state in `config/runtime.json` (see `config/runtime.example.json`).
+Your configuration lives outside the checkout, in
+`~/.config/ai-sandboxes/` (override with `AI_SANDBOX_CONFIG_DIR`). The first
+install or build creates it and seeds any missing file from the neutral
+defaults checked into `config/`, which are not read at build time.
+
+- Edit `~/.config/ai-sandboxes/marketplaces.json`, starting from `config/marketplaces.example.json`, to add reviewed Claude marketplaces or Codex skills.
+- Choose optional tools in `~/.config/ai-sandboxes/tools.json`; their allowed sources are reviewed in `config/tool-catalog.json`.
+- Configure optional shared state in `~/.config/ai-sandboxes/runtime.json` (see `config/runtime.example.json`).
 - Keep personal or team session configuration in a separate repository as an explicit `session.json`, then run `claude-session --profile /absolute/path/to/session.json` from the project you want Claude to edit. See [session images](docs/session-images.md).
-- After changing configuration or versions, run the build commands again.
+- `./scripts/update` detects configuration changes by digest and rebuilds and reloads automatically; you can also run `./scripts/install` (or the individual build/verify/load commands) again.
 
 See [configuration details](docs/configuration.md) and [Claude security and recovery](docs/claude-security.md) for the operational reference.
 

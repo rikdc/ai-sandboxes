@@ -4,7 +4,10 @@ package runtimepolicy
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -19,24 +22,47 @@ const (
 )
 
 // Resolve returns the requested shared-state policy. An override must be the
-// literal "none" or an absolute path, so policy cannot vary with cwd.
+// literal "none" or an absolute path, so policy cannot vary with cwd. Without
+// an override, runtime.json comes from the user configuration directory
+// (AI_SANDBOX_CONFIG_DIR or $XDG_CONFIG_HOME/ai-sandboxes) — never from the
+// repository checkout, whose config files are neutral defaults only.
 func Resolve(checkout, override string) (*plan.SharedState, error) {
+	_ = checkout // The checkout is never a configuration source; kept for signature stability.
 	if override == "none" {
 		return nil, nil
 	}
-	path := ""
+	var path string
+	// Whether the source was explicitly requested. A missing explicit
+	// override is a hard error — the whole point of the override is to make
+	// the policy source explicit — while a missing default (the user
+	// configuration directory's runtime.json) means "never configured".
+	explicit := false
 	if override != "" {
 		if !filepath.IsAbs(override) {
 			return nil, fmt.Errorf("AI_SANDBOX_RUNTIME_CONFIG must be an absolute path or \"none\": %q", override)
 		}
 		path = override
-	} else if checkout != "" {
-		path = filepath.Join(checkout, "config", "runtime.json")
+		explicit = true
 	} else {
-		return nil, fmt.Errorf("cannot locate ai-sandboxes checkout for runtime configuration; set AI_SANDBOXES_ROOT to the checkout, AI_SANDBOX_RUNTIME_CONFIG=/path/to/runtime.json, or AI_SANDBOX_RUNTIME_CONFIG=none")
+		resolved, err := config.RuntimeConfigPath()
+		if err != nil {
+			return nil, fmt.Errorf("cannot locate runtime configuration: %w", err)
+		}
+		path = resolved
 	}
 
-	rt, err := config.LoadRuntime(path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		// Only the default source may treat a missing file as "never
+		// configured" and adopt the neutral default (no shared state). Any
+		// other read failure, or a file that exists but does not parse, fails
+		// loudly rather than silently changing policy.
+		if !explicit && errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("could not load runtime configuration %s: %w", path, err)
+	}
+	rt, err := config.ParseRuntime(data)
 	if err != nil {
 		return nil, fmt.Errorf("could not load runtime configuration %s: %w", path, err)
 	}

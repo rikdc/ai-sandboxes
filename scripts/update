@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Update the locally installed ai-sandboxes checkout to origin/main and refresh
-# what it drives: the locally built images, the installed fish wrappers, and —
-# when present — msb. --check is read-only and suitable for a schedule; the
-# default mode fast-forwards, rebuilds, and reloads.
+# what it drives: the locally built images, the fish wrappers (only for users
+# who opted in via scripts/install-fish-functions), and — when present — msb.
+# --check is read-only and suitable for a schedule; the default mode
+# fast-forwards, rebuilds, and reloads.
 set -o pipefail
 IFS=$'\n\t'
 
@@ -24,6 +25,9 @@ EOF
 }
 
 cd "$(dirname "$0")/.." || die 'could not cd to repository root'
+
+# shellcheck disable=SC1091 # Resolved after cd to the repository root.
+. ./scripts/lib/config-dir.sh
 
 check_mode=0
 verify_full=0
@@ -56,7 +60,8 @@ old_head=$(git rev-parse HEAD) || die 'could not resolve HEAD'
 new_head=$(git rev-parse origin/main) || die 'could not resolve origin/main after fetch'
 
 # Reconciliation marker: the SHA of the last commit for which a full update
-# completed successfully (binary + build + wrappers, as required). If a prior
+# completed successfully (binary + build + fish wrappers when the user opted
+# into them). If a prior
 # run fast-forwarded the tree but died before installing (e.g. install-ai-sandbox
 # failed), the marker still points at the pre-merge SHA, so the next run can
 # redo the pending work even though git already reports "up to date".
@@ -84,6 +89,31 @@ if test -n "$installed_head" \
   installed_head=''
 fi
 
+# Configuration reconciliation marker: a deterministic digest over the
+# user-owned configuration files (marketplaces/tools/runtime) as of the last
+# completed install or update. The images are built FROM these files, so a
+# digest mismatch means the artifacts no longer match what the user runs —
+# regardless of what git says. Read-only on purpose: --check must never
+# create or seed configuration, so an absent or incomplete configuration
+# directory counts as drifted state and is repaired by the build step.
+recorded_config_digest=''
+config_marker="$state_dir/installed-config-sha256"
+if test -r "$config_marker"; then
+  recorded_config_digest=$(cat "$config_marker" 2>/dev/null || :)
+fi
+if ! [[ $recorded_config_digest =~ ^[0-9a-fA-F]{64}$ ]]; then
+  recorded_config_digest=''
+fi
+current_config_digest=''
+if config_dir=$(_ai_sandboxes_locate_config_dir "$name") \
+  && ai_sandboxes_config_files_present "$config_dir"; then
+  current_config_digest=$(ai_sandboxes_config_digest "$config_dir") || die "could not compute the configuration digest for $config_dir"
+fi
+config_drift=0
+if test "$current_config_digest" != "$recorded_config_digest"; then
+  config_drift=1
+fi
+
 if test "$old_head" = "$new_head"; then
   if test "$repair_mode" = 1; then
     printf 'repairing: forcing full reinstall at %s\n' "${new_head:0:7}"
@@ -94,8 +124,18 @@ if test "$old_head" = "$new_head"; then
     fi
     printf 'marker missing: reconciling install state at %s\n' "${new_head:0:7}"
   elif test "$installed_head" = "$new_head"; then
-    printf 'up to date\n'
-    exit 0
+    if test "$config_drift" = 1; then
+      # Git is current, but the configuration the images were built from no
+      # longer matches what is on disk: rebuild and reload.
+      if test "$check_mode" = 1; then
+        printf 'configuration changed since last installation (%s)\n' "${new_head:0:7}"
+        exit 1
+      fi
+      printf 'configuration changed since last installation; reconciling\n'
+    else
+      printf 'up to date\n'
+      exit 0
+    fi
   else
     # Git is up to date, but the last successful install lags behind HEAD.
     # --check reports that as a pending install (exit 1); the default mode
@@ -142,6 +182,21 @@ record_installed_head() {
     || { rm -f "$tmp"; die "could not update reconciliation marker $marker_file"; }
 }
 
+# Same atomic-write discipline as record_installed_head, for the
+# configuration digest marker. Callers pass a digest computed after every
+# install step has succeeded; never any other value.
+record_config_digest() {
+  local digest=$1 tmp
+  mkdir -p "$state_dir" \
+    || die "could not create state directory $state_dir"
+  tmp=$(mktemp "$config_marker.XXXXXX") \
+    || die "could not create temporary marker file"
+  printf '%s\n' "$digest" >"$tmp" \
+    || { rm -f "$tmp"; die "could not write temporary marker file"; }
+  mv -f "$tmp" "$config_marker" \
+    || { rm -f "$tmp"; die "could not update reconciliation marker $config_marker"; }
+}
+
 version_change_summary() {
   git show HEAD:versions.env >"$old_env" 2>/dev/null || : >"$old_env"
   git show origin/main:versions.env >"$new_env" 2>/dev/null || : >"$new_env"
@@ -186,6 +241,30 @@ if test "$check_mode" = 1; then
     exit 0
   fi
   exit 1
+fi
+
+# Fish wrappers are opt-in: they are refreshed only for users who ran
+# scripts/install-fish-functions at least once (marker below), or whose
+# wrappers demonstrably came from that installer (legacy installs from before
+# markers existed). A file merely existing at claude.fish proves nothing
+# about ownership — a Fish user may have their own native Claude wrapper and
+# silently overwriting shell startup code is exactly where an installer must
+# be paranoid — so legacy detection requires the generator's unmistakable
+# signature: wrappers we generate source the trusted guard from its installed
+# location and call its __ai_sandbox_trusted_refuse_overlap check. Anything
+# else is left untouched; rerunning scripts/install-fish-functions migrates
+# it to marker-based management explicitly.
+fish_marker="$state_dir/fish-wrappers-head"
+fish_managed=0
+if test -s "$fish_marker"; then
+  fish_managed=1
+else
+  legacy_wrapper="$HOME/.config/fish/functions/claude.fish"
+  if test -f "$legacy_wrapper" \
+    && grep -qF '__ai_sandbox_trusted_refuse_overlap' "$legacy_wrapper" 2>/dev/null \
+    && grep -qF '.config/ai-sandboxes/trusted/guard.fish' "$legacy_wrapper" 2>/dev/null; then
+    fish_managed=1
+  fi
 fi
 
 if test "$old_head" != "$new_head"; then
@@ -238,8 +317,18 @@ done <<<"$changed_paths"
 
 if test "$force_all" = 1; then
   need_build=1
-  need_install=1
   need_binary=1
+  if test "$fish_managed" = 1; then
+    need_install=1
+  fi
+fi
+
+# Configuration drift alone forces a rebuild (and the msb reload plus
+# verification that follow a build), but never reinstalls the Go binary or
+# the fish wrappers: those track source changes and binary layout, not user
+# configuration.
+if test "$config_drift" = 1; then
+  need_build=1
 fi
 
 if test "$need_binary" = 1; then
@@ -256,8 +345,13 @@ if test "$need_build" = 1; then
 fi
 
 if test "$need_install" = 1; then
-  printf 'reinstalling fish wrappers...\n'
-  ./scripts/install-fish-functions || die 'fish wrapper install failed after updating'
+  if test "$fish_managed" = 0; then
+    printf 'fish wrappers not installed (opt in with ./scripts/install-fish-functions); skipping wrapper refresh\n'
+    need_install=0
+  else
+    printf 'reinstalling fish wrappers...\n'
+    ./scripts/install-fish-functions || die 'fish wrapper install failed after updating'
+  fi
 fi
 
 loaded=0
@@ -279,6 +373,17 @@ fi
 # All install steps succeeded — advance the marker to the current HEAD so a
 # later run sees no pending reconciliation work.
 record_installed_head "$new_head"
+
+# And record the configuration the images were actually built from: mirror
+# the build step by resolving, seeding any missing file from the checked-in
+# neutral defaults, and hashing the result.
+config_dir=$(ai_sandboxes_resolve_config_dir "$name") \
+  || die 'could not resolve the ai-sandboxes configuration directory'
+ai_sandboxes_init_config_files "$name" "$PWD" "$config_dir"
+final_config_digest=$(ai_sandboxes_config_digest "$config_dir") \
+  || die "could not compute the configuration digest for $config_dir"
+record_config_digest "$final_config_digest"
+record_config_digest "$final_config_digest"
 
 if test "$old_head" = "$new_head"; then
   if test "$repair_mode" = 1; then

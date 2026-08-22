@@ -6,13 +6,17 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
 ARG CLAUDE_CODE_VERSION
 ARG CLAUDE_RELEASE_KEY_FINGERPRINT
-ARG MARKETPLACES_CONFIG=config/marketplaces.json
 COPY --chmod=0755 scripts/claude/install-binary.sh /tmp/install-claude-binary.sh
 RUN /tmp/install-claude-binary.sh "$CLAUDE_CODE_VERSION" "$CLAUDE_RELEASE_KEY_FINGERPRINT" /usr/local/bin \
  && rm /tmp/install-claude-binary.sh \
  && install -d -m 0755 /usr/local/lib/ai-sandboxes \
  && install -d -o node -g node -m 0755 /opt/claude-plugin-cache /opt/claude-plugin-seed /opt/claude-build-home /opt/claude-marketplaces
-COPY --chown=node:node ${MARKETPLACES_CONFIG} /opt/marketplaces.json
+# marketplaces.json comes from the "userconfig" named local context (the
+# resolved user configuration directory, see scripts/lib/config-dir.sh).
+# userconfig is a BuildKit named local context passed by docker-bake.hcl,
+# not a FROM alias in this file; hadolint cannot know that.
+# hadolint ignore=DL3022
+COPY --from=userconfig --chown=node:node marketplaces.json /opt/marketplaces.json
 COPY --chown=node:node --chmod=0755 scripts/marketplaces/install-claude.sh /usr/local/lib/ai-sandboxes/install-claude-marketplaces.sh
 USER node
 ENV HOME=/opt/claude-build-home CLAUDE_CODE_PLUGIN_CACHE_DIR=/opt/claude-plugin-cache CLAUDE_CODE_PLUGIN_SEED_DIR=/opt/claude-plugin-seed

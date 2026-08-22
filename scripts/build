@@ -5,8 +5,16 @@ set -a
 # shellcheck disable=SC1091 # Resolved after cd to the repository root.
 source ./versions.env || exit 1
 set +a
-./scripts/tools/validate-selection.sh config/tool-catalog.json config/tools.json config/runtime.json || exit 1
-runtime_values=$(./scripts/tools/runtime-values.sh config/runtime.json) || exit 1
+# User configuration lives outside the checkout (~/.config/ai-sandboxes by
+# default); the checked-in config/*.json files are neutral defaults and the
+# tool catalog is repository-owned policy. Resolve (and initialize missing
+# files from those defaults) before validating anything.
+# shellcheck disable=SC1091 # Resolved after cd to the repository root.
+. ./scripts/lib/config-dir.sh || exit 1
+config_dir=$(ai_sandboxes_resolve_config_dir 'scripts/build') || exit 1
+ai_sandboxes_init_config_files 'scripts/build' "$PWD" "$config_dir" || exit 1
+./scripts/tools/validate-selection.sh config/tool-catalog.json "$config_dir/tools.json" "$config_dir/runtime.json" || exit 1
+runtime_values=$(./scripts/tools/runtime-values.sh "$config_dir/runtime.json") || exit 1
 if test -z "$runtime_values"; then
   SHARED_STATE_ID=''
   SHARED_STATE_QUOTA=''
@@ -14,4 +22,12 @@ else
   IFS=$'\t' read -r SHARED_STATE_ID SHARED_STATE_QUOTA <<<"$runtime_values"
 fi
 export SHARED_STATE_ID SHARED_STATE_QUOTA
-docker buildx bake --load base tools claude codex
+# USER_CONFIG_DIR becomes a BuildKit named local context ("userconfig"): the
+# Dockerfiles copy only the expected JSON files from it, so user files are
+# never copied into the checkout or swept into the repository build context.
+export USER_CONFIG_DIR="$config_dir"
+# Grant Bake read access to exactly the resolved configuration directory:
+# it is a named local context outside the checkout, which newer Bake treats
+# as an fs entitlement. Scoping the grant to this one path keeps the default
+# deny for everything else on the host.
+docker buildx bake --allow="fs.read=$config_dir" --load base tools claude codex

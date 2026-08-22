@@ -1,6 +1,25 @@
 # Configuration
 
-Configuration lives in `config/`. Rebuild, verify, and reload Microsandbox after changing it:
+Your configuration lives outside this checkout, in
+`${XDG_CONFIG_HOME:-$HOME/.config}/ai-sandboxes/` (override the location with
+`AI_SANDBOX_CONFIG_DIR`). Keeping it out of the repository means your edits
+survive `git pull`, never enter a Docker build context from an untracked file,
+and never show up as dirty working-tree noise. Set `AI_SANDBOX_CONFIG_DIR` to
+an absolute path when you want per-host or per-purpose configurations.
+
+The first `./scripts/install` or `./scripts/build` creates the directory with
+mode 0700 and seeds any missing file from the checked-in neutral defaults, so
+the flow is:
+
+```console
+mkdir -p ~/.config/ai-sandboxes   # optional; the installer creates it anyway
+$EDITOR ~/.config/ai-sandboxes/marketplaces.json
+./scripts/build && ./scripts/load-msb
+```
+
+`./scripts/update` detects changed configuration by digest and rebuilds and
+reloads automatically, so after the initial install you normally just edit the
+files and run `./scripts/update`. You can always rebuild manually:
 
 ```console
 ./scripts/build
@@ -8,18 +27,26 @@ Configuration lives in `config/`. Rebuild, verify, and reload Microsandbox after
 ./scripts/load-msb
 ```
 
-The checked-in configuration controls the neutral base images. Changes to it
-require rebuilding, verifying, and reloading those images. For additional
-Claude-only software or marketplaces that should remain separate from the
-public runtime, keep an explicit JSON session profile in a personal or team
-repository and run `claude-session --profile /absolute/path/to/session.json`.
+The checked-in `config/*.json` files in the repository are neutral defaults
+that seed your files — they are not read at build time. The one exception is
+`config/tool-catalog.json`, which stays repository policy: it reviews and pins
+every tool that may be installed. For additional Claude-only software or
+marketplaces that should remain separate from the public runtime, keep an
+explicit JSON session profile in a personal or team repository and run
+`claude-session --profile /absolute/path/to/session.json`.
 Session profiles are validated host-side, are never discovered from the mounted
 project, and build a cached derived image locally; see
 [session images](session-images.md).
 
+Migrating an existing installation: if you previously edited `config/*.json`
+inside the checkout, copy your modified files into
+`~/.config/ai-sandboxes/`, then restore the checkout copies with
+`git restore config/` before updating.
+
 ## Marketplaces and skills
 
-Start with `config/marketplaces.example.json` and copy its entries into `config/marketplaces.json`.
+Edit `~/.config/ai-sandboxes/marketplaces.json`, starting from the shape in
+`config/marketplaces.example.json`.
 
 - Claude entries must be public canonical GitHub URLs, pinned to a full commit SHA. The selected source must contain `.claude-plugin/marketplace.json` at `path`.
 - `plugins` is an optional allowlist. Omit it or use `[]` to register a marketplace without installing plugins. Selected plugins are installed and enabled when a fresh Claude sandbox home starts; an existing user disablement is preserved.
@@ -30,11 +57,17 @@ Claude-specific commands, hooks, agents, and MCP settings are not converted into
 
 ## Optional tools
 
-`config/tools.json` selects tools for the agent images. Copy the structure in `config/tools.example.json`; each selected tool must be present in the reviewed `config/tool-catalog.json` and use its required version and checksum pins. The checked-in selection is empty.
+`~/.config/ai-sandboxes/tools.json` selects tools for the agent images. Copy
+the structure in `config/tools.example.json`; each selected tool must be
+present in the reviewed `config/tool-catalog.json` and use its required
+version and checksum pins. The default selection is empty.
 
 ## Shared state
 
-Set `shared_state` in `config/runtime.json` to the shape shown in `config/runtime.example.json` to give opted-in agent images a shared, persistent directory at `/var/lib/agent-state`. Its named volume is `agent-state-<id>-v1`.
+Set `shared_state` in `~/.config/ai-sandboxes/runtime.json` to the shape shown
+in `config/runtime.example.json` to give opted-in agent images a shared,
+persistent directory at `/var/lib/agent-state`. Its named volume is
+`agent-state-<id>-v1`.
 
 For a standalone launcher or diagnostic, set `AI_SANDBOX_RUNTIME_CONFIG` to an absolute path to a runtime configuration file. Set it to `none` to explicitly disable shared state. `ai-sandbox run`, `ai-sandbox plan`, and `ai-sandbox doctor` resolve this setting identically; rebuilding is required whenever the selected policy differs from the base image's shared-state labels.
 

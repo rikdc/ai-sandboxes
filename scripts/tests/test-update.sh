@@ -49,8 +49,14 @@ base_sanitized=$(sanitized_path)
 repo="$mockdir/repo"
 mkdir -p "$repo/scripts" "$repo/.github/workflows" "$mockdir/gitbin" "$mockdir/extras/bin"
 cp scripts/update "$repo/scripts/update"
+mkdir -p "$repo/scripts/lib" || exit 1
+cp scripts/lib/config-dir.sh "$repo/scripts/lib/config-dir.sh" || exit 1
 cp .github/workflows/release-marker "$repo/.github/workflows/release-marker"
 cp versions.env "$repo/versions.env"
+mkdir -p "$repo/config" || exit 1
+for f in marketplaces.json tools.json runtime.json; do
+  printf '{}\n' >"$repo/config/$f" || exit 1
+done
 
 old_head='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 new_head='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
@@ -63,8 +69,12 @@ err_log="$mockdir/err.log"
 head_state="$mockdir/head"
 
 state_dir="$mockdir/state"
-mkdir -p "$state_dir"
+home="$mockdir/home"
+mkdir -p "$state_dir" "$home"
 export XDG_STATE_HOME="$state_dir"
+# Isolate the legacy-wrapper probe ($HOME/.config/fish/functions/claude.fish)
+# from whatever the invoking user happens to have installed.
+export HOME="$home"
 
 export MOCK_GIT_LOG="$git_log" MOCK_UPDATE_LOG="$op_log" MOCK_GIT_HEAD_STATE="$head_state"
 export MOCK_GIT_REMOTES MOCK_GIT_BRANCH MOCK_GIT_STATUS MOCK_GIT_FETCH_STATUS \
@@ -72,6 +82,20 @@ export MOCK_GIT_REMOTES MOCK_GIT_BRANCH MOCK_GIT_STATUS MOCK_GIT_FETCH_STATUS \
   MOCK_GIT_CHANGED_PATHS MOCK_GIT_OLD_ENV MOCK_GIT_NEW_ENV MOCK_GIT_OLD_HEAD \
   MOCK_GIT_NEW_HEAD MOCK_BUILD_STATUS MOCK_LOADMSB_STATUS MOCK_WRAPPER_STATUS \
   MOCK_BINARY_STATUS MOCK_CLAUDE_VERSION MOCK_CODEX_VERSION
+
+# A pristine user configuration directory whose files match the mock repo's
+# checked-in neutral defaults, plus the digest over it: scenarios seed the
+# installed-config-sha256 marker with this value to mean "images were built
+# from exactly this configuration". The digest helper comes from the shared
+# library under test.
+user_config="$home/.config/ai-sandboxes"
+mkdir -p "$user_config"
+for f in marketplaces.json tools.json runtime.json; do
+  printf '{}\n' >"$user_config/$f" || exit 1
+done
+# shellcheck disable=SC1091 # Resolved after cd to the repository root.
+. ./scripts/lib/config-dir.sh
+pristine_config_digest=$(ai_sandboxes_config_digest "$user_config") || exit 1
 
 # Scenario defaults; individual cases override what they need.
 MOCK_GIT_REMOTES='origin'
@@ -269,10 +293,22 @@ run_update() {
   if test "${MOCK_KEEP_MARKER:-0}" != 1; then
     rm -f "$state_dir/ai-sandboxes/installed-head"
   fi
+  rm -f "$state_dir/ai-sandboxes/fish-wrappers-head"
+  # Wrapper management is opt-in; scenarios default to a user who opted in.
+  if test "${MOCK_FISH_MANAGED:-1}" = 1; then
+    mkdir -p "$state_dir/ai-sandboxes"
+    printf 'managed\n' >"$state_dir/ai-sandboxes/fish-wrappers-head"
+  fi
   if test -n "${MOCK_SEED_MARKER:-}"; then
     mkdir -p "$state_dir/ai-sandboxes"
     printf '%s\n' "$MOCK_SEED_MARKER" >"$state_dir/ai-sandboxes/installed-head"
   fi
+  # By default the configuration marker matches the on-disk configuration
+  # (no drift); a scenario passes MOCK_RECORDED_DIGEST to simulate images
+  # built from different configuration bytes.
+  mkdir -p "$state_dir/ai-sandboxes"
+  printf '%s\n' "${MOCK_RECORDED_DIGEST:-$pristine_config_digest}" \
+    >"$state_dir/ai-sandboxes/installed-config-sha256"
   printf '%s\n' "$MOCK_GIT_OLD_HEAD" >"$MOCK_GIT_HEAD_STATE"
   PATH="$extra_path:$base_sanitized" "$repo/scripts/update" "$@" >"$out_log" 2>"$err_log"
   rc=$?
@@ -419,6 +455,48 @@ expect_status 0 'default update without shell changes'
 expect_op_sequence 'default update without shell changes' "$mockdir/scenario9.op"
 grep -Fq 'install-fish-functions' "$op_log" && fail 'install-fish-functions must only run when shell/** changes'
 
+# 9b. Fish wrappers are opt-in: without the management marker and without a
+#     legacy claude.fish, even shell/** changes must not install wrappers —
+#     a Bash/Zsh user never acquires them behind their back.
+MOCK_FISH_MANAGED=0
+MOCK_GIT_CHANGED_PATHS=$'versions.env\nshell/fish/trusted/guard.fish'
+run_update "$allpath"
+expect_status 0 'update without opt-in fish'
+grep -Fq 'install-fish-functions' "$op_log" \
+  && fail 'wrappers must not be installed for users who never opted in'
+expect_stdout_contains 'skipping wrapper refresh' 'opt-in fish skip notice'
+
+# 9c. Legacy migration: no marker, but a claude.fish carrying the generator's
+#     signature (trusted-guard source + __ai_sandbox_trusted_refuse_overlap)
+#     is positively identified as ours and still gets refreshed.
+legacy_wrapper="$home/.config/fish/functions/claude.fish"
+mkdir -p "$home/.config/fish/functions"
+cat >"$legacy_wrapper" <<'EOF'
+function claude --description 'claude: ai-sandboxes hardened Microsandbox launcher'
+    source '/home/u/.config/ai-sandboxes/trusted/guard.fish'
+    __ai_sandbox_trusted_refuse_overlap claude '/home/u/src/ai-sandboxes' '/home/u/.config/fish/functions' '/home/u/.config/ai-sandboxes/trusted' '/home/u/.local/libexec/ai-sandboxes'; or return $status
+    command env AI_SANDBOXES_ROOT='/home/u/src/ai-sandboxes' '/home/u/.local/libexec/ai-sandboxes/ai-sandbox' run claude -- $argv
+end
+EOF
+run_update "$allpath"
+expect_status 0 'legacy fish wrappers refreshed'
+grep -Fq 'install-fish-functions' "$op_log" || fail 'legacy wrappers must be refreshed'
+
+# 9d. An unrelated claude.fish (a Fish user's own native wrapper) must never
+#     be treated as project-owned: no refresh, byte-for-byte unchanged.
+# shellcheck disable=SC2016 # The fish body is deliberately literal.
+printf '# my own native claude wrapper\nfunction claude\n    command claude $argv\nend\n' >"$legacy_wrapper"
+cp "$legacy_wrapper" "$mockdir/claude.fish.before"
+run_update "$allpath"
+expect_status 0 'unrelated fish wrapper untouched'
+grep -Fq 'install-fish-functions' "$op_log" \
+  && fail 'a foreign claude.fish must not trigger wrapper installation'
+cmp -s "$mockdir/claude.fish.before" "$legacy_wrapper" \
+  || fail 'update must leave an unrelated claude.fish byte-for-byte unchanged'
+rm -f "$legacy_wrapper"
+MOCK_FISH_MANAGED=1
+MOCK_GIT_CHANGED_PATHS=$'versions.env\nconfig/tools.json\nimages/claude/entrypoint.sh'
+
 # 10. Default mode, msb and docker both absent: build and wrappers still run,
 #     load-msb is skipped, and missing docker is a warning, not a failure.
 MOCK_GIT_CHANGED_PATHS=$'versions.env\nshell/fish/trusted/guard.fish'
@@ -555,6 +633,24 @@ expect_stdout_contains 'reconciled install to' 'missing marker summary'
 expect_stderr_contains 'docker not found' 'missing marker missing docker warning'
 MOCK_GIT_NEW_HEAD="$new_head"
 
+# 18b. Missing marker on a user who never opted into Fish: reconciliation
+#      forces the binary and build but must not install wrappers.
+MOCK_GIT_NEW_HEAD="$old_head"
+MOCK_SEED_MARKER=''
+MOCK_FISH_MANAGED=0
+cat >"$mockdir/scenario18b.op" <<'EOF'
+install-ai-sandbox
+build
+EOF
+run_update "$gitpath"
+expect_status 0 'force-all without opt-in fish'
+expect_op_sequence 'force-all without opt-in fish operations' "$mockdir/scenario18b.op"
+grep -Fq 'install-fish-functions' "$op_log" \
+  && fail 'force-all must not install wrappers for users who never opted in'
+expect_stdout_contains 'skipping wrapper refresh' 'force-all fish skip notice'
+MOCK_GIT_NEW_HEAD="$new_head"
+MOCK_FISH_MANAGED=1
+
 # 19. Invalid marker (non-hex) with HEAD at origin/main: treated as missing.
 MOCK_GIT_NEW_HEAD="$old_head"
 MOCK_SEED_MARKER='not-a-valid-sha'
@@ -600,5 +696,55 @@ MOCK_GIT_NEW_HEAD="$new_head"
 run_update "$gitpath" --check --repair
 expect_status 64 'check plus repair usage'
 expect_stderr_contains 'usage' 'check plus repair usage message'
+
+# 23. Configuration drift, git current: --check reports it (exit 1) even
+#     though git has nothing to do.
+MOCK_GIT_NEW_HEAD="$old_head"
+MOCK_SEED_MARKER="$old_head"
+printf '{"shared_state":{"id":"drift","quota":"1G"}}\n' >"$user_config/runtime.json"
+run_update "$gitpath" --check
+expect_status 1 'config drift check'
+expect_stdout_contains 'configuration changed since last installation' 'config drift check notice'
+grep -Fq 'git merge' "$git_log" && fail 'config drift check should not merge'
+
+# 23b. The same drift in default mode reconciles by rebuilding and reloading
+#      only — the binary and fish wrappers track source changes, not
+#      configuration — and records the new digest afterwards.
+cat >"$mockdir/scenario23b.op" <<'EOF'
+build
+load-msb
+docker run --rm --user node -e HOME=/home/node ai-sandboxes-claude:local bash -lc test "$DISABLE_UPDATES" = 1; claude --version
+docker run --rm --user node -e HOME=/home/node ai-sandboxes-codex:local codex --version
+EOF
+run_update "$allpath"
+expect_status 0 'config-only reconcile'
+expect_op_sequence 'config-only reconcile operations' "$mockdir/scenario23b.op"
+grep -Fq 'install-ai-sandbox' "$op_log" \
+  && fail 'configuration drift must not reinstall the ai-sandbox binary'
+grep -Fq 'install-fish-functions' "$op_log" \
+  && fail 'configuration drift must not reinstall the fish wrappers'
+expect_stdout_contains 'configuration changed since last installation; reconciling' 'config-only reconcile notice'
+new_digest=$(ai_sandboxes_config_digest "$user_config") || exit 1
+test "$(cat "$state_dir/ai-sandboxes/installed-config-sha256")" = "$new_digest" \
+  || fail 'config-only reconcile must record the new configuration digest'
+printf '{}\n' >"$user_config/runtime.json"
+MOCK_GIT_NEW_HEAD="$new_head"
+MOCK_SEED_MARKER=''
+
+# 24. A failed run keeps the stale digest recorded, so the next --check still
+#     reports drift instead of silently going quiet.
+MOCK_GIT_NEW_HEAD="$old_head"
+MOCK_SEED_MARKER="$old_head"
+MOCK_KEEP_MARKER=1
+MOCK_RECORDED_DIGEST='deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef'
+MOCK_BUILD_STATUS=1
+run_update "$gitpath"
+expect_status 2 'failed config reconcile'
+test "$(cat "$state_dir/ai-sandboxes/installed-config-sha256")" = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef' \
+  || fail 'a failed update must leave the stale configuration digest in place'
+MOCK_BUILD_STATUS=0
+MOCK_RECORDED_DIGEST=''
+MOCK_KEEP_MARKER=0
+MOCK_GIT_NEW_HEAD="$new_head"
 
 echo ok
