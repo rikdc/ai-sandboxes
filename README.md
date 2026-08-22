@@ -1,12 +1,18 @@
 # ai-sandboxes
 
-ARM64 Microsandbox images, a Go control plane, and Fish launchers for Claude
-Code and Codex.
+Run Claude Code and Codex inside deny-by-default microVMs on Apple Silicon.
+The agent gets its own Linux machine instead of running against your Mac.
+
+Your project directory stays writable and agent configuration survives
+between sessions. Everything else (credentials, dotfiles, home directory,
+the wider network) stays outside the guest until you deliberately expose
+it, and public egress is one environment variable away when a session
+needs it.
 
 ## Get started
 
 Requires Apple Silicon, Docker Desktop, Git, Fish, Microsandbox (`msb`), and
-Go (for the `ai-sandbox` control plane).
+Go to build the `ai-sandbox` control plane.
 
 ```console
 ./scripts/install-ai-sandbox   # build the control plane and install it to ~/.local/libexec/ai-sandboxes/ai-sandbox
@@ -21,22 +27,22 @@ Install the Fish launchers (`claude`, `codex`, and `claude-session`):
 ./scripts/install-fish-functions
 ```
 
-This writes small wrapper functions into `~/.config/fish/functions/`, copied
-(not symlinked) from the checkout, plus a shared guard snippet under
-`~/.config/ai-sandboxes/trusted/`. The `claude` and `codex` wrappers are
-pass-throughs: after the guard check they hand off to `ai-sandbox run`, which
-resolves the invocation into a single typed runtime plan (image, workspace,
-network, egress, shared-state handoff) and launches it. Do not symlink these
-launchers into `~/.config/fish/functions/` yourself, and do not use any of
-them with a project that is, or contains, the ai-sandboxes checkout or either
-of those two installed directories: a launcher sourced from a location a guest
-agent can also write to would let that guest tamper with host-trusted launcher
-code for a later invocation to run with full host access. The installed
-wrapper refuses to run whenever the mounted workspace overlaps any of those
-paths; re-run `./scripts/install-fish-functions` after updating ai-sandboxes
-to refresh the installed copies.
+This copies small wrapper functions into `~/.config/fish/functions/` (not
+symlinks) plus a shared guard snippet under `~/.config/ai-sandboxes/trusted/`.
+The `claude` and `codex` wrappers are pass-throughs; after the guard check
+they hand off to `ai-sandbox run`, which resolves the invocation into a
+single runtime plan (image, workspace, network, egress, shared-state handoff)
+and launches it.
 
-Claude uses an HTTPS allowlist by default, and Codex now does too. Create them before first run:
+Don't symlink these launchers yourself or run them from a project containing
+the ai-sandboxes checkout or either installed directory: a launcher somewhere
+a guest agent can also write is one that guest can rewrite, and the next
+invocation would then run with full host access. The wrapper checks for this
+overlap at startup and refuses to run when it finds one. Re-run
+`./scripts/install-fish-functions` after updating ai-sandboxes.
+
+Claude and Codex both use an HTTPS allowlist by default. Create the files
+before first run:
 
 ```fish
 mkdir -p ~/.config/microvms
@@ -73,18 +79,15 @@ go test ./...               # control-plane unit tests
 
 ### How auth works
 
-Codex and Claude Code each run their own browser-based OAuth sign-in:
-account login (Codex only) and MCP server login (both). In every case
-the CLI binds its OAuth callback on a loopback port *inside the guest*,
-which the host browser cannot reach directly. `ai-sandbox` bridges that
-gap with an SSH tunnel scoped to the single login operation — opened
-just before the sign-in flow starts, torn down the moment it finishes
-or fails. No port is ever published to the LAN or the public Internet,
-and no listener is left running afterward. See
-[ADR-0007](docs/adr/0007-codex-auth-tunnel.md) (the tunnel primitive
-and Codex account login) and
-[ADR-0008](docs/adr/0008-codex-mcp-oauth-tunnel.md) (MCP login for
-both clients) for the design rationale.
+Codex and Claude Code each handle their own browser-based OAuth sign-in:
+account login (Codex only) and MCP server login (both). The CLI binds its
+OAuth callback on a loopback port *inside the guest*, where the host browser
+cannot reach it, so `ai-sandbox` opens an SSH tunnel scoped to that single
+login operation: up just before the sign-in flow starts, gone as soon as it
+finishes or fails. No port is published to the LAN or the public Internet
+and nothing is left listening afterward. See
+[ADR-0007](docs/adr/0007-codex-auth-tunnel.md) and
+[ADR-0008](docs/adr/0008-codex-mcp-oauth-tunnel.md) for the design rationale.
 
 One-time host setup, required before any of the subcommands below:
 
@@ -92,9 +95,9 @@ One-time host setup, required before any of the subcommands below:
 msb ssh authorize --file ~/.ssh/id_ed25519.pub
 ```
 
-**Codex account login** — Codex's browser sign-in binds its OAuth
-callback on `127.0.0.1:1455` inside the guest. Run the login
-subcommand in a second terminal while the sandbox is running:
+**Codex account login**: Codex's browser sign-in binds its OAuth callback on
+`127.0.0.1:1455` inside the guest. With the sandbox running, run the login
+subcommand in a second terminal:
 
 ```console
 # terminal 1
@@ -103,18 +106,13 @@ ai-sandbox run codex
 ai-sandbox codex login
 ```
 
-`codex login` tunnels host `127.0.0.1:1455` → guest `127.0.0.1:1455`
-for the duration of the sign-in.
+After the first sign-in succeeds, exit and re-run `codex`: the running
+process reads its auth token at startup and won't pick up the new credential
+until it restarts. Later runs re-use the persisted token from the
+`codex-home` volume, so you pay this once.
 
-After the first successful sign-in, exit and re-run `codex` in
-terminal 1. The already-running `codex` process reads the auth token
-at startup and won't pick up the newly-written credential until it
-restarts. Subsequent runs re-use the persisted token from the
-`codex-home` volume, so this is a one-time cost per credential.
-
-**MCP server login (Codex or Claude Code)** — signs an already-running
-sandbox into an MCP server's own OAuth (e.g. Slack, Notion), using the
-same tunnel mechanism:
+**MCP server login (Codex or Claude Code)**: signs an already-running sandbox
+into an MCP server's own OAuth (Slack, Notion), same tunnel mechanism:
 
 ```console
 # Codex: ai-sandbox picks an ephemeral loopback port per invocation
@@ -125,7 +123,10 @@ ai-sandbox codex mcp login <server-name>
 ai-sandbox claude mcp login --callback-port <P> <server-name>
 ```
 
-Each MCP server's registry lives in that CLI's own persisted config —
+Each MCP server's registry lives in that CLI's own persisted config;
 `ai-sandbox` never reads or writes it.
 
-Claude and Codex default to an intentionally restricted network. Use `CLAUDE_MSB_PUBLIC_EGRESS=1 claude` or `CODEX_MSB_PUBLIC_EGRESS=1 codex` only when a session needs public Internet access. The mounted project is writable, so keep secrets out of it and review agent changes with Git.
+Claude and Codex default to an intentionally restricted network. Use
+`CLAUDE_MSB_PUBLIC_EGRESS=1 claude` or `CODEX_MSB_PUBLIC_EGRESS=1 codex` only
+when a session needs public Internet access. The mounted project is writable,
+so keep secrets out of it and review agent changes with Git.
