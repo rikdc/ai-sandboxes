@@ -65,6 +65,12 @@ preflight() {
   config_dir=$(ai_sandboxes_resolve_config_dir "$name") || exit $?
   ai_sandboxes_init_config_files "$name" "$repo_root" "$config_dir"
   printf 'configuration directory: %s\n' "$config_dir"
+  # Baseline for the end-of-run comparison: scripts/build guards its own
+  # build window, so a mismatch at record time means an edit landed outside
+  # any guarded window. Fail rather than record a digest that does not
+  # describe the images.
+  config_digest_before=$(ai_sandboxes_config_digest "$config_dir") \
+    || die "could not compute the configuration digest for $config_dir"
 }
 
 state_dir() {
@@ -110,10 +116,14 @@ record_state() {
     marker="$state/installed-head"
     write_marker "$marker" "$sha"
   fi
-  if config_digest=$(ai_sandboxes_config_digest "$config_dir"); then
-    config_marker="$state/installed-config-sha256"
-    write_marker "$config_marker" "$config_digest"
-  fi
+  # The digest is mandatory: silently skipping it would leave update --check
+  # to fail closed on unknown state even though this install succeeded.
+  config_digest=$(ai_sandboxes_config_digest "$config_dir") \
+    || die "could not compute the configuration digest for $config_dir"
+  test "$config_digest" = "$config_digest_before" \
+    || die 'the configuration changed while installing; re-run ./scripts/install so the recorded digest matches the built artifacts'
+  config_marker="$state/installed-config-sha256"
+  write_marker "$config_marker" "$config_digest"
 }
 
 preflight || exit $?

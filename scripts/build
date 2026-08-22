@@ -30,4 +30,13 @@ export USER_CONFIG_DIR="$config_dir"
 # it is a named local context outside the checkout, which newer Bake treats
 # as an fs entitlement. Scoping the grant to this one path keeps the default
 # deny for everything else on the host.
+# BuildKit reads the live directory during the build, so hash before and
+# after: an edit mid-build would otherwise let the recorded digest describe
+# bytes that never went into the images. Fail instead of recording a lie.
+config_digest_before=$(ai_sandboxes_config_digest "$config_dir") \
+  || { printf 'scripts/build: could not compute the configuration digest for %s\n' "$config_dir" >&2; exit 1; }
 docker buildx bake --allow="fs.read=$config_dir" --load base tools claude codex
+config_digest_after=$(ai_sandboxes_config_digest "$config_dir") \
+  || { printf 'scripts/build: could not compute the configuration digest for %s\n' "$config_dir" >&2; exit 1; }
+test "$config_digest_after" = "$config_digest_before" \
+  || { printf 'scripts/build: the configuration changed while the images were building; re-run ./scripts/build so the artifacts and their recorded digest agree\n' >&2; exit 1; }

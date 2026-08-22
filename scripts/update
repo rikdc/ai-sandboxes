@@ -279,6 +279,17 @@ if test "$old_head" != "$new_head"; then
     || die 'git merge --ff-only origin/main failed; inspect the output above'
 fi
 
+# Authoritative pre-install digest. Unlike --check, the default mode is
+# allowed to create and seed the configuration directory, so resolving and
+# hashing here gives every later comparison a non-empty baseline; scripts/
+# build guards its own build window, and the end-of-run check below catches
+# edits landing outside it.
+config_dir=$(ai_sandboxes_resolve_config_dir "$name") \
+  || die 'could not resolve the ai-sandboxes configuration directory'
+ai_sandboxes_init_config_files "$name" "$PWD" "$config_dir"
+start_config_digest=$(ai_sandboxes_config_digest "$config_dir") \
+  || die "could not compute the configuration digest for $config_dir"
+
 # Determine whether we must run every install step regardless of diff.
 force_all=0
 if test "$repair_mode" = 1 || test -z "$installed_head"; then
@@ -382,12 +393,18 @@ record_installed_head "$new_head"
 
 # And record the configuration the images were actually built from: mirror
 # the build step by resolving, seeding any missing file from the checked-in
-# neutral defaults, and hashing the result.
+# neutral defaults, and hashing the result. The digest is mandatory and must
+# match the pre-install baseline: scripts/build guards its own window, so a
+# mismatch means an edit landed after the build finished but before this
+# bookkeeping — recording it would describe bytes that never went into the
+# images.
 config_dir=$(ai_sandboxes_resolve_config_dir "$name") \
   || die 'could not resolve the ai-sandboxes configuration directory'
 ai_sandboxes_init_config_files "$name" "$PWD" "$config_dir"
 final_config_digest=$(ai_sandboxes_config_digest "$config_dir") \
   || die "could not compute the configuration digest for $config_dir"
+test "$final_config_digest" = "$start_config_digest" \
+  || die 'the configuration changed while updating; re-run ./scripts/update so the recorded digest matches the built artifacts'
 record_config_digest "$final_config_digest"
 record_config_digest "$final_config_digest"
 
