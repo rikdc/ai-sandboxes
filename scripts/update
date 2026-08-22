@@ -191,15 +191,27 @@ if test "$check_mode" = 1; then
 fi
 
 # Fish wrappers are opt-in: they are refreshed only for users who ran
-# scripts/install-fish-functions at least once (marker below), or who already
-# have wrappers from before markers existed (legacy detection via the
-# canonical claude.fish location).
+# scripts/install-fish-functions at least once (marker below), or whose
+# wrappers demonstrably came from that installer (legacy installs from before
+# markers existed). A file merely existing at claude.fish proves nothing
+# about ownership — a Fish user may have their own native Claude wrapper and
+# silently overwriting shell startup code is exactly where an installer must
+# be paranoid — so legacy detection requires the generator's unmistakable
+# signature: wrappers we generate source the trusted guard from its installed
+# location and call its __ai_sandbox_trusted_refuse_overlap check. Anything
+# else is left untouched; rerunning scripts/install-fish-functions migrates
+# it to marker-based management explicitly.
 fish_marker="$state_dir/fish-wrappers-head"
 fish_managed=0
 if test -s "$fish_marker"; then
   fish_managed=1
-elif test -f "$HOME/.config/fish/functions/claude.fish"; then
-  fish_managed=1
+else
+  legacy_wrapper="$HOME/.config/fish/functions/claude.fish"
+  if test -f "$legacy_wrapper" \
+    && grep -qF '__ai_sandbox_trusted_refuse_overlap' "$legacy_wrapper" 2>/dev/null \
+    && grep -qF '.config/ai-sandboxes/trusted/guard.fish' "$legacy_wrapper" 2>/dev/null; then
+    fish_managed=1
+  fi
 fi
 
 if test "$old_head" != "$new_head"; then

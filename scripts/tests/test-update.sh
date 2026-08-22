@@ -440,14 +440,34 @@ grep -Fq 'install-fish-functions' "$op_log" \
   && fail 'wrappers must not be installed for users who never opted in'
 expect_stdout_contains 'skipping wrapper refresh' 'opt-in fish skip notice'
 
-# 9c. Legacy migration: no marker, but wrappers from before markers existed
-#     are still managed and get refreshed.
+# 9c. Legacy migration: no marker, but a claude.fish carrying the generator's
+#     signature (trusted-guard source + __ai_sandbox_trusted_refuse_overlap)
+#     is positively identified as ours and still gets refreshed.
+legacy_wrapper="$home/.config/fish/functions/claude.fish"
 mkdir -p "$home/.config/fish/functions"
-printf '# legacy\n' >"$home/.config/fish/functions/claude.fish"
+cat >"$legacy_wrapper" <<'EOF'
+function claude --description 'claude: ai-sandboxes hardened Microsandbox launcher'
+    source '/home/u/.config/ai-sandboxes/trusted/guard.fish'
+    __ai_sandbox_trusted_refuse_overlap claude '/home/u/src/ai-sandboxes' '/home/u/.config/fish/functions' '/home/u/.config/ai-sandboxes/trusted' '/home/u/.local/libexec/ai-sandboxes'; or return $status
+    command env AI_SANDBOXES_ROOT='/home/u/src/ai-sandboxes' '/home/u/.local/libexec/ai-sandboxes/ai-sandbox' run claude -- $argv
+end
+EOF
 run_update "$allpath"
 expect_status 0 'legacy fish wrappers refreshed'
 grep -Fq 'install-fish-functions' "$op_log" || fail 'legacy wrappers must be refreshed'
-rm -f "$home/.config/fish/functions/claude.fish"
+
+# 9d. An unrelated claude.fish (a Fish user's own native wrapper) must never
+#     be treated as project-owned: no refresh, byte-for-byte unchanged.
+# shellcheck disable=SC2016 # The fish body is deliberately literal.
+printf '# my own native claude wrapper\nfunction claude\n    command claude $argv\nend\n' >"$legacy_wrapper"
+cp "$legacy_wrapper" "$mockdir/claude.fish.before"
+run_update "$allpath"
+expect_status 0 'unrelated fish wrapper untouched'
+grep -Fq 'install-fish-functions' "$op_log" \
+  && fail 'a foreign claude.fish must not trigger wrapper installation'
+cmp -s "$mockdir/claude.fish.before" "$legacy_wrapper" \
+  || fail 'update must leave an unrelated claude.fish byte-for-byte unchanged'
+rm -f "$legacy_wrapper"
 MOCK_FISH_MANAGED=1
 MOCK_GIT_CHANGED_PATHS=$'versions.env\nconfig/tools.json\nimages/claude/entrypoint.sh'
 

@@ -59,9 +59,10 @@ bindir="$sandbox/bin"
 mkdir -p "$bindir" || exit 1
 cat >"$bindir/git" <<'EOF' || exit 1
 #!/usr/bin/env bash
-if test "${1:-}" = rev-parse; then
-  printf 'abc1234\n'
-fi
+case "${1:-}" in
+  rev-parse) printf 'abc1234\n' ;;
+  status) printf '%s' "$GIT_STATUS" ;;
+esac
 exit 0
 EOF
 cat >"$bindir/go" <<'EOF' || exit 1
@@ -98,7 +99,9 @@ for dir in "${base_dirs[@]}"; do
     case "$name" in
       git | go | docker | msb | uname) continue ;;
     esac
-    test -f "$src" && test -x "$src" || continue
+    if ! test -f "$src" || ! test -x "$src"; then
+      continue
+    fi
     if test ! -e "$farm/$name"; then
       ln -s "$src" "$farm/$name"
     fi
@@ -108,7 +111,15 @@ IFS=$old_ifs
 
 run_install() {
   : >"$journal"
-  rm -f "$marker"
+  # Each scenario starts with no reconciliation marker unless it explicitly
+  # seeds one (the failed-reinstall scenarios below): seeding proves a prior
+  # successful installation cannot survive a failed reinstall as valid state.
+  if test "${SEED_MARKER:-0}" = 1; then
+    mkdir -p "$state_dir/ai-sandboxes"
+    printf 'abc1234\n' >"$marker"
+  else
+    rm -f "$marker"
+  fi
   PATH="$bindir:$farm" "$sandbox/scripts/install" >"$sandbox/out.log" 2>"$sandbox/err.log"
   rc=$?
 }
@@ -138,14 +149,18 @@ expect_journal() {
 }
 
 # 1. A missing prerequisite aborts before any mutation: no step runs, the
-#    message names the tool, and nothing is recorded as installed.
+#    message names the tool, and nothing is recorded as installed. The
+#    invalidation of a prior marker also happens only after the preflight,
+#    so an existing marker survives an aborted run untouched.
 clear_exit_codes
+SEED_MARKER=1
 rm -f "$bindir/msb"
 run_install
 expect_status 1 'missing msb preflight'
 expect_journal 'missing msb preflight' ''
 expect_stderr "prerequisite 'msb' not found" 'missing msb preflight message'
-test ! -e "$marker" || fail 'missing msb preflight must not write the marker'
+test "$(cat "$marker" 2>/dev/null)" = 'abc1234' \
+  || fail 'aborted preflight must leave an existing marker untouched'
 cat >"$bindir/msb" <<'EOF' || exit 1
 #!/usr/bin/env bash
 exit 0
@@ -158,6 +173,8 @@ for tool in git go docker; do
   expect_status 1 "missing $tool preflight"
   expect_journal "missing $tool preflight" ''
   expect_stderr "prerequisite '$tool' not found" "missing $tool preflight message"
+  test "$(cat "$marker" 2>/dev/null)" = 'abc1234' \
+    || fail "aborted preflight must leave an existing marker untouched ($tool)"
   mv "$bindir/$tool.hidden" "$bindir/$tool"
 done
 
@@ -179,6 +196,15 @@ expect_status 1 'unsupported architecture'
 expect_journal 'unsupported architecture' ''
 expect_stderr 'unsupported architecture' 'architecture message'
 
+# 4b. Uncommitted tracked changes are refused: the marker names HEAD, so
+#     building from a dirty tree would record artifacts as built from HEAD.
+GIT_STATUS=$' M scripts/install' run_install
+expect_status 1 'dirty tree'
+expect_journal 'dirty tree' ''
+expect_stderr 'uncommitted changes' 'dirty tree message'
+test "$(cat "$marker" 2>/dev/null)" = 'abc1234' \
+  || fail 'dirty-tree refusal must leave an existing marker untouched'
+
 # 5. Success path: all four steps run — load-msb before verify, so images are
 #    imported exactly once — and the reconciliation marker records HEAD.
 clear_exit_codes
@@ -192,22 +218,23 @@ test ! -e "$state_dir/ai-sandboxes/fish-wrappers-head" \
   || fail 'install must not mark fish wrappers as managed'
 
 # 6. Failure propagation: a failing build aborts before load-msb and verify,
-#    exits with that step's status, names the failed script — and does not
-#    write the marker, so update --check keeps reporting incomplete state.
+#    exits with that step's status, names the failed script — and invalidates
+#    a previously valid marker, so a failed reinstall can never leave
+#    update --check reporting "up to date" against broken artifacts.
 set_exit_code build 3
 run_install
 expect_status 3 'failing build'
 expect_journal 'failing build' "$(printf 'install-ai-sandbox\nbuild')"
 expect_stderr 'build failed' 'failing build'
 expect_stderr 'scripts/install' 'failing build'
-test ! -e "$marker" || fail 'failed install must not write the marker'
+test ! -e "$marker" || fail 'failed reinstall must invalidate the prior marker'
 
 # 7. A failure on the very first step runs nothing else.
 set_exit_code install-ai-sandbox 1
 run_install
 expect_status 1 'failing first step'
 expect_journal 'failing first step' 'install-ai-sandbox'
-test ! -e "$marker" || fail 'failed first step must not write the marker'
+test ! -e "$marker" || fail 'failed first step must invalidate the prior marker'
 
 # 8. A failure on the final step still reports failure even though everything
 #    before it succeeded.
@@ -216,6 +243,6 @@ set_exit_code verify 7
 run_install
 expect_status 7 'failing last step'
 expect_journal 'failing last step' "$(printf 'install-ai-sandbox\nbuild\nload-msb\nverify')"
-test ! -e "$marker" || fail 'failed final step must not write the marker'
+test ! -e "$marker" || fail 'failed final step must invalidate the prior marker'
 
 printf '%s\n' 'test-install: all scenarios passed'

@@ -43,6 +43,26 @@ preflight() {
     arm64 | aarch64) ;;
     *) die "unsupported architecture '$(uname -m)': images are built for arm64" ;;
   esac
+  # A dirty tree would make the reconciliation marker a lie: it names HEAD,
+  # but the artifacts were built from uncommitted edits. Refuse, mirroring
+  # scripts/update, so "marker == HEAD" always means "built from HEAD".
+  # Untracked files cannot influence any build input, so they are ignored.
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    test -z "$(git status --porcelain --untracked-files=no)" \
+      || die 'working tree has uncommitted changes; commit or stash before running ./scripts/install'
+  fi
+}
+
+# Invalidate any previous reconciliation marker before the first mutating
+# step. The marker is written again only after every step succeeded, so if
+# this run dies mid-way the stale file must not keep claiming that the old
+# installation is still current: update --check must then report unknown
+# install state and reconcile, never "up to date".
+invalidate_prior_state() {
+  local state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/ai-sandboxes"
+  mkdir -p "$state_dir" || die "could not create state directory $state_dir"
+  rm -f "$state_dir/installed-head" \
+    || die "could not remove stale reconciliation marker $state_dir/installed-head; refusing to reinstall on top of unknown prior state"
 }
 
 record_state() {
@@ -61,6 +81,8 @@ record_state() {
 }
 
 preflight || exit $?
+
+invalidate_prior_state
 
 step install-ai-sandbox 'build and install the ai-sandbox binary'
 step build 'build base/tools/claude/codex docker images'
