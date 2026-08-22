@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Cross-compile the ai-sandbox control plane for the supported host
+# (darwin/arm64) from any machine with a Go toolchain — no Apple Silicon is
+# required to produce, package, or test the artifact. The release workflow
+# calls this on ubuntu-latest and attaches the result to the immutable
+# release marker; the complete Apple Silicon smoke test remains a manual,
+# documented step performed on the supported host.
+set -o pipefail
+IFS=$'\n\t'
+
+name=$(basename "$0")
+
+die() {
+  printf '%s: %s\n' "$name" "$*" >&2
+  exit 1
+}
+
+usage() {
+  cat >&2 <<EOF
+usage: $name OUTPUT_DIR REVISION
+  OUTPUT_DIR  directory for the tarball and checksum file (created if missing)
+  REVISION    stamped into the binary as its revision (the git SHA for releases)
+EOF
+  exit 64
+}
+
+test "$#" = 2 || usage
+out_dir=$1
+revision=$2
+
+command -v go >/dev/null 2>&1 || die 'go is required to build ai-sandbox but was not found on PATH'
+case $revision in
+  '' | *$'\n'*) die 'REVISION must be a single non-empty line' ;;
+esac
+
+repo_root=$(cd "$(dirname "$0")/.." && pwd) || die 'could not resolve repository root'
+cd "$repo_root" || die "could not cd to $repo_root"
+
+mkdir -p "$out_dir" || die "could not create output directory $out_dir"
+case $out_dir in
+  *$'\n'*) die 'OUTPUT_DIR must not contain a newline' ;;
+esac
+
+# Stage inside $out_dir so the final tar is a plain file write in the same
+# directory the artifacts land in, and a failed build leaves nothing behind.
+tmpdir=$(mktemp -d "$out_dir/.build.XXXXXX") || die 'could not create a staging directory'
+trap 'rm -rf -- "$tmpdir"' EXIT
+
+printf 'building ai-sandbox darwin/arm64 (revision %s)...\n' "$revision"
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
+  go build -trimpath -ldflags "-X main.revision=$revision" -o "$tmpdir/ai-sandbox" ./cmd/ai-sandbox \
+  || die 'cross-compiling ./cmd/ai-sandbox for darwin/arm64 failed'
+
+# Validate the freshly built binary before packaging it. A darwin/arm64
+# binary cannot execute on other hosts (the ubuntu-latest release runner),
+# so the portable check inspects the Mach-O 64-bit magic directly; on the
+# supported host it is additionally executed to prove it reports a version.
+binary_magic=$(od -An -tx1 -N4 "$tmpdir/ai-sandbox" | tr -d ' \n') \
+  || die 'could not read the built binary'
+case $binary_magic in
+  cffaedfe) ;;
+  *) die "built binary is not a darwin Mach-O executable ($binary_magic)" ;;
+esac
+if [ "$(uname -s)-$(uname -m)" = Darwin-arm64 ]; then
+  built_version=$("$tmpdir/ai-sandbox" version 2>/dev/null) || die 'built binary failed to report its version'
+  case "$built_version" in
+    ai-sandbox\ *) ;;
+    *) die "built binary produced unexpected version output: $built_version" ;;
+  esac
+fi
+
+chmod 0755 "$tmpdir/ai-sandbox" || die 'could not set mode on built binary'
+tar -czf "$out_dir/ai-sandbox-darwin-arm64.tar.gz" -C "$tmpdir" ai-sandbox \
+  || die 'could not create ai-sandbox-darwin-arm64.tar.gz'
+
+# macOS ships shasum, Linux ships sha256sum; accept either so the packaging
+# checksum is byte-identical no matter where the artifact was built.
+checksum=$(
+  cd "$out_dir" && {
+    shasum -a 256 ai-sandbox-darwin-arm64.tar.gz 2>/dev/null ||
+      sha256sum ai-sandbox-darwin-arm64.tar.gz
+  }
+) || die 'could not checksum ai-sandbox-darwin-arm64.tar.gz'
+printf '%s\n' "$checksum" >"$out_dir/ai-sandbox-darwin-arm64.tar.gz.sha256" \
+  || die 'could not write ai-sandbox-darwin-arm64.tar.gz.sha256'
+
+printf 'packaged %s\n' "$out_dir/ai-sandbox-darwin-arm64.tar.gz"
+printf 'packaged %s\n' "$out_dir/ai-sandbox-darwin-arm64.tar.gz.sha256"

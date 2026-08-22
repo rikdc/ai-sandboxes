@@ -46,6 +46,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
       - name: Detect agent runtime version changes
         id: versions
         env:
@@ -59,10 +63,18 @@ jobs:
             test "$status" = 1 || exit "$status"
             echo 'changed=false' >> "$GITHUB_OUTPUT"
           fi
+      # The control-plane binary is cross-compiled on Linux for darwin/arm64
+      # and attached to the release; no Apple Silicon runner is required to
+      # publish it. The complete Apple Silicon smoke test is a manual,
+      # documented step performed on the supported host.
+      - name: Build darwin/arm64 control-plane binary
+        if: steps.versions.outputs.changed == 'true'
+        run: ./scripts/build-release dist "${{ github.sha }}"
       - name: Publish immutable release marker
         if: steps.versions.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           COMMIT: ${{ github.sha }}
+          RELEASE_ASSETS: dist/ai-sandbox-darwin-arm64.tar.gz dist/ai-sandbox-darwin-arm64.tar.gz.sha256
         run: ./.github/workflows/publish-release-marker "$COMMIT"
