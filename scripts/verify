@@ -6,13 +6,25 @@ marketplace_test_image=ai-sandboxes-claude-marketplace-test:local
 release_marker_test=$(mktemp)
 release_marker_previous=$(mktemp)
 release_marker_next=$(mktemp)
+# The marketplace test seeds the claude image from the checked-in runtime-test
+# fixture instead of the user's marketplaces.json. Stage it in a scratch
+# directory shaped like a user configuration directory and point Bake's
+# userconfig context at it via the USER_CONFIG_DIR variable override.
+marketplace_config_dir=$(mktemp -d) || exit 1
 cleanup() {
   rm -f "$release_marker_test" "$release_marker_previous" "$release_marker_next"
+  rm -rf "$marketplace_config_dir"
   docker image rm -f "$marketplace_test_image" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
+install -m 0600 config/marketplaces.runtime-test.json "$marketplace_config_dir/marketplaces.json" || exit 1
+# The claude target's dependency chain includes the tools image, which also
+# consumes the userconfig context: seed it with the checked-in neutral
+# defaults for those two files.
+install -m 0600 config/tools.json "$marketplace_config_dir/tools.json" || exit 1
+install -m 0600 config/runtime.json "$marketplace_config_dir/runtime.json" || exit 1
 
-for file in scripts/build scripts/build-release scripts/update scripts/lint-dockerfiles scripts/load-msb scripts/install-fish-functions scripts/install-ai-sandbox .github/workflows/release-marker .github/workflows/update-agent-versions .github/workflows/publish-release-marker scripts/verify images/claude/entrypoint.sh images/codex/entrypoint.sh scripts/claude/*.sh scripts/marketplaces/*.sh scripts/tools/*.sh scripts/tools/tests/*.sh scripts/session/*.sh scripts/session/tests/*.sh scripts/tests/*.sh scripts/lib/*.sh; do bash -n "$file" || exit 1; done
+for file in scripts/build scripts/build-release scripts/install scripts/update scripts/lint-dockerfiles scripts/load-msb scripts/install-fish-functions scripts/install-ai-sandbox .github/workflows/release-marker .github/workflows/update-agent-versions .github/workflows/publish-release-marker scripts/verify images/claude/entrypoint.sh images/codex/entrypoint.sh scripts/claude/*.sh scripts/marketplaces/*.sh scripts/tools/*.sh scripts/tools/tests/*.sh scripts/session/*.sh scripts/session/tests/*.sh scripts/tests/*.sh scripts/lib/*.sh; do bash -n "$file" || exit 1; done
 if command -v fish >/dev/null 2>&1; then find shell/fish -type f -name '*.fish' -exec fish --no-execute {} + || exit 1; fi
 command -v go >/dev/null 2>&1 || { echo 'go is required for verify (ai-sandbox control plane); install Go 1.26+' >&2; exit 1; }
 go build ./... || exit 1
@@ -32,6 +44,9 @@ bash scripts/session/tests/test-codex-entrypoint-skills.sh || exit 1
 bash scripts/tests/test-publish-release-marker.sh || exit 1
 bash scripts/tests/test-build-release.sh || exit 1
 bash scripts/tests/test-update.sh || exit 1
+bash scripts/tests/test-install.sh || exit 1
+bash scripts/tests/test-config-dir.sh || exit 1
+bash scripts/tests/test-build.sh || exit 1
 bash scripts/tests/test-install-ai-sandbox.sh || exit 1
 if git grep -nEi '(api[_-]?key|access[_-]?token|secret)[[:space:]]*=[[:space:]]*[^[:space:]]+' -- ':!README.md' ':!scripts/verify'; then
   exit 1
@@ -57,9 +72,15 @@ fi
 
 for image in ai-sandboxes-base:local ai-sandboxes-tools:local ai-sandboxes-claude:local ai-sandboxes-codex:local; do docker image inspect "$image" >/dev/null || exit 1; done
 test "$(docker image inspect --format '{{.Architecture}}' ai-sandboxes-base:local)" = arm64 || exit 1
+# Resolve the same user configuration scripts/build built from (never the
+# checked-in defaults): verification must check what is actually installed.
+# shellcheck disable=SC1091 # Resolved from the repository root above.
+. ./scripts/lib/config-dir.sh || exit 1
+config_dir=$(ai_sandboxes_resolve_config_dir 'scripts/verify') || exit 1
+ai_sandboxes_validate_config_entries 'scripts/verify' "$config_dir" || exit 1
 expected_state_id=''
 expected_state_quota=''
-runtime_values=$(./scripts/tools/runtime-values.sh config/runtime.json) || exit 1
+runtime_values=$(./scripts/tools/runtime-values.sh "$config_dir/runtime.json") || exit 1
 if test -n "$runtime_values"; then
   IFS=$'\t' read -r expected_state_id expected_state_quota <<<"$runtime_values" || exit 1
 fi
@@ -73,7 +94,7 @@ docker run --rm --user node -e HOME=/home/node ai-sandboxes-base:local bash -lc 
 ' || exit 1
 while IFS= read -r tool; do
   docker run --rm --user node -e HOME=/home/node ai-sandboxes-tools:local "$tool" --version || exit 1
-done < <(jq -r --slurpfile selection config/tools.json '.tools[] | select(.id as $id | $selection[0].tools[].id == $id) | .binary' config/tool-catalog.json)
+done < <(jq -r --slurpfile selection "$config_dir/tools.json" '.tools[] | select(.id as $id | $selection[0].tools[].id == $id) | .binary' config/tool-catalog.json)
 set -a
 # shellcheck disable=SC1091 # Resolved from the repository root above.
 source ./versions.env || exit 1
@@ -86,10 +107,10 @@ if docker run --rm --user node ai-sandboxes-claude:local sh -c 'touch /opt/claud
   exit 1
 fi
 docker run --rm --user node -e HOME=/home/node ai-sandboxes-codex:local codex --version || exit 1
-docker buildx bake --load \
+USER_CONFIG_DIR="$marketplace_config_dir" docker buildx bake --load \
+  --allow="fs.read=$marketplace_config_dir" \
   --set "tools.args.SHARED_STATE_ID=$expected_state_id" \
   --set "tools.args.SHARED_STATE_QUOTA=$expected_state_quota" \
-  --set claude.args.MARKETPLACES_CONFIG=config/marketplaces.runtime-test.json \
   --set "claude.tags=$marketplace_test_image" \
   claude || exit 1
 marketplace_output=$(docker run --rm --user node -e HOME=/tmp/claude-runtime-test "$marketplace_test_image" claude plugin marketplace list 2>&1) || exit 1
@@ -148,8 +169,12 @@ for image in ai-sandboxes-claude:local ai-sandboxes-codex:local; do
   fi
 done
 
-if command -v msb >/dev/null 2>&1; then
-  ./scripts/load-msb || exit 1
+# Microsandbox smoke verification consumes the images scripts/load-msb loads;
+# loading happens exactly once per lifecycle, in the caller (scripts/install,
+# scripts/update), never here — re-importing would discard verified state.
+if command -v msb >/dev/null 2>&1 && ! msb image list --quiet 2>/dev/null | grep -Fxq ai-sandboxes-claude:local; then
+  printf 'WARNING: ai-sandboxes images not loaded into Microsandbox; skipping msb smoke verification (run ./scripts/load-msb)\n' >&2
+elif command -v msb >/dev/null 2>&1; then
   msb run --pull never --no-tty --user node --security restricted -e HOME=/home/node ai-sandboxes-claude:local -- claude --version || exit 1
   msb run --pull never --no-tty --user node --security restricted -e HOME=/home/node ai-sandboxes-codex:local -- codex --version || exit 1
   msb volume remove verify-home 2>/dev/null || true

@@ -23,7 +23,11 @@ func fakeEnv(t *testing.T, withMsb, withEgress bool) (*Env, string) {
 
 	os.MkdirAll(filepath.Join(checkout, "config"), 0o755)
 	os.WriteFile(filepath.Join(checkout, "versions.env"), []byte("CODEX_VERSION=0.147.0\n"), 0o644)
-	os.WriteFile(filepath.Join(checkout, "config", "runtime.json"), []byte(`{"shared_state": null}`), 0o644)
+	// Runtime configuration lives in the user config directory, not the
+	// checkout; pin the policy source to an explicit neutral override file so
+	// tests never read (or create) the invoking user's real configuration.
+	runtimeConfig := filepath.Join(t.TempDir(), "runtime.json")
+	os.WriteFile(runtimeConfig, []byte(`{"shared_state": null}`), 0o600)
 
 	if withEgress {
 		dir := filepath.Join(home, ".config", "microvms")
@@ -80,7 +84,7 @@ func fakeEnv(t *testing.T, withMsb, withEgress bool) (*Env, string) {
 	// Match the CLI's resolved default so tests that don't care about the
 	// override still exercise a realistic install path.
 	installDir := filepath.Join(home, ".local", "libexec", "ai-sandboxes")
-	return &Env{Home: home, Checkout: checkout, InstallDir: installDir, Runner: runner}, home
+	return &Env{Home: home, Checkout: checkout, InstallDir: installDir, RuntimeConfig: runtimeConfig, Runner: runner}, home
 }
 
 func checkStatus(checks []Check, name string) string {
@@ -490,16 +494,18 @@ func TestDoctorWrapperPathsWithApostropheAndSpace(t *testing.T) {
 		t.Fatal(err)
 	}
 	os.WriteFile(filepath.Join(checkout, "versions.env"), []byte("CODEX_VERSION=0.147.0\n"), 0o644)
-	os.WriteFile(filepath.Join(checkout, "config", "runtime.json"), []byte(`{"shared_state": null}`), 0o644)
+	runtimeConfig := filepath.Join(t.TempDir(), "runtime.json")
+	os.WriteFile(runtimeConfig, []byte(`{"shared_state": null}`), 0o600)
 
 	installDir := filepath.Join(t.TempDir(), "install 'dir'")
 	bin := installBinary(t, installDir)
 	installRealWrapper(t, home, "claude", checkout, bin)
 
 	env := &Env{
-		Home:       home,
-		Checkout:   checkout,
-		InstallDir: installDir,
+		Home:          home,
+		Checkout:      checkout,
+		InstallDir:    installDir,
+		RuntimeConfig: runtimeConfig,
 		Runner: Runner{
 			LookPath: func(string) (string, error) { return "", errors.New("not found") },
 			Run: func(name string, args ...string) ([]byte, error) {
@@ -639,8 +645,8 @@ func TestDoctorDetectsImageDigestMismatch(t *testing.T) {
 func TestDoctorDetectsSharedStateLabelDrift(t *testing.T) {
 	env, _ := fakeEnv(t, true, true)
 	// runtime.json requests work:4G; image was built with client:8G.
-	if err := os.WriteFile(filepath.Join(env.Checkout, "config", "runtime.json"),
-		[]byte(`{"shared_state":{"id":"work","quota":"4G"}}`), 0o644); err != nil {
+	if err := os.WriteFile(env.RuntimeConfig,
+		[]byte(`{"shared_state":{"id":"work","quota":"4G"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	env.Runner.Run = func(name string, args ...string) ([]byte, error) {
@@ -687,7 +693,7 @@ func TestDoctorDetectsSharedStateLabelDrift(t *testing.T) {
 // image; fail so the operator either rebuilds or updates runtime.json.
 func TestDoctorDetectsSharedStateLabelPresentButRuntimeNone(t *testing.T) {
 	env, _ := fakeEnv(t, true, true)
-	// runtime.json is the default `{"shared_state": null}` from fakeEnv.
+	// runtime.json is the neutral `{"shared_state": null}` from fakeEnv.
 	env.Runner.Run = func(name string, args ...string) ([]byte, error) {
 		switch {
 		case name == "msb" && len(args) > 1 && args[0] == "image" && args[1] == "list":
