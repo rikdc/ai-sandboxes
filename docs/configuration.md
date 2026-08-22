@@ -12,10 +12,14 @@ mode 0700 and seeds any missing file from the checked-in neutral defaults, so
 the flow is:
 
 ```console
-mkdir -p ~/.config/ai-sandboxes   # optional; the installer creates it anyway
+./scripts/install   # creates ~/.config/ai-sandboxes/ and seeds the defaults
 $EDITOR ~/.config/ai-sandboxes/marketplaces.json
-./scripts/build && ./scripts/load-msb
+./scripts/update    # detects the change by digest, rebuilds, reloads
 ```
+
+Initialize before editing: opening a file that does not exist yet would have
+your editor create an empty one, which the installer then treats as existing
+user content and leaves untouched instead of seeding.
 
 `./scripts/update` detects changed configuration by digest and rebuilds and
 reloads automatically, so after the initial install you normally just edit the

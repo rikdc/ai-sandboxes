@@ -406,7 +406,6 @@ final_config_digest=$(ai_sandboxes_config_digest "$config_dir") \
 test "$final_config_digest" = "$start_config_digest" \
   || die 'the configuration changed while updating; re-run ./scripts/update so the recorded digest matches the built artifacts'
 record_config_digest "$final_config_digest"
-record_config_digest "$final_config_digest"
 
 if test "$old_head" = "$new_head"; then
   if test "$repair_mode" = 1; then
