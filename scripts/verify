@@ -148,8 +148,12 @@ for image in ai-sandboxes-claude:local ai-sandboxes-codex:local; do
   fi
 done
 
-if command -v msb >/dev/null 2>&1; then
-  ./scripts/load-msb || exit 1
+# Microsandbox smoke verification consumes the images scripts/load-msb loads;
+# loading happens exactly once per lifecycle, in the caller (scripts/install,
+# scripts/update), never here — re-importing would discard verified state.
+if command -v msb >/dev/null 2>&1 && ! msb image list --quiet 2>/dev/null | grep -Fxq ai-sandboxes-claude:local; then
+  printf 'WARNING: ai-sandboxes images not loaded into Microsandbox; skipping msb smoke verification (run ./scripts/load-msb)\n' >&2
+elif command -v msb >/dev/null 2>&1; then
   msb run --pull never --no-tty --user node --security restricted -e HOME=/home/node ai-sandboxes-claude:local -- claude --version || exit 1
   msb run --pull never --no-tty --user node --security restricted -e HOME=/home/node ai-sandboxes-codex:local -- codex --version || exit 1
   msb volume remove verify-home 2>/dev/null || true

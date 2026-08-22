@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# One-command installation: build and install the ai-sandbox control plane,
-# build the images, verify them, and load them into Microsandbox. Each step
-# delegates to its individual script unchanged; those remain available for
-# maintainers who need to run or re-run a single stage. The Fish wrappers are
-# deliberately not installed here (they are host-shell-specific); run
-# scripts/install-fish-functions separately if you use fish.
+# One-command installation: preflight the host, build and install the
+# ai-sandbox control plane, build the images, load them into Microsandbox,
+# and verify everything. Each step delegates to its individual script
+# unchanged; those remain available for maintainers who need to run or re-run
+# a single stage. The Fish wrappers are deliberately not installed here (they
+# are host-shell-specific); run scripts/install-fish-functions separately if
+# you use fish — the updater refreshes them only after that first opt-in.
 set -o pipefail
 IFS=$'\n\t'
 
@@ -28,10 +29,47 @@ step() {
   exit "$status"
 }
 
+# Preflight every host dependency before mutating anything: a missing tool is
+# a one-line diagnosis here instead of a failure discovered after the binary
+# was replaced, every image was built, and the verification suite ran.
+preflight() {
+  local tool
+  for tool in git go docker msb; do
+    command -v "$tool" >/dev/null 2>&1 || die "prerequisite '$tool' not found; install it before running ./scripts/install"
+  done
+  docker info >/dev/null 2>&1 || die 'docker daemon is not reachable; start Docker and re-run ./scripts/install'
+  docker buildx version >/dev/null 2>&1 || die 'docker buildx plugin not found; scripts/build requires it'
+  case "$(uname -m)" in
+    arm64 | aarch64) ;;
+    *) die "unsupported architecture '$(uname -m)': images are built for arm64" ;;
+  esac
+}
+
+record_state() {
+  # Same reconciliation marker scripts/update maintains: written only after
+  # every step succeeded, so update --check never mistakes this installation
+  # for incomplete state and force-reinstalls (including the fish wrappers
+  # the user declined).
+  local sha state_dir marker tmp
+  sha=$(git rev-parse HEAD 2>/dev/null) || return 0
+  state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/ai-sandboxes"
+  mkdir -p "$state_dir" || die "could not create state directory $state_dir"
+  marker="$state_dir/installed-head"
+  tmp=$(mktemp "$marker.XXXXXX") || die 'could not create temporary marker file'
+  printf '%s\n' "$sha" >"$tmp" || { rm -f "$tmp"; die 'could not write temporary marker file'; }
+  mv -f "$tmp" "$marker" || { rm -f "$tmp"; die "could not update reconciliation marker $marker"; }
+}
+
+preflight || exit $?
+
 step install-ai-sandbox 'build and install the ai-sandbox binary'
 step build 'build base/tools/claude/codex docker images'
-step verify 'verify the images and control plane'
+# load-msb runs before verify so exactly one component imports each image per
+# lifecycle: verify's Microsandbox smoke tests consume the loaded images.
 step load-msb 'load the images into Microsandbox'
+step verify 'verify the control plane and images'
+
+record_state
 
 printf 'installed ai-sandboxes at revision %s\n' "$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 printf 'fish user? run ./scripts/install-fish-functions to install the claude/codex/claude-session wrappers\n'

@@ -18,17 +18,19 @@ Go to build the `ai-sandbox` control plane.
 ./scripts/install
 ```
 
-That runs the full sequence: build and install the control plane binary to
-`~/.local/libexec/ai-sandboxes/ai-sandbox`, build the base/tools/claude/codex
-images, verify them, and load them into Microsandbox. It fails fast when a
-step fails (or when `msb` is missing) and names the individual script to
-re-run. Each step remains available for maintainers:
-`scripts/install-ai-sandbox`, `scripts/build`, `scripts/verify`,
-`scripts/load-msb`.
+That preflights the prerequisites (Git, Go, Docker with a reachable daemon
+and buildx, `msb`), then runs the full sequence: build and install the
+control plane binary to `~/.local/libexec/ai-sandboxes/ai-sandbox`, build the
+base/tools/claude/codex images, load them into Microsandbox once, and verify.
+It fails before mutating anything when a prerequisite is missing, fails fast
+when a step fails, and names the individual script to re-run. Each step
+remains available for maintainers: `scripts/install-ai-sandbox`,
+`scripts/build`, `scripts/load-msb`, `scripts/verify`.
 
 Install the Fish launchers (`claude`, `codex`, and `claude-session`) — this
 one is host-shell-specific, so it is opt-in rather than part of
-`./scripts/install`:
+`./scripts/install`. Running it once marks the wrappers as managed;
+`scripts/update` refreshes them only after that first opt-in:
 
 ```console
 ./scripts/install-fish-functions
@@ -46,7 +48,7 @@ the ai-sandboxes checkout or either installed directory: a launcher somewhere
 a guest agent can also write is one that guest can rewrite, and the next
 invocation would then run with full host access. The wrapper checks for this
 overlap at startup and refuses to run when it finds one. Re-run
-`./scripts/install-fish-functions` after updating ai-sandboxes.
+`./scripts/install-fish-functions` after moving the checkout.
 
 Claude and Codex both use an HTTPS allowlist by default. Create the files
 before first run:

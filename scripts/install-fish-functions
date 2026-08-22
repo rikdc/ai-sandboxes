@@ -116,4 +116,15 @@ write_pass_through_wrapper codex "$fish_functions_dir/codex.fish" \
 write_claude_session_wrapper "$fish_functions_dir/claude-session.fish" \
   || die 'could not write the claude-session wrapper'
 
+# Record that this user manages the Fish wrappers. scripts/update reads this
+# marker and refreshes the wrappers only for users who opted in here; without
+# it a Bash/Zsh user would acquire Fish wrappers on their next update.
+state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/ai-sandboxes"
+mkdir -p "$state_dir" || die "could not create state directory $state_dir"
+marker="$state_dir/fish-wrappers-head"
+head_sha=$(git -C "$repo_root" rev-parse HEAD 2>/dev/null) || head_sha='unknown'
+tmp=$(mktemp "$marker.XXXXXX") || die 'could not create temporary marker file'
+printf '%s\n' "$head_sha" >"$tmp" || { rm -f "$tmp"; die 'could not write temporary marker file'; }
+mv -f "$tmp" "$marker" || { rm -f "$tmp"; die "could not update marker $marker"; }
+
 printf 'Installed ai-sandboxes Fish wrappers into %s (checkout: %s)\n' "$fish_functions_dir" "$repo_root"

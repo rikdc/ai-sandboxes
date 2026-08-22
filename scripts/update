@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Update the locally installed ai-sandboxes checkout to origin/main and refresh
-# what it drives: the locally built images, the installed fish wrappers, and —
-# when present — msb. --check is read-only and suitable for a schedule; the
-# default mode fast-forwards, rebuilds, and reloads.
+# what it drives: the locally built images, the fish wrappers (only for users
+# who opted in via scripts/install-fish-functions), and — when present — msb.
+# --check is read-only and suitable for a schedule; the default mode
+# fast-forwards, rebuilds, and reloads.
 set -o pipefail
 IFS=$'\n\t'
 
@@ -56,7 +57,8 @@ old_head=$(git rev-parse HEAD) || die 'could not resolve HEAD'
 new_head=$(git rev-parse origin/main) || die 'could not resolve origin/main after fetch'
 
 # Reconciliation marker: the SHA of the last commit for which a full update
-# completed successfully (binary + build + wrappers, as required). If a prior
+# completed successfully (binary + build + fish wrappers when the user opted
+# into them). If a prior
 # run fast-forwarded the tree but died before installing (e.g. install-ai-sandbox
 # failed), the marker still points at the pre-merge SHA, so the next run can
 # redo the pending work even though git already reports "up to date".
@@ -188,6 +190,18 @@ if test "$check_mode" = 1; then
   exit 1
 fi
 
+# Fish wrappers are opt-in: they are refreshed only for users who ran
+# scripts/install-fish-functions at least once (marker below), or who already
+# have wrappers from before markers existed (legacy detection via the
+# canonical claude.fish location).
+fish_marker="$state_dir/fish-wrappers-head"
+fish_managed=0
+if test -s "$fish_marker"; then
+  fish_managed=1
+elif test -f "$HOME/.config/fish/functions/claude.fish"; then
+  fish_managed=1
+fi
+
 if test "$old_head" != "$new_head"; then
   printf 'updating %s -> %s\n' "$old_head" "$new_head"
   git merge --ff-only origin/main \
@@ -238,8 +252,10 @@ done <<<"$changed_paths"
 
 if test "$force_all" = 1; then
   need_build=1
-  need_install=1
   need_binary=1
+  if test "$fish_managed" = 1; then
+    need_install=1
+  fi
 fi
 
 if test "$need_binary" = 1; then
@@ -256,8 +272,13 @@ if test "$need_build" = 1; then
 fi
 
 if test "$need_install" = 1; then
-  printf 'reinstalling fish wrappers...\n'
-  ./scripts/install-fish-functions || die 'fish wrapper install failed after updating'
+  if test "$fish_managed" = 0; then
+    printf 'fish wrappers not installed (opt in with ./scripts/install-fish-functions); skipping wrapper refresh\n'
+    need_install=0
+  else
+    printf 'reinstalling fish wrappers...\n'
+    ./scripts/install-fish-functions || die 'fish wrapper install failed after updating'
+  fi
 fi
 
 loaded=0

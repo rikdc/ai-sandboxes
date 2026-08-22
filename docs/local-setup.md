@@ -30,17 +30,20 @@ cd ~/opt/ai-sandboxes
 ./scripts/install
 ```
 
-`scripts/install` runs the full sequence — build and install the
-`ai-sandbox` binary, `build`, `verify`, and `load-msb` — and fails fast when
-a step fails or a prerequisite (Docker, `msb`) is missing, naming the
-individual script to re-run. The steps remain available on their own for
-maintainers who want to run one at a time:
+`scripts/install` preflights every prerequisite (Git, Go, Docker with a
+reachable daemon and buildx, `msb`, arm64 host) before touching anything, then
+runs the full sequence — build and install the `ai-sandbox` binary, `build`,
+`load-msb` (the one place images are imported into Microsandbox), and
+`verify`. It fails fast when a step fails or a prerequisite is missing,
+naming the individual script to re-run, and records successful installation
+state so `scripts/update --check` reports accurately afterwards. The steps
+remain available on their own for maintainers who want to run one at a time:
 
 ```console
 ./scripts/install-ai-sandbox   # build the control plane and install it to ~/.local/libexec/ai-sandboxes/ai-sandbox
 ./scripts/build                # build base/tools/claude/codex images
-./scripts/verify               # verify the images
 ./scripts/load-msb             # load the images into Microsandbox
+./scripts/verify               # verify the images (consumes the loaded msb images)
 ```
 
 The Fish wrappers are host-shell-specific and deliberately not part of
@@ -50,9 +53,10 @@ The Fish wrappers are host-shell-specific and deliberately not part of
 ./scripts/install-fish-functions   # install the claude/codex/claude-session wrappers
 ```
 
-`scripts/load-msb` is only meaningful if `msb` is installed. The wrappers also
-assume fish; re-run `scripts/install-fish-functions` after any update that
-changes `shell/**`.
+`./scripts/install-fish-functions` marks the wrappers as managed; after that
+first opt-in, `scripts/update` refreshes them automatically. If you never run
+it, updates leave your Bash/Zsh setup untouched. The wrappers also assume
+fish; re-run `scripts/install-fish-functions` after moving the checkout.
 
 If you plan to use `ai-sandbox codex login` (Codex browser sign-in),
 authorize a host SSH key with `msb` once:

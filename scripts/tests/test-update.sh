@@ -63,8 +63,12 @@ err_log="$mockdir/err.log"
 head_state="$mockdir/head"
 
 state_dir="$mockdir/state"
-mkdir -p "$state_dir"
+home="$mockdir/home"
+mkdir -p "$state_dir" "$home"
 export XDG_STATE_HOME="$state_dir"
+# Isolate the legacy-wrapper probe ($HOME/.config/fish/functions/claude.fish)
+# from whatever the invoking user happens to have installed.
+export HOME="$home"
 
 export MOCK_GIT_LOG="$git_log" MOCK_UPDATE_LOG="$op_log" MOCK_GIT_HEAD_STATE="$head_state"
 export MOCK_GIT_REMOTES MOCK_GIT_BRANCH MOCK_GIT_STATUS MOCK_GIT_FETCH_STATUS \
@@ -269,6 +273,12 @@ run_update() {
   if test "${MOCK_KEEP_MARKER:-0}" != 1; then
     rm -f "$state_dir/ai-sandboxes/installed-head"
   fi
+  rm -f "$state_dir/ai-sandboxes/fish-wrappers-head"
+  # Wrapper management is opt-in; scenarios default to a user who opted in.
+  if test "${MOCK_FISH_MANAGED:-1}" = 1; then
+    mkdir -p "$state_dir/ai-sandboxes"
+    printf 'managed\n' >"$state_dir/ai-sandboxes/fish-wrappers-head"
+  fi
   if test -n "${MOCK_SEED_MARKER:-}"; then
     mkdir -p "$state_dir/ai-sandboxes"
     printf '%s\n' "$MOCK_SEED_MARKER" >"$state_dir/ai-sandboxes/installed-head"
@@ -419,6 +429,28 @@ expect_status 0 'default update without shell changes'
 expect_op_sequence 'default update without shell changes' "$mockdir/scenario9.op"
 grep -Fq 'install-fish-functions' "$op_log" && fail 'install-fish-functions must only run when shell/** changes'
 
+# 9b. Fish wrappers are opt-in: without the management marker and without a
+#     legacy claude.fish, even shell/** changes must not install wrappers —
+#     a Bash/Zsh user never acquires them behind their back.
+MOCK_FISH_MANAGED=0
+MOCK_GIT_CHANGED_PATHS=$'versions.env\nshell/fish/trusted/guard.fish'
+run_update "$allpath"
+expect_status 0 'update without opt-in fish'
+grep -Fq 'install-fish-functions' "$op_log" \
+  && fail 'wrappers must not be installed for users who never opted in'
+expect_stdout_contains 'skipping wrapper refresh' 'opt-in fish skip notice'
+
+# 9c. Legacy migration: no marker, but wrappers from before markers existed
+#     are still managed and get refreshed.
+mkdir -p "$home/.config/fish/functions"
+printf '# legacy\n' >"$home/.config/fish/functions/claude.fish"
+run_update "$allpath"
+expect_status 0 'legacy fish wrappers refreshed'
+grep -Fq 'install-fish-functions' "$op_log" || fail 'legacy wrappers must be refreshed'
+rm -f "$home/.config/fish/functions/claude.fish"
+MOCK_FISH_MANAGED=1
+MOCK_GIT_CHANGED_PATHS=$'versions.env\nconfig/tools.json\nimages/claude/entrypoint.sh'
+
 # 10. Default mode, msb and docker both absent: build and wrappers still run,
 #     load-msb is skipped, and missing docker is a warning, not a failure.
 MOCK_GIT_CHANGED_PATHS=$'versions.env\nshell/fish/trusted/guard.fish'
@@ -554,6 +586,24 @@ expect_stdout_contains 'marker missing: reconciling install state' 'missing mark
 expect_stdout_contains 'reconciled install to' 'missing marker summary'
 expect_stderr_contains 'docker not found' 'missing marker missing docker warning'
 MOCK_GIT_NEW_HEAD="$new_head"
+
+# 18b. Missing marker on a user who never opted into Fish: reconciliation
+#      forces the binary and build but must not install wrappers.
+MOCK_GIT_NEW_HEAD="$old_head"
+MOCK_SEED_MARKER=''
+MOCK_FISH_MANAGED=0
+cat >"$mockdir/scenario18b.op" <<'EOF'
+install-ai-sandbox
+build
+EOF
+run_update "$gitpath"
+expect_status 0 'force-all without opt-in fish'
+expect_op_sequence 'force-all without opt-in fish operations' "$mockdir/scenario18b.op"
+grep -Fq 'install-fish-functions' "$op_log" \
+  && fail 'force-all must not install wrappers for users who never opted in'
+expect_stdout_contains 'skipping wrapper refresh' 'force-all fish skip notice'
+MOCK_GIT_NEW_HEAD="$new_head"
+MOCK_FISH_MANAGED=1
 
 # 19. Invalid marker (non-hex) with HEAD at origin/main: treated as missing.
 MOCK_GIT_NEW_HEAD="$old_head"
