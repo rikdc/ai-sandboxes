@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# One-command installation: build and install the ai-sandbox control plane,
+# build the images, verify them, and load them into Microsandbox. Each step
+# delegates to its individual script unchanged; those remain available for
+# maintainers who need to run or re-run a single stage. The Fish wrappers are
+# deliberately not installed here (they are host-shell-specific); run
+# scripts/install-fish-functions separately if you use fish.
+set -o pipefail
+IFS=$'\n\t'
+
+name=$(basename "$0")
+
+die() {
+  printf '%s: %s\n' "$name" "$*" >&2
+  exit 1
+}
+
+repo_root=$(cd "$(dirname "$0")/.." && pwd) || die 'could not resolve repository root'
+cd "$repo_root" || die "could not cd to $repo_root"
+
+step() {
+  local script=$1 description=$2 status
+  printf '==> %s (%s)\n' "$script" "$description"
+  "./scripts/$script" && return
+  status=$?
+  printf '%s: %s failed; fix the problem and re-run ./scripts/install or scripts/%s directly\n' \
+    "$name" "$script" "$script" >&2
+  exit "$status"
+}
+
+step install-ai-sandbox 'build and install the ai-sandbox binary'
+step build 'build base/tools/claude/codex docker images'
+step verify 'verify the images and control plane'
+step load-msb 'load the images into Microsandbox'
+
+printf 'installed ai-sandboxes at revision %s\n' "$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+printf 'fish user? run ./scripts/install-fish-functions to install the claude/codex/claude-session wrappers\n'

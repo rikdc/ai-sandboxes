@@ -11,17 +11,24 @@ needs it.
 
 ## Get started
 
-Requires Apple Silicon, Docker Desktop, Git, Fish, Microsandbox (`msb`), and
+Requires Apple Silicon, Docker Desktop, Git, Microsandbox (`msb`), and
 Go to build the `ai-sandbox` control plane.
 
 ```console
-./scripts/install-ai-sandbox   # build the control plane and install it to ~/.local/libexec/ai-sandboxes/ai-sandbox
-./scripts/build
-./scripts/verify
-./scripts/load-msb
+./scripts/install
 ```
 
-Install the Fish launchers (`claude`, `codex`, and `claude-session`):
+That runs the full sequence: build and install the control plane binary to
+`~/.local/libexec/ai-sandboxes/ai-sandbox`, build the base/tools/claude/codex
+images, verify them, and load them into Microsandbox. It fails fast when a
+step fails (or when `msb` is missing) and names the individual script to
+re-run. Each step remains available for maintainers:
+`scripts/install-ai-sandbox`, `scripts/build`, `scripts/verify`,
+`scripts/load-msb`.
+
+Install the Fish launchers (`claude`, `codex`, and `claude-session`) — this
+one is host-shell-specific, so it is opt-in rather than part of
+`./scripts/install`:
 
 ```console
 ./scripts/install-fish-functions
@@ -59,7 +66,7 @@ From a project directory, run `claude` or `codex`.
 - Choose optional tools in `config/tools.json`; their allowed sources are in `config/tool-catalog.json`.
 - Configure optional shared state in `config/runtime.json` (see `config/runtime.example.json`).
 - Keep personal or team session configuration in a separate repository as an explicit `session.json`, then run `claude-session --profile /absolute/path/to/session.json` from the project you want Claude to edit. See [session images](docs/session-images.md).
-- After changing configuration or versions, run the build commands again.
+- After changing configuration or versions, run `./scripts/install` (or the individual build/verify/load commands) again.
 
 See [configuration details](docs/configuration.md) and [Claude security and recovery](docs/claude-security.md) for the operational reference.
 

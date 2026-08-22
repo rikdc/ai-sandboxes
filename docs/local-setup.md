@@ -27,9 +27,26 @@ move it, re-run `scripts/install-fish-functions`.
 ```console
 git clone git@github.com:rikdc/ai-sandboxes.git ~/opt/ai-sandboxes
 cd ~/opt/ai-sandboxes
-./scripts/build          # build base/tools/claude/codex images
-./scripts/verify         # verify the images
-./scripts/load-msb       # load the images into Microsandbox
+./scripts/install
+```
+
+`scripts/install` runs the full sequence — build and install the
+`ai-sandbox` binary, `build`, `verify`, and `load-msb` — and fails fast when
+a step fails or a prerequisite (Docker, `msb`) is missing, naming the
+individual script to re-run. The steps remain available on their own for
+maintainers who want to run one at a time:
+
+```console
+./scripts/install-ai-sandbox   # build the control plane and install it to ~/.local/libexec/ai-sandboxes/ai-sandbox
+./scripts/build                # build base/tools/claude/codex images
+./scripts/verify               # verify the images
+./scripts/load-msb             # load the images into Microsandbox
+```
+
+The Fish wrappers are host-shell-specific and deliberately not part of
+`./scripts/install`; install them separately:
+
+```console
 ./scripts/install-fish-functions   # install the claude/codex/claude-session wrappers
 ```
 
@@ -54,6 +71,8 @@ Migrating an existing checkout already on disk is just `mv`, then running
 
 ## Day to day
 
+- `./scripts/install` — run everything: binary install, image build,
+  verification, and Microsandbox reload.
 - `./scripts/build` — rebuild all images after changing `config/` or
   `versions.env`.
 - `./scripts/verify` — the ARM64 verification the same code runs in CI.
