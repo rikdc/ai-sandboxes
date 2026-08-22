@@ -137,8 +137,9 @@ overrides, malformed names/versions, and duplicate package names within
 `apt` or within `npm`. Profiles also have package-count, field-length, and
 estimated-size limits. `tools` validation is delegated to
 `scripts/tools/validate-selection.sh` — the same script the base image's
-own `config/tools.json`/`config/runtime.json` mechanism already uses — so
-the two mechanisms cannot drift apart.
+own user-configuration (`~/.config/ai-sandboxes/tools.json` and
+`runtime.json`) mechanism already uses — so the two mechanisms cannot drift
+apart.
 
 **Non-goal: no ingress fields.** This schema has no `ports` field and
 none is planned. A session profile cannot declare a LAN or public bind,
@@ -202,8 +203,9 @@ piggyback on msb image labels. For session images, `resolve-image.sh`
 prints a small JSON descriptor with the shared-state request, computed from
 the already-validated host-side profile snapshot, and `claude-session`
 builds the shared-state mount args from that. For base `claude`/`codex`
-images, the launcher reads shared state from the trusted checkout's
-`config/runtime.json` and verifies the digest match before applying it.
+images, the launcher reads shared state from the user configuration's
+`runtime.json` (outside the checkout) and verifies the digest match before
+applying it.
 
 ### 4. Run
 
@@ -255,7 +257,7 @@ implemented — see Limitations.
 ### Curated tools
 
 `tools` entries install through the exact chain the base image's
-`config/tools.json`/`config/runtime.json` mechanism uses:
+user-configuration (`~/.config/ai-sandboxes/`) mechanism uses:
 `scripts/tools/install-selected.sh` (phase `runtime`) dispatches to one of
 several adapter installers — currently `install-github-release-tar.sh`,
 `install-https-tar.sh`, and `install-awscli-zip.sh` — all copied
