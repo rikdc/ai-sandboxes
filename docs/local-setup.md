@@ -130,3 +130,18 @@ publishes an immutable GitHub Release
 (`v<BASE_VERSION>+codex-<X>-claude-<Y>`) carrying the verified commit — a
 record, not something a local image pulls from. Local images are always built
 from your checkout via `./scripts/build`.
+
+### Control-plane binary distribution
+
+Each such release also carries a `darwin/arm64` `ai-sandbox` binary,
+cross-compiled on Linux by `scripts/build-release`
+(`ai-sandbox-darwin-arm64.tar.gz` plus a SHA-256 checksum). Building and
+testing the portable Go logic requires no Apple Silicon; per-PR CI
+cross-compiles it on `ubuntu-latest`, so a Linux-only machine can keep the
+artifact path green.
+
+The complete Apple Silicon smoke test — installing from the release tarball
+and running Claude Code and Codex end to end through Microsandbox — is
+performed manually on the supported host before a release is considered done.
+A self-hosted Apple Silicon runner can automate this later if outside
+contributors arrive.
