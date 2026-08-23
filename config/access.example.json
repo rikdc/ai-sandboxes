@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "destinations": [
+    {
+      "alias": "nas",
+      "host": "nas.home.lan",
+      "port": 22,
+      "user": "claude",
+      "host_keys": ["nas.home.lan ssh-ed25519 AAAAC3NzaC1lZDI1NTE1AAAAI..."]
+    }
+  ]
+}

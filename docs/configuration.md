@@ -77,6 +77,59 @@ For a standalone launcher or diagnostic, set `AI_SANDBOX_RUNTIME_CONFIG` to an a
 
 Shared state is visible to every image that opts into the same profile. It does not grant host filesystem or network access, but its contents are untrusted input. Keep credentials out of it. Remove the named volume with `msb volume remove` to reset it; removal is irreversible.
 
+## SSH access profiles
+
+`ai-sandbox run claude --access <name>` (and `ai-sandbox plan ... --access
+<name>`) mounts one dedicated, host-owned SSH key directory read-only into the
+guest at `/run/ai-sandbox/ssh`, allows exactly the listed destinations through
+the deny-by-default network, and injects `AI_SANDBOX_SSH_CONFIG` so plain
+`ssh <alias>` inside the session uses a hardened configuration.
+
+Two files define an access profile, both under
+`${XDG_CONFIG_HOME:-$HOME/.config}/ai-sandboxes/`:
+
+1. The profile `access/<name>.json` — copy the shape from
+   `config/access.example.json`:
+
+   ```json
+   {
+     "schema_version": 1,
+     "destinations": [
+       {
+         "alias": "nas",
+         "host": "nas.home.lan",
+         "port": 22,
+         "user": "claude",
+         "host_keys": ["nas.home.lan ssh-ed25519 AAAA..."]
+       }
+     ]
+   }
+   ```
+
+2. The key directory `access/keys/<name>/` — mode 0700, holding
+   `id_ed25519` (mode 0600) and `id_ed25519.pub`. Create the key outside any
+   mounted location:
+
+   ```console
+   mkdir -p ~/.config/ai-sandboxes/access/keys/homelab
+   chmod 700 ~/.config/ai-sandboxes/access/keys/homelab
+   ssh-keygen -t ed25519 -f ~/.config/ai-sandboxes/access/keys/homelab/id_ed25519 -C claude-homelab
+   chmod 600 ~/.config/ai-sandboxes/access/keys/homelab/id_ed25519*
+   ```
+
+Before each run the control plane rewrites `config` and `known_hosts` inside
+the key directory from the profile; edit the profile, not those files. The
+profile requires pinned `host_keys` lines (from
+`ssh-keyscan nas.home.lan`), and the launcher refuses anything that would
+defeat them: unknown JSON fields, unpinned destinations, symlinked key
+directories pointing outside `access/keys/`, loose permissions, or a workspace
+overlapping the key directory.
+
+The remote account must be distinct from your own and restricted on the
+server side — see [the security notes](claude-security.md#ssh-access) for why,
+and what this design does not protect against. Short-lived Vault-signed
+certificates replacing the static key are planned as a follow-up.
+
 ## Versions
 
 `versions.env` pins the runtime and agent versions and image digests. VM resource quotas (CPUs, memory, root/workspace/home) live in `internal/config/config.go` as explicit per-agent values; they are deliberate Go configuration so the launcher cannot silently inherit a missing quota from a shell default. Use `./scripts/build` rather than invoking Docker Bake directly: the script loads this file and validates the selected configuration.

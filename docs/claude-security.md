@@ -45,6 +45,37 @@ outside the mounted project and do not put credentials, private registry URLs,
 or arbitrary installer commands in them. See [session images](session-images.md)
 for the supported schema and shared-state behavior.
 
+## SSH access
+
+`ai-sandbox run --access <name>` gives a session outbound SSH to exact
+destinations: one `allow@host:tcp:<port>` network rule per profile entry, the
+matching key directory mounted read-only at `/run/ai-sandbox/ssh`, and a
+generated ssh configuration that pins `known_hosts`, forbids agent and port
+forwarding, and disables password authentication. Unlisted hosts and ports
+remain unreachable, and `ai-sandbox plan --access <name>` shows the intended
+destinations without touching anything.
+
+Understand what this design does and does not protect:
+
+- The guest can **read** the private key. Read-only mounting prevents
+  modification, not exfiltration. Assume any session with `--access` can copy
+  the credential.
+- Because of that, the remote account must be distinct from your own, with a
+  tightly restricted `authorized_keys` entry (`from="...",` `command="..."`,
+  `no-agent-forwarding`, `no-port-forwarding`) or a service account limited to
+  specific operations. Never point an access profile at an account whose shell
+  you could not afford to lose.
+- The server must pin the key: add the profile's public key to that account's
+  `authorized_keys` only — never your own.
+- If the key may have been copied during a session, remove it from
+  `authorized_keys` on the server and delete the key directory.
+
+The key directory must live under
+`~/.config/ai-sandboxes/access/keys/<name>/` (mode 0700, key mode 0600); the
+launcher refuses symlinked directories that resolve elsewhere, so `~/.ssh`
+cannot be mounted even by pointing a symlink at it. Short-lived Vault-signed
+certificates are planned as a follow-up so a copied key expires on its own.
+
 ## Working safely
 
 The project mount is writable. Claude can change or delete every file in it, including ignored files. Keep secrets outside the project, commit or stash important work before autonomous sessions, and review the resulting Git diff. Authenticate with narrowly scoped credentials where possible.
