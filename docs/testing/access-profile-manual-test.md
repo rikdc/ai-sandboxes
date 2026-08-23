@@ -2,16 +2,8 @@
 
 End-to-end verification of `--access` against a real SSH server you control.
 The automated suite proves mount, environment, and network-boundary behavior
-without a server (`go test ./...`), and a gated integration test drives a full
-SSH round-trip through a throwaway sshd VM:
-
-```sh
-AI_SANDBOX_MSB_INTEG=1 \
-  go test -tags integration -run TestAccessProfileEndToEnd ./cmd/ai-sandbox
-```
-
-This walk-through adds what automation cannot: a round-trip to a machine you
-designate, on your own hardware.
+without a server (`go test ./...`); this walk-through covers the full SSH
+round-trip, which needs a machine you designate on your own hardware.
 
 ## Prerequisites
 
