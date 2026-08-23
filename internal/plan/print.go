@@ -22,6 +22,10 @@ func Print(w io.Writer, p *RuntimePlan) {
 	if p.SharedState != nil {
 		f("shared state", p.SharedState.Mount)
 	}
+	if p.AccessMount != "" {
+		f("access mount", p.AccessMount)
+		f("access config mount", p.AccessConfigMount)
+	}
 	var resources []string
 	if p.Resources.CPUs > 0 {
 		resources = append(resources, fmt.Sprintf("cpus=%d", p.Resources.CPUs))
@@ -43,6 +47,9 @@ func Print(w io.Writer, p *RuntimePlan) {
 	}
 	for _, rule := range p.Network.Rules {
 		f("  rule", rule)
+	}
+	if len(p.DnsArgs) > 0 {
+		f("dns args", strings.Join(p.DnsArgs, " "))
 	}
 	if len(p.Environment) > 0 {
 		f("environment", strings.Join(p.Environment, " "))

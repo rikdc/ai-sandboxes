@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "host": "home1.lan.example",
+  "port": 22,
+  "user": "claude",
+  "host_keys": ["home1.lan.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEqqWmcHasScOzNO2MFtiFY/x1M1WwoTHHS/wb7jISq"]
+}

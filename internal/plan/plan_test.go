@@ -266,6 +266,87 @@ func TestSharedStateFromLabels(t *testing.T) {
 	}
 }
 
+func TestResolveAccessPlan(t *testing.T) {
+	in := resolveInput("claude", nil)
+	in.AccessMount = "/Users/me/.config/ai-sandboxes/access/keys/homelab:/run/ai-sandbox/ssh:ro"
+	in.AccessConfigMount = "/Users/me/.config/ai-sandboxes/access/keys/homelab/config:/etc/ssh/ssh_config.d/99-ai-sandbox-access.conf:ro"
+	in.AccessRules = []string{"allow@home1.lan.example:tcp:22"}
+	rulesBefore := append([]string{}, in.Network.Rules...)
+
+	p, err := Resolve(mustConfig(t, "claude"), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.AccessMount == "" {
+		t.Error("access mount not set on the plan")
+	}
+	if len(p.Environment) != 2 {
+		t.Errorf("environment = %v, want only the agent's own environment (no access env)", p.Environment)
+	}
+	wantRules := append(rulesBefore, "allow@home1.lan.example:tcp:22")
+	if !reflect.DeepEqual(p.Network.Rules, wantRules) {
+		t.Errorf("rules = %v, want %v", p.Network.Rules, wantRules)
+	}
+	// The caller's input slice must not be mutated by Resolve.
+	if !reflect.DeepEqual(in.Network.Rules, rulesBefore) {
+		t.Errorf("input network rules mutated: %v", in.Network.Rules)
+	}
+
+	argv := p.MsbArgv()
+	wantFlags := [][2]string{
+		{"--mount-dir", in.AccessMount},
+		{"--mount-file", in.AccessConfigMount},
+	}
+	for _, want := range wantFlags {
+		found := false
+		for i := 0; i+1 < len(argv); i++ {
+			if argv[i] == want[0] && argv[i+1] == want[1] {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("msb argv missing %s %s: %v", want[0], want[1], argv)
+		}
+	}
+
+	// DNS flags are appended after the network flags when provided.
+	in.DnsArgs = []string{"--dns-nameserver", "192.0.2.13", "--no-dns-rebind-protection"}
+	p3, err := Resolve(mustConfig(t, "claude"), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv3 := p3.MsbArgv()
+	dnsStart := -1
+	netEnd := -1
+	for i, a := range argv3 {
+		switch a {
+		case "--dns-nameserver":
+			if dnsStart < 0 {
+				dnsStart = i
+			}
+		case "--net-rule":
+			netEnd = i
+		}
+	}
+	if dnsStart < 0 || dnsStart < netEnd {
+		t.Errorf("DNS flags missing or not after the network flags: %v", argv3)
+	}
+
+	// Public egress drops the per-destination rules rather than carrying
+	// them silently.
+	in2 := resolveInput("claude", nil)
+	in2.Network = Network{Public: true}
+	in2.AccessRules = []string{"allow@home1.lan.example:tcp:22"}
+	p2, err := Resolve(mustConfig(t, "claude"), in2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p2.Network.Public || len(p2.Network.Rules) != 0 {
+		t.Errorf("public network with access rules = %+v", p2.Network)
+	}
+}
+
 func TestResolveNetwork(t *testing.T) {
 	dir := t.TempDir()
 	egress := dir + "/claude-egress"

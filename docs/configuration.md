@@ -77,6 +77,81 @@ For a standalone launcher or diagnostic, set `AI_SANDBOX_RUNTIME_CONFIG` to an a
 
 Shared state is visible to every image that opts into the same profile. It does not grant host filesystem or network access, but its contents are untrusted input. Keep credentials out of it. Remove the named volume with `msb volume remove` to reset it; removal is irreversible.
 
+## SSH access profiles
+
+`ai-sandbox run claude --access <name>` (and `ai-sandbox plan ... --access
+<name>`) mounts one dedicated, host-owned SSH key directory read-only into the
+guest at `/run/ai-sandbox/ssh`, allows exactly the profile's destination
+through the deny-by-default network, and wires plain `ssh <name>` inside the
+session to a hardened configuration by mounting the generated config at
+`/etc/ssh/ssh_config.d/99-ai-sandbox-access.conf` — a stock Debian include
+location, so every ssh invocation picks it up.
+
+A profile pins exactly one destination: one host, one account, one port. To
+reach several machines, create one access profile per machine. Two files
+define an access profile, both under
+`${XDG_CONFIG_HOME:-$HOME/.config}/ai-sandboxes/`:
+
+1. The profile `access/<name>.json` — copy the shape from
+   `config/access.example.json`. The profile name is the guest-side ssh alias,
+   so this file is reachable as `ssh homelab`:
+
+   ```json
+   {
+     "schema_version": 1,
+     "host": "home1.lan.example",
+     "port": 22,
+     "user": "claude",
+     "host_keys": ["home1.lan.example ssh-ed25519 AAAA..."]
+   }
+   ```
+
+2. The key directory `access/keys/<name>/` — mode 0700, holding
+   `id_ed25519` (mode 0600) and `id_ed25519.pub`. Create the key outside any
+   mounted location:
+
+   ```console
+   mkdir -p ~/.config/ai-sandboxes/access/keys/homelab
+   chmod 700 ~/.config/ai-sandboxes/access/keys/homelab
+   ssh-keygen -t ed25519 -f ~/.config/ai-sandboxes/access/keys/homelab/id_ed25519 -C claude-homelab
+   chmod 600 ~/.config/ai-sandboxes/access/keys/homelab/id_ed25519*
+   ```
+
+Before each run the control plane rewrites `config` and `known_hosts` inside
+the key directory from the profile; edit the profile, not those files. The
+profile requires pinned `host_keys` lines (from
+`ssh-keyscan home1.lan.example` — verify the fingerprint through an independent
+trusted channel before trusting it; the scan itself authenticates nothing),
+and the launcher refuses anything that would defeat them: unknown JSON fields,
+unpinned destinations, malformed or mismatched host-key lines, symlinked key
+directories pointing outside `access/keys/`, loose permissions, or a workspace
+overlapping the key directory.
+
+Access runs also adjust guest DNS so internal names resolve. The launcher
+discovers the host's upstream resolvers (System Configuration on macOS,
+`/etc/resolv.conf` elsewhere) and pins them with `--dns-nameserver`, because
+Microsandbox's own auto-discovery is not reliable on every boot and internal
+zones (`.lan`, split-horizon corporate names) exist nowhere else. It also
+passes `--no-dns-rebind-protection`: rebind protection drops answers pointing
+at private RFC1918 addresses, which is what every LAN destination resolves to.
+This changes DNS behavior for the whole session, in both network modes:
+public egress removes the destination restriction but does not make internal
+names resolvable, so the pinning applies there too (each pinned resolver also
+gets an explicit DNS allow rule under deny-by-default networking). The
+trade-off is deliberate and scoped to `--access`.
+
+The SSH connection originates in the guest VM. With the pinned resolvers,
+LAN-only names your host resolves should resolve in the guest too; an IPv4
+literal always works as a fallback. For a server on a non-standard port,
+collect its host key with `ssh-keyscan -p <port> <host>` and set `port` in the
+profile — the launcher renders the known_hosts selector as `<host>` for port
+22 and `[<host>]:<port>` otherwise, so you never write the selector yourself.
+
+The remote account must be distinct from your own and restricted on the
+server side — see [the security notes](claude-security.md#ssh-access) for why,
+what pinned host keys do and do not protect against, and how to revoke a
+credential you suspect was copied.
+
 ## Versions
 
 `versions.env` pins the runtime and agent versions and image digests. VM resource quotas (CPUs, memory, root/workspace/home) live in `internal/config/config.go` as explicit per-agent values; they are deliberate Go configuration so the launcher cannot silently inherit a missing quota from a shell default. Use `./scripts/build` rather than invoking Docker Bake directly: the script loads this file and validates the selected configuration.
