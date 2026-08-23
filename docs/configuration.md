@@ -134,9 +134,11 @@ Microsandbox's own auto-discovery is not reliable on every boot and internal
 zones (`.lan`, split-horizon corporate names) exist nowhere else. It also
 passes `--no-dns-rebind-protection`: rebind protection drops answers pointing
 at private RFC1918 addresses, which is what every LAN destination resolves to.
-This changes DNS behavior for the whole session; public-egress runs keep
-Microsandbox's defaults — the trade-off is deliberate and scoped to
-`--access`.
+This changes DNS behavior for the whole session, in both network modes:
+public egress removes the destination restriction but does not make internal
+names resolvable, so the pinning applies there too (each pinned resolver also
+gets an explicit DNS allow rule under deny-by-default networking). The
+trade-off is deliberate and scoped to `--access`.
 
 The SSH connection originates in the guest VM. With the pinned resolvers,
 LAN-only names your host resolves should resolve in the guest too; an IPv4

@@ -6,7 +6,7 @@ without a server (`go test ./...`), and a gated integration test drives a full
 SSH round-trip through a throwaway sshd VM:
 
 ```sh
-AI_SANDBOX_MSB_INTEG=1 AI_SANDBOX_ACCESS_INTEG_SSH=1 \
+AI_SANDBOX_MSB_INTEG=1 \
   go test -tags integration -run TestAccessProfileEndToEnd ./cmd/ai-sandbox
 ```
 

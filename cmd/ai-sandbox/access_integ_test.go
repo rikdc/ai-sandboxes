@@ -21,10 +21,11 @@ import (
 // against real Microsandbox: the control plane resolves an access profile,
 // materializes its ssh config and pinned known_hosts, and launches a VM whose
 // guest sees the credential directory read-only, gets the hardened ssh
-// configuration through the system-wide include, resolves the destination via
-// the pinned host resolvers, authenticates with the dedicated key against a
-// live sshd stand-in, rejects a tampered pinned host key, cannot reach an
-// unlisted port, and exits successfully.
+// configuration through the system-wide include, resolves the destination's
+// hostname through the pinned host resolver (a dnsmasq inside the stand-in
+// VM), authenticates with the dedicated key against a live sshd stand-in,
+// rejects a tampered pinned host key, cannot reach an unlisted port even
+// though it serves traffic, and exits successfully.
 //
 // Run with:
 //
@@ -64,10 +65,20 @@ func TestAccessProfileEndToEnd(t *testing.T) {
 	// The live destination must exist (and have contributed its address and
 	// host key to the profile) before executeRun materializes config and
 	// known_hosts from the profile.
-	serverName, serverIP, hostKey := startSSHServerVM(t, filepath.Join(keyDir, "id_ed25519.pub"))
+	const dnsName = "sshd.access-integ.test"
+	serverName, serverIP, hostKey := startSSHServerVM(t, dnsName,
+		filepath.Join(keyDir, "id_ed25519.pub"))
 
 	writeProfile(t, filepath.Join(configDir, "access", "homelab.json"),
-		serverIP, 22, "claude", hostKey)
+		dnsName, 22, "claude", hostKey)
+
+	// Resolver override: pin the stand-in VM's dnsmasq as the only "host"
+	// resolver, so --dns-nameserver carries an address we control and the
+	// guest must actually resolve dnsName through it.
+	resolvConf := filepath.Join(tempDirUnderHome(t), "resolv.conf")
+	if err := os.WriteFile(resolvConf, []byte("nameserver "+serverIP+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	home := tempDirUnderHome(t)
 	egressDir := filepath.Join(home, ".config", "microvms")
@@ -82,6 +93,7 @@ func TestAccessProfileEndToEnd(t *testing.T) {
 	e := currentEnv()
 	e.cwd = project
 	e.home = home
+	e.resolvConfPath = resolvConf
 	baseGetenv := e.getenv
 	e.getenv = func(k string) string {
 		if k == "AI_SANDBOX_CONFIG_DIR" {
@@ -118,7 +130,7 @@ func TestAccessProfileEndToEnd(t *testing.T) {
 	resolverIP := flagValue(argv, "--dns-nameserver")
 
 	sandbox := fmt.Sprintf("ai-sandbox-access-integ-%d", time.Now().Unix())
-	launchAccessSandbox(t, sandbox, p, accessProbeScript(serverIP, resolverIP))
+	launchAccessSandbox(t, sandbox, p, accessProbeScript(dnsName, serverIP, resolverIP))
 
 	// The probe runs as the sandbox's main process (the only place the
 	// injected environment exists; `msb exec` sessions do not inherit it)
@@ -158,10 +170,11 @@ func flagValue(argv []string, flag string) string {
 // read-only, bare `ssh homelab` resolves through the system-wide include with
 // the hardened options, guest DNS uses the pinned host resolver, the pinned
 // key authenticates against the live server, a tampered pinned host key is
-// rejected, an unlisted port stays unreachable, and the script exits zero.
-// serverIP is the destination the profile pins; resolverIP is the pinned DNS
-// upstream from the plan argv.
-func accessProbeScript(serverIP, resolverIP string) string {
+// rejected, an unlisted port stays unreachable even though it serves traffic,
+// and the script exits zero. dnsName is the hostname the profile pins;
+// serverIP is the address the pinned resolver maps it to; resolverIP is the
+// pinned DNS upstream from the plan argv.
+func accessProbeScript(dnsName, serverIP, resolverIP string) string {
 	return fmt.Sprintf(`
 set -eu
 echo "user=$(id -un)"
@@ -179,7 +192,15 @@ for want in "^user claude$" "^hostname %s$" "^port 22$" "^identityfile .*/run/ai
 done
 # Guest DNS must point at the pinned host resolver.
 grep -q "^nameserver %s$" /etc/resolv.conf || { echo "RESOLVER NOT PINNED"; cat /etc/resolv.conf; exit 1; }
-# The pinned key authenticates end to end.
+# The pinned resolver must actually answer: the profile pins a name, not an
+# address, so every later step depends on this lookup succeeding.
+got="$(getent hosts %s || true)"
+case "$got" in
+  "%s "*) ;;
+  *) echo "DNS RESOLUTION FAILED"; echo "got: $got"; exit 1 ;;
+esac
+# The pinned key authenticates end to end (the HostName above resolves
+# through the pinned resolver, then the key matches the pinned entry).
 if ! ssh -o BatchMode=yes homelab true 2>/tmp/ssh-ok.err; then
   echo "SSH KEY AUTH FAILED"; cat /tmp/ssh-ok.err; exit 1
 fi
@@ -188,26 +209,30 @@ fi
 cp /run/ai-sandbox/ssh/known_hosts /tmp/tampered_known_hosts
 sed -i 's/AAAAC3NzaC1lZDI1NTE5AAAAI/AAAAC3NzaC1lZDI1NTE5AAAAB/' /tmp/tampered_known_hosts
 if ssh -o BatchMode=yes -o UserKnownHostsFile=/tmp/tampered_known_hosts \
-    -o StrictHostKeyChecking=yes -p 22 claude@%s true 2>/tmp/ssh-tamper.err; then
+    -o StrictHostKeyChecking=yes homelab true 2>/tmp/ssh-tamper.err; then
   echo "TAMPERED HOST KEY ACCEPTED"; exit 1
 fi
 grep -qi "host key verification failed" /tmp/ssh-tamper.err || { echo "UNEXPECTED TAMPER ERROR"; cat /tmp/ssh-tamper.err; exit 1; }
 # A port outside the exact allow@host:tcp:22 rule stays unreachable. The
-# decoy listener on 8080 makes this a network-boundary result, not a closed
-# port.
+# decoy on 8080 serves real HTTP responses, so a success here would prove
+# the network boundary failed rather than that nothing was listening.
 if curl -sS --connect-timeout 5 http://%s:8080/ >/dev/null 2>&1; then
   echo "UNLISTED PORT REACHABLE"; exit 1
 fi
 echo PROBE-OK
-`, serverIP, resolverIP, serverIP, serverIP)
+`, dnsName, resolverIP, dnsName, serverIP, serverIP)
 }
 
 // startSSHServerVM launches the detached stand-in server VM, installs and
 // starts sshd listening on port 22 with the test's public key as claude's
-// only login path, starts a decoy listener on an unlisted port (8080), waits
-// for sshd to answer, and returns its name, address, and public host key
-// line. Host-side cleanup is registered for the whole test.
-func startSSHServerVM(t *testing.T, pubKeyPath string) (name, ip, hostKey string) {
+// only login path, starts an HTTP decoy on an unlisted port (8080) that
+// answers every request with 200 (so the probe's curl assertion can only
+// pass because the network blocks the connection, not because nothing
+// responds), runs dnsmasq on 0.0.0.0:53 answering dnsName with the VM's own
+// address, waits for all three to answer, and returns the VM name, address,
+// and bare "<algo> <key>" host key. Host-side cleanup is registered for the
+// whole test.
+func startSSHServerVM(t *testing.T, dnsName, pubKeyPath string) (name, ip, hostKey string) {
 	t.Helper()
 	pub, err := os.ReadFile(pubKeyPath)
 	if err != nil {
@@ -216,7 +241,7 @@ func startSSHServerVM(t *testing.T, pubKeyPath string) (name, ip, hostKey string
 	script := fmt.Sprintf(`
 set -eu
 apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-server >/dev/null
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-server dnsmasq >/dev/null
 useradd -m -s /bin/sh claude
 install -d -m 700 -o claude -g claude /home/claude/.ssh
 printf '%%s\n' %s > /home/claude/.ssh/authorized_keys
@@ -226,7 +251,7 @@ printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPubkeyAuthen
   > /etc/ssh/sshd_config.d/99-integ.conf
 mkdir -p /run/sshd
 /usr/sbin/sshd
-nohup node -e "require('net').createServer(s=>s.end()).listen(8080,'0.0.0.0')" >/tmp/decoy.log 2>&1 &
+nohup node -e "require('http').createServer((q,s)=>s.end('reachable')).listen(8080,'0.0.0.0')" >/tmp/decoy.log 2>&1 &
 `, strconv.Quote(strings.TrimSpace(string(pub))))
 
 	name = fmt.Sprintf("ai-sandbox-access-integ-server-%d", time.Now().Unix())
@@ -259,16 +284,43 @@ nohup node -e "require('net').createServer(s=>s.end()).listen(8080,'0.0.0.0')" >
 		time.Sleep(2 * time.Second)
 	}
 
+	// dnsmasq needs the VM address for its host-record, so it is configured
+	// only now that the address is known. A dedicated config file keeps the
+	// resolver self-contained: answer dnsName with ip, nothing else. dnsmasq
+	// daemonizes itself, so the exec returns once it is up.
+	dnsCfg := fmt.Sprintf("listen-address=0.0.0.0\nbind-interfaces\nno-resolv\nno-hosts\nhost-record=%s,%s\n", dnsName, ip)
+	startDNS := exec.Command("msb", "exec", name, "--", "/bin/sh", "-c",
+		"cat > /etc/dnsmasq.integ.conf && dnsmasq --conf-file=/etc/dnsmasq.integ.conf --pid-file=/run/dnsmasq-integ.pid")
+	startDNS.Stdin = strings.NewReader(dnsCfg)
+	if out, err := startDNS.CombinedOutput(); err != nil {
+		t.Fatalf("start dnsmasq in stand-in VM: %v\n%s", err, out)
+	}
+	for {
+		var out []byte
+		out, err = exec.Command("msb", "exec", name, "--", "/bin/sh", "-c",
+			"pgrep -x dnsmasq >/dev/null").Output()
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("dnsmasq did not start in stand-in VM within 3m: %v\n%s", err, out)
+		}
+		time.Sleep(time.Second)
+	}
+
 	keyOut, err := exec.Command("msb", "exec", name, "--", "/bin/sh", "-c",
 		"cat /etc/ssh/ssh_host_ed25519_key.pub").Output()
 	if err != nil {
 		t.Fatalf("read stand-in host key: %v\n%s", err, keyOut)
 	}
-	hostKey = strings.TrimSpace(string(keyOut))
-	fields := strings.Fields(hostKey)
+	// The .pub file carries a trailing comment ("ssh-ed25519 AAAA... root@host");
+	// three fields would parse as a known_hosts selector line and fail
+	// validation. Pin the bare "<algo> <key>" form.
+	fields := strings.Fields(strings.TrimSpace(string(keyOut)))
 	if len(fields) < 2 {
-		t.Fatalf("unexpected stand-in host key output: %q", hostKey)
+		t.Fatalf("unexpected stand-in host key output: %q", string(keyOut))
 	}
+	hostKey = fields[0] + " " + fields[1]
 
 	// Fail early if the guest would never trust this server: keyscan from
 	// the host proves the key we pinned matches what the server presents.

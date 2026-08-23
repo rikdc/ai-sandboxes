@@ -299,9 +299,9 @@ type execEnv struct {
 	// (scripts/session/resolve-image.sh, load-image.sh, docker, msb) and is
 	// injectable so tests can fake it.
 	run func(ctx context.Context, name string, args ...string) ([]byte, error)
-	// resolvConfPath overrides the fallback resolver file read by
-	// hostDNSNameservers ("/etc/resolv.conf"). Tests set it so DNS discovery
-	// is deterministic and never touches the developer's real configuration.
+	// resolvConfPath, when set, overrides host DNS resolver discovery
+	// entirely (tests substitute a known resolver file); when empty,
+	// discovery uses scutil --dns on macOS or /etc/resolv.conf elsewhere.
 	resolvConfPath string
 }
 
@@ -609,8 +609,8 @@ func resolvePlan(ctx context.Context, opts runOptions, e execEnv, stderr io.Writ
 	}
 
 	// An access profile contributes one exact destination network rule, a
-	// read-only credential mount, and (for non-public networks) pinned host
-	// DNS resolvers. Validation is read-only; only executeRun materializes
+	// read-only credential mount, and pinned host DNS resolvers. Validation
+	// is read-only; only executeRun materializes
 	// the rendered config and known_hosts, so `plan` performs no writes.
 	acc, code := e.resolveAccess(ctx, opts.agent, opts.access, network, workspace, writeAccessMaterial, stderr)
 	if code != 0 {
@@ -685,28 +685,32 @@ func (e execEnv) resolveAccess(ctx context.Context, agent, name string, network 
 	}
 	if network.Public {
 		fmt.Fprintf(stderr, "%s: warning: public egress is enabled; --access adds no network restriction while it lasts\n", agent)
-	} else {
-		// LAN destinations only resolve if guest DNS queries reach the
-		// host's own resolvers: internal zones (.lan, split-horizon names)
-		// exist nowhere else, and msb's macOS upstream auto-discovery is not
-		// reliable on every boot. Pin the discovered resolvers explicitly.
-		// Rebind protection must also go: it drops answers pointing at
-		// private RFC1918 addresses, which is exactly what every LAN
-		// destination resolves to (verified against msb v0.6.13). This
-		// changes DNS policy for the whole session; public-egress runs keep
-		// msb's defaults.
-		servers := e.hostDNSNameservers(ctx)
-		for _, s := range servers {
-			a.dnsArgs = append(a.dnsArgs, "--dns-nameserver", s)
-		}
-		a.dnsArgs = append(a.dnsArgs, "--no-dns-rebind-protection")
-		if len(servers) == 0 {
-			fmt.Fprintf(stderr, "%s: warning: could not discover host DNS resolvers; relying on microsandbox auto-discovery\n", agent)
-		}
+	}
+	// LAN destinations only resolve if guest DNS queries reach the host's own
+	// resolvers: internal zones (.lan, split-horizon names) exist nowhere
+	// else, and msb's upstream auto-discovery is not reliable on every boot.
+	// Pin the discovered resolvers explicitly — in both network modes, because
+	// public egress removes the host restriction but does not make internal
+	// names resolvable. Rebind protection must also go: it drops answers
+	// pointing at private RFC1918 addresses, which is exactly what every LAN
+	// destination resolves to (verified against msb v0.6.13). This changes
+	// DNS policy for the whole session.
+	servers := e.hostDNSNameservers(ctx)
+	for _, s := range servers {
+		a.dnsArgs = append(a.dnsArgs, "--dns-nameserver", s)
+		// Deny-by-default egress would otherwise block queries to any
+		// resolver that is not the gateway; allow DNS to each pinned server.
+		a.rules = append(a.rules,
+			fmt.Sprintf("allow@%s:udp:53", s),
+			fmt.Sprintf("allow@%s:tcp:53", s))
+	}
+	a.dnsArgs = append(a.dnsArgs, "--no-dns-rebind-protection")
+	if len(servers) == 0 {
+		fmt.Fprintf(stderr, "%s: warning: could not discover host DNS resolvers; relying on microsandbox auto-discovery\n", agent)
 	}
 	// plan.Resolve drops these when the network is public, so they are
 	// always computed here rather than duplicating that check.
-	a.rules = []string{prof.NetRule()}
+	a.rules = append(a.rules, prof.NetRule())
 	a.mount = keyDir + ":" + access.GuestDir + ":ro"
 	a.configMount = access.ConfigIncludeMount(keyDir)
 	if writeAccessMaterial {
@@ -719,14 +723,20 @@ func (e execEnv) resolveAccess(ctx context.Context, agent, name string, network 
 }
 
 // hostDNSNameservers returns the host's upstream resolver addresses in
-// priority order. macOS reads them from the system configuration store via
-// `scutil --dns` (the primary resolver block only); everything else falls back
-// to /etc/resolv.conf. A nil e.run (tests) or any discovery failure returns
-// nil; the caller warns and lets microsandbox auto-discover.
+// priority order. A non-empty e.resolvConfPath is an explicit override: it is
+// read directly and takes precedence over system discovery (used by tests to
+// substitute a known resolver). Otherwise macOS reads resolvers from the
+// system configuration store via `scutil --dns` (the primary resolver block
+// only), falling back to /etc/resolv.conf; everything else reads
+// /etc/resolv.conf. Discovery failure returns nil; the caller warns and lets
+// microsandbox auto-discover.
 func (e execEnv) hostDNSNameservers(ctx context.Context) []string {
-	path := e.resolvConfPath
-	if path == "" {
-		path = "/etc/resolv.conf"
+	if e.resolvConfPath != "" {
+		data, err := os.ReadFile(e.resolvConfPath)
+		if err != nil {
+			return nil
+		}
+		return parseResolvConfNameservers(data)
 	}
 	if runtime.GOOS == "darwin" && e.run != nil {
 		if out, err := e.run(ctx, "scutil", "--dns"); err == nil {
@@ -735,7 +745,7 @@ func (e execEnv) hostDNSNameservers(ctx context.Context) []string {
 			}
 		}
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile("/etc/resolv.conf")
 	if err != nil {
 		return nil
 	}
