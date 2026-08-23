@@ -9,10 +9,10 @@ func TestParseScutilNameservers(t *testing.T) {
 	out := []byte(`DNS configuration
 
 resolver #1
-  search domain[0] : home.claydon.co
-  nameserver[0] : 192.168.88.13
-  nameserver[1] : 192.168.88.13
-  nameserver[2] : 192.168.88.9
+  search domain[0] : home.arpa
+  nameserver[0] : 192.0.2.13
+  nameserver[1] : 192.0.2.13
+  nameserver[2] : 192.0.2.9
   nameserver[3] : not-an-ip
   if_index : 14 (en0)
   flags    : Request A records
@@ -20,14 +20,14 @@ resolver #1
 
 resolver #2
   domain   : local
-  nameserver[0] : 10.99.99.1
+  nameserver[0] : 198.51.100.1
   options  : mdns
 
 resolver #3
   domain   : 254.169.in-addr.arpa
   options  : mdns
 `)
-	want := []string{"192.168.88.13", "192.168.88.9"}
+	want := []string{"192.0.2.13", "192.0.2.9"}
 	got := parseScutilNameservers(out)
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("parseScutilNameservers = %v, want %v (only the primary block, deduped, valid IPs)", got, want)
@@ -41,8 +41,8 @@ func TestParseScutilNameserversEmptyPrimary(t *testing.T) {
 }
 
 func TestParseResolvConfNameservers(t *testing.T) {
-	data := []byte("# comment\nnameserver 192.168.88.13\nnameserver fe80::1%en0\nsearch home.lan\nnameserver bogus\n")
-	want := []string{"192.168.88.13", "fe80::1%en0"}
+	data := []byte("# comment\nnameserver 192.0.2.13\nnameserver fe80::1%en0\nsearch home.arpa\nnameserver bogus\n")
+	want := []string{"192.0.2.13", "fe80::1%en0"}
 	got := parseResolvConfNameservers(data)
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("parseResolvConfNameservers = %v, want %v", got, want)

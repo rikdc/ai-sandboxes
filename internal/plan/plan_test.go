@@ -311,7 +311,7 @@ func TestResolveAccessPlan(t *testing.T) {
 	}
 
 	// DNS flags are appended after the network flags when provided.
-	in.DnsArgs = []string{"--dns-nameserver", "192.168.88.13", "--no-dns-rebind-protection"}
+	in.DnsArgs = []string{"--dns-nameserver", "192.0.2.13", "--no-dns-rebind-protection"}
 	p3, err := Resolve(mustConfig(t, "claude"), in)
 	if err != nil {
 		t.Fatal(err)

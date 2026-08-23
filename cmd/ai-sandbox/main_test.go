@@ -1050,7 +1050,7 @@ func accessTestEnv(t *testing.T) (execEnv, string) {
 	// entirely, so these tests never touch scutil or the real resolver file.
 	// The file includes lines the parsers must ignore.
 	resolv := filepath.Join(t.TempDir(), "resolv.conf")
-	os.WriteFile(resolv, []byte("# generated\nnameserver 192.168.88.13\nnameserver 192.168.88.9\nsearch home.lan\n"), 0o600)
+	os.WriteFile(resolv, []byte("# generated\nnameserver 192.0.2.13\nnameserver 192.0.2.9\nsearch home.lan\n"), 0o600)
 	e.resolvConfPath = resolv
 	return withConfigDir(e, configDir), resolved
 }
@@ -1076,17 +1076,17 @@ func TestExecuteRunAccessProfile(t *testing.T) {
 	}
 	// Pinned resolvers must be reachable under deny-by-default egress.
 	for _, want := range [][2]string{
-		{"--net-rule", "allow@192.168.88.13:udp:53"},
-		{"--net-rule", "allow@192.168.88.13:tcp:53"},
-		{"--net-rule", "allow@192.168.88.9:udp:53"},
-		{"--net-rule", "allow@192.168.88.9:tcp:53"},
+		{"--net-rule", "allow@192.0.2.13:udp:53"},
+		{"--net-rule", "allow@192.0.2.13:tcp:53"},
+		{"--net-rule", "allow@192.0.2.9:udp:53"},
+		{"--net-rule", "allow@192.0.2.9:tcp:53"},
 	} {
 		if !containsArg(launched, want[0], want[1]) {
 			t.Errorf("argv missing pinned-resolver rule %s %s: %v", want[0], want[1], launched)
 		}
 	}
-	if !containsArg(launched, "--dns-nameserver", "192.168.88.13") ||
-		!containsArg(launched, "--dns-nameserver", "192.168.88.9") {
+	if !containsArg(launched, "--dns-nameserver", "192.0.2.13") ||
+		!containsArg(launched, "--dns-nameserver", "192.0.2.9") {
 		t.Errorf("argv missing pinned host DNS resolvers: %v", launched)
 	}
 	if !containsArg(launched, "--no-dns-rebind-protection") {
@@ -1127,15 +1127,15 @@ func TestExecuteRunAccessProfilePublicEgressPinsDNS(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d", code)
 	}
-	if !containsArg(launched, "--dns-nameserver", "192.168.88.13") ||
-		!containsArg(launched, "--dns-nameserver", "192.168.88.9") {
+	if !containsArg(launched, "--dns-nameserver", "192.0.2.13") ||
+		!containsArg(launched, "--dns-nameserver", "192.0.2.9") {
 		t.Errorf("public-egress argv must still pin host DNS resolvers: %v", launched)
 	}
 	if !containsArg(launched, "--no-dns-rebind-protection") {
 		t.Errorf("public-egress argv missing rebind-protection opt-out: %v", launched)
 	}
 	if containsArg(launched, "--net-rule", "allow@nas.home.lan:tcp:22") ||
-		containsArg(launched, "--net-rule", "allow@192.168.88.13:udp:53") {
+		containsArg(launched, "--net-rule", "allow@192.0.2.13:udp:53") {
 		t.Errorf("public-egress argv must drop per-destination and DNS rules: %v", launched)
 	}
 }
