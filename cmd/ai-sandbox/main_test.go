@@ -104,6 +104,7 @@ func TestParseAgentArgs(t *testing.T) {
 		agent     string
 		agentArgs []string
 		profile   string
+		access    string
 		help      bool
 		wantErr   bool
 	}{
@@ -114,6 +115,13 @@ func TestParseAgentArgs(t *testing.T) {
 		{name: "profile equals", args: []string{"claude", "--profile=work"}, agent: "claude", profile: "work"},
 		{name: "profile then agent args", args: []string{"claude", "--profile", "work", "-p", "hi", "--model", "sonnet"}, agent: "claude", profile: "work", agentArgs: []string{"-p", "hi", "--model", "sonnet"}},
 		{name: "profile empty agent args", args: []string{"claude", "--profile=work"}, agent: "claude", profile: "work", agentArgs: nil},
+		{name: "access space", args: []string{"claude", "--access", "homelab"}, agent: "claude", access: "homelab"},
+		{name: "access equals", args: []string{"codex", "--access=homelab", "--", "-q"}, agent: "codex", access: "homelab", agentArgs: []string{"-q"}},
+		// Unlike --profile, --access does not claim the remaining arguments:
+		// agent arguments still require the explicit -- separator.
+		{name: "access then dashed arg needs separator", args: []string{"claude", "--access", "homelab", "-x", "hi"}, wantErr: true},
+		{name: "access before profile", args: []string{"claude", "--access", "homelab", "--profile", "work"}, agent: "claude", access: "homelab", profile: "work"},
+		{name: "access missing value", args: []string{"claude", "--access"}, wantErr: true},
 		{name: "empty agent", args: []string{}, wantErr: true},
 		{name: "unknown flag", args: []string{"claude", "--bogus", "x"}, wantErr: true},
 		{name: "dashed arg needs separator", args: []string{"claude", "--version"}, wantErr: true},
@@ -142,6 +150,9 @@ func TestParseAgentArgs(t *testing.T) {
 		}
 		if opts.profile != c.profile {
 			t.Errorf("%s: profile = %q, want %q", c.name, opts.profile, c.profile)
+		}
+		if opts.access != c.access {
+			t.Errorf("%s: access = %q, want %q", c.name, opts.access, c.access)
 		}
 		if opts.help != c.help {
 			t.Errorf("%s: help = %v, want %v", c.name, opts.help, c.help)
@@ -928,6 +939,131 @@ func TestExecuteRunClaudeSessionProfileNotFound(t *testing.T) {
 		t.Fatalf("exit code = %d, want 1", code)
 	}
 	if !strings.Contains(errb.String(), "profile not found") {
+		t.Errorf("unexpected error:\n%s", errb.String())
+	}
+}
+
+// accessTestEnv builds an execEnv whose user configuration directory contains
+// a valid "homelab" access profile and key directory. It returns the env and
+// the canonical key directory path.
+func accessTestEnv(t *testing.T) (execEnv, string) {
+	t.Helper()
+	e, _ := testEnv(t)
+	configDir := t.TempDir()
+
+	profileDir := filepath.Join(configDir, "access")
+	os.MkdirAll(profileDir, 0o700)
+	os.WriteFile(filepath.Join(profileDir, "homelab.json"), []byte(`{
+	  "schema_version": 1,
+	  "destinations": [
+	    {"alias": "nas", "host": "nas.home.lan", "port": 22, "user": "claude",
+	     "host_keys": ["nas.home.lan ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake"]}
+	  ]
+	}`), 0o600)
+
+	keyDir := filepath.Join(configDir, "access", "keys", "homelab")
+	if err := os.MkdirAll(keyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(keyDir, "id_ed25519"), []byte("fake-key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(keyDir, "id_ed25519.pub"), []byte("fake-pub"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := filepath.EvalSymlinks(keyDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	base := e.getenv
+	e.getenv = func(k string) string {
+		if k == "AI_SANDBOX_CONFIG_DIR" {
+			return configDir
+		}
+		return base(k)
+	}
+	return e, resolved
+}
+
+func TestExecuteRunAccessProfile(t *testing.T) {
+	e, keyDir := accessTestEnv(t)
+	client := newFakeMsb()
+	var launched []string
+	code := executeRun(context.Background(), runOptions{agent: "claude", access: "homelab", agentArgs: []string{"--model", "sonnet"}},
+		e, &bytes.Buffer{}, client, func(argv []string) error { launched = argv; return nil })
+	if code != 0 {
+		t.Fatalf("exit code = %d", code)
+	}
+	wantMount := "--mount-dir"
+	if !containsArg(launched, wantMount, keyDir+":/run/ai-sandbox/ssh:ro") {
+		t.Errorf("argv missing read-only access mount %q: %v", keyDir, launched)
+	}
+	if !containsArg(launched, "--net-rule", "allow@nas.home.lan:tcp:22") {
+		t.Errorf("argv missing exact destination rule: %v", launched)
+	}
+	if !containsArg(launched, "AI_SANDBOX_SSH_CONFIG=/run/ai-sandbox/ssh/config") {
+		t.Errorf("argv missing ssh-config environment variable: %v", launched)
+	}
+
+	cfg, err := os.ReadFile(filepath.Join(keyDir, "config"))
+	if err != nil {
+		t.Fatalf("run did not materialize the ssh config: %v", err)
+	}
+	for _, want := range []string{"IdentitiesOnly yes", "Host nas", "HostName nas.home.lan"} {
+		if !strings.Contains(string(cfg), want) {
+			t.Errorf("materialized config missing %q:\n%s", want, cfg)
+		}
+	}
+	kh, err := os.ReadFile(filepath.Join(keyDir, "known_hosts"))
+	if err != nil || !strings.Contains(string(kh), "nas.home.lan ssh-ed25519 AAAA") {
+		t.Errorf("materialized known_hosts wrong (err %v): %s", err, kh)
+	}
+}
+
+func TestExecutePlanAccessProfileDoesNotWrite(t *testing.T) {
+	e, keyDir := accessTestEnv(t)
+	var out, errb bytes.Buffer
+	code := executePlan(context.Background(), runOptions{agent: "claude", access: "homelab"}, e, &out, &errb, newFakeMsb())
+	if code != 0 {
+		t.Fatalf("exit code = %d: %s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "allow@nas.home.lan:tcp:22") {
+		t.Errorf("plan output missing destination rule:\n%s", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(keyDir, "config")); err == nil {
+		t.Error("`plan` must not write into the access key directory")
+	}
+	if _, err := os.Stat(filepath.Join(keyDir, "known_hosts")); err == nil {
+		t.Error("`plan` must not write into the access key directory")
+	}
+}
+
+func TestExecuteRunAccessKeyDirTooOpen(t *testing.T) {
+	e, keyDir := accessTestEnv(t)
+	// Break the permission contract on the private key.
+	os.Chmod(filepath.Join(keyDir, "id_ed25519"), 0o644)
+	var errb bytes.Buffer
+	code := executeRun(context.Background(), runOptions{agent: "claude", access: "homelab"}, e, &errb, newFakeMsb(),
+		func([]string) error { return nil })
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(errb.String(), "mode 0600") {
+		t.Errorf("unexpected error:\n%s", errb.String())
+	}
+}
+
+func TestExecuteRunAccessProfileMissing(t *testing.T) {
+	e, _ := testEnv(t)
+	var errb bytes.Buffer
+	code := executeRun(context.Background(), runOptions{agent: "claude", access: "nope"}, e, &errb, newFakeMsb(),
+		func([]string) error { return nil })
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(errb.String(), "could not read access profile") {
 		t.Errorf("unexpected error:\n%s", errb.String())
 	}
 }

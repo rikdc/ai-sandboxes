@@ -15,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/rikdc/ai-sandboxes/internal/access"
 	"github.com/rikdc/ai-sandboxes/internal/config"
 	"github.com/rikdc/ai-sandboxes/internal/doctor"
 	"github.com/rikdc/ai-sandboxes/internal/plan"
@@ -125,7 +126,11 @@ func usage(w io.Writer) {
 		"  version                          print the version\n"+
 		"  help                             show this help\n\n"+
 		"Agents: claude, codex. Put agent arguments after `--`; they are\n"+
-		"forwarded verbatim. The installed fish wrappers invoke this binary, so most\n"+
+		"forwarded verbatim. `run` and `plan` accept --profile PROFILE\n"+
+		"(claude session image) and --access NAME (a runtime SSH access profile:\n"+
+		"exact destinations with pinned host keys, mounted read-only from\n"+
+		"~/.config/ai-sandboxes/access/keys/<name>).\n"+
+		"The installed fish wrappers invoke this binary, so most\n"+
 		"users never call it directly.\n")
 }
 
@@ -134,6 +139,7 @@ type runOptions struct {
 	agent     string
 	agentArgs []string
 	profile   string
+	access    string
 	verbose   bool
 	help      bool
 }
@@ -183,6 +189,15 @@ func parseAgentArgs(args []string) (runOptions, error) {
 			args = args[1:]
 		case a == "--verbose" || a == "-v":
 			opts.verbose = true
+			args = args[1:]
+		case a == "--access":
+			if len(args) < 2 {
+				return opts, fmt.Errorf("%s requires a value", a)
+			}
+			opts.access = args[1]
+			args = args[2:]
+		case strings.HasPrefix(a, "--access="):
+			opts.access = strings.TrimPrefix(a, "--access=")
 			args = args[1:]
 		case strings.HasPrefix(a, "-"):
 			return opts, fmt.Errorf("unknown option %q (put agent arguments after --)", a)
@@ -358,6 +373,20 @@ func (e execEnv) homeResolved() (string, error) {
 	return resolved, nil
 }
 
+// userConfigDir resolves the ai-sandboxes user configuration directory for
+// access profiles. AI_SANDBOX_CONFIG_DIR is honored through the injectable
+// getenv so tests never touch a developer's real configuration; otherwise
+// config.UserConfigDir applies the standard XDG resolution.
+func (e execEnv) userConfigDir() (string, error) {
+	if dir := e.getenv("AI_SANDBOX_CONFIG_DIR"); dir != "" {
+		if !filepath.IsAbs(dir) {
+			return "", fmt.Errorf("AI_SANDBOX_CONFIG_DIR must be an absolute path: %q", dir)
+		}
+		return dir, nil
+	}
+	return config.UserConfigDir()
+}
+
 func (e execEnv) protectedRoots(checkout string) []string {
 	var roots []string
 	if checkout != "" {
@@ -427,7 +456,11 @@ type msbClient interface {
 	InitSharedState(image string, st *plan.SharedState) error
 }
 
-func resolvePlan(ctx context.Context, opts runOptions, e execEnv, stderr io.Writer, client msbClient, loadSessionImage bool) (*plan.RuntimePlan, int) {
+// resolvePlan resolves the complete runtime plan for opts. writeAccessMaterial
+// is true only for `run`: it materializes the rendered ssh config and pinned
+// known_hosts into the profile's key directory before launch. `plan` passes
+// false so printing a plan never writes anything.
+func resolvePlan(ctx context.Context, opts runOptions, e execEnv, stderr io.Writer, client msbClient, loadSessionImage, writeAccessMaterial bool) (*plan.RuntimePlan, int) {
 	// Reject a session profile for any agent other than claude before anything
 	// else, so `run codex --profile foo` fails with the reason, not a generic
 	// unknown-option error.
@@ -551,6 +584,57 @@ func resolvePlan(ctx context.Context, opts runOptions, e execEnv, stderr io.Writ
 		return nil, 1
 	}
 
+	// An access profile contributes exact per-destination network rules, one
+	// read-only credential mount, and the guest ssh-config environment
+	// variable. Validation is read-only; only executeRun materializes the
+	// rendered config and known_hosts, so `plan` performs no writes.
+	var (
+		accessMount string
+		accessRules []string
+		accessEnv   []string
+	)
+	if opts.access != "" {
+		cfgDir, err := e.userConfigDir()
+		if err != nil {
+			fmt.Fprintf(stderr, "ai-sandbox: %s\n", err)
+			return nil, 2
+		}
+		prof, err := access.Load(cfgDir, opts.access)
+		if err != nil {
+			fmt.Fprintf(stderr, "%s: --access %s: %s\n", opts.agent, opts.access, err)
+			return nil, 2
+		}
+		keyDir, err := access.ResolveKeyDir(cfgDir, opts.access)
+		if err != nil {
+			fmt.Fprintf(stderr, "%s: --access %s: %s\n", opts.agent, opts.access, err)
+			return nil, 2
+		}
+		if err := access.ValidateKeyDir(keyDir); err != nil {
+			fmt.Fprintf(stderr, "%s: --access %s: %s\n", opts.agent, opts.access, err)
+			return nil, 2
+		}
+		// The whitelist already rules out ~/.ssh and everything else outside
+		// the key root; this additionally refuses a workspace that contains
+		// (or is contained in) the mounted key directory.
+		if err := plan.RefuseOverlap(workspace, []string{keyDir}); err != nil {
+			fmt.Fprintf(stderr, "%s: --access %s: %s\n", opts.agent, opts.access, err)
+			return nil, 1
+		}
+		if network.Public {
+			fmt.Fprintf(stderr, "%s: warning: public egress is enabled; --access adds no network restriction while it lasts\n", opts.agent)
+		} else {
+			accessRules = prof.NetRules()
+		}
+		accessEnv = []string{access.SSHConfigEnvVar + "=" + access.GuestDir + "/config"}
+		accessMount = keyDir + ":" + access.GuestDir + ":ro"
+		if writeAccessMaterial {
+			if err := access.Materialize(keyDir, prof); err != nil {
+				fmt.Fprintf(stderr, "%s: --access %s: %s\n", opts.agent, opts.access, err)
+				return nil, 1
+			}
+		}
+	}
+
 	p, err := plan.Resolve(agentCfg, plan.Input{
 		Agent:         opts.agent,
 		AgentArgs:     opts.agentArgs,
@@ -558,6 +642,9 @@ func resolvePlan(ctx context.Context, opts runOptions, e execEnv, stderr io.Writ
 		SharedState:   shared,
 		Network:       network,
 		ImageOverride: imageOverride,
+		AccessMount:   accessMount,
+		AccessRules:   accessRules,
+		AccessEnv:     accessEnv,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "ai-sandbox: %s\n", err)
@@ -584,7 +671,7 @@ func (e execEnv) resolveNetwork(cfg config.Agent, home string) (plan.Network, er
 }
 
 func executeRun(ctx context.Context, opts runOptions, e execEnv, stderr io.Writer, client msbClient, launch func([]string) error) int {
-	p, code := resolvePlan(ctx, opts, e, stderr, client, true)
+	p, code := resolvePlan(ctx, opts, e, stderr, client, true, true)
 	if code != 0 {
 		return code
 	}
@@ -633,7 +720,7 @@ func executeRun(ctx context.Context, opts runOptions, e execEnv, stderr io.Write
 }
 
 func executePlan(ctx context.Context, opts runOptions, e execEnv, stdout, stderr io.Writer, client msbClient) int {
-	p, code := resolvePlan(ctx, opts, e, stderr, client, false)
+	p, code := resolvePlan(ctx, opts, e, stderr, client, false, false)
 	if code != 0 {
 		return code
 	}
