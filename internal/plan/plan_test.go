@@ -266,6 +266,64 @@ func TestSharedStateFromLabels(t *testing.T) {
 	}
 }
 
+func TestResolveAccessPlan(t *testing.T) {
+	in := resolveInput("claude", nil)
+	in.AccessMount = "/Users/me/.config/ai-sandboxes/access/keys/homelab:/run/ai-sandbox/ssh:ro"
+	in.AccessRules = []string{"allow@nas.home.lan:tcp:22"}
+	in.AccessEnv = []string{"AI_SANDBOX_SSH_CONFIG=/run/ai-sandbox/ssh/config"}
+	rulesBefore := append([]string{}, in.Network.Rules...)
+
+	p, err := Resolve(mustConfig(t, "claude"), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.AccessMount == "" {
+		t.Error("access mount not set on the plan")
+	}
+	wantEnv := []string{
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+		"ENABLE_CLAUDEAI_MCP_SERVERS=false",
+		"AI_SANDBOX_SSH_CONFIG=/run/ai-sandbox/ssh/config",
+	}
+	if !reflect.DeepEqual(p.Environment, wantEnv) {
+		t.Errorf("environment = %v, want %v", p.Environment, wantEnv)
+	}
+	wantRules := append(rulesBefore, "allow@nas.home.lan:tcp:22")
+	if !reflect.DeepEqual(p.Network.Rules, wantRules) {
+		t.Errorf("rules = %v, want %v", p.Network.Rules, wantRules)
+	}
+	// The caller's input slice must not be mutated by Resolve.
+	if !reflect.DeepEqual(in.Network.Rules, rulesBefore) {
+		t.Errorf("input network rules mutated: %v", in.Network.Rules)
+	}
+
+	argv := p.MsbArgv()
+	want := []string{"--mount-dir", in.AccessMount}
+	found := false
+	for i := 0; i+1 < len(argv); i++ {
+		if argv[i] == want[0] && argv[i+1] == want[1] {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("msb argv missing read-only access mount: %v", argv)
+	}
+
+	// Public egress drops the per-destination rules rather than carrying
+	// them silently.
+	in2 := resolveInput("claude", nil)
+	in2.Network = Network{Public: true}
+	in2.AccessRules = []string{"allow@nas.home.lan:tcp:22"}
+	p2, err := Resolve(mustConfig(t, "claude"), in2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p2.Network.Public || len(p2.Network.Rules) != 0 {
+		t.Errorf("public network with access rules = %+v", p2.Network)
+	}
+}
+
 func TestResolveNetwork(t *testing.T) {
 	dir := t.TempDir()
 	egress := dir + "/claude-egress"

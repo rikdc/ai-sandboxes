@@ -22,6 +22,9 @@ func Print(w io.Writer, p *RuntimePlan) {
 	if p.SharedState != nil {
 		f("shared state", p.SharedState.Mount)
 	}
+	if p.AccessMount != "" {
+		f("access mount", p.AccessMount)
+	}
 	var resources []string
 	if p.Resources.CPUs > 0 {
 		resources = append(resources, fmt.Sprintf("cpus=%d", p.Resources.CPUs))

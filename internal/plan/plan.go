@@ -69,6 +69,10 @@ type RuntimePlan struct {
 	// `msb list --label`. Nil for agents that do not need label-based
 	// discovery.
 	Labels []string `json:"labels,omitempty"`
+	// AccessMount is the full --mount-dir value for the read-only --access
+	// credential directory ("<hostdir>:/run/ai-sandbox/ssh:ro"), empty when
+	// the run carries no access profile.
+	AccessMount string `json:"access_mount,omitempty"`
 }
 
 // Input to Resolve. Workspace must already be canonical and validated by the
@@ -83,6 +87,18 @@ type Input struct {
 	// session images, whose tag is resolved from a profile at run time rather
 	// than baked into the agent policy.
 	ImageOverride string
+	// AccessMount is the full --mount-dir value for the read-only --access
+	// credential directory ("<hostdir>:/run/ai-sandbox/ssh:ro"), empty when
+	// the run carries no access profile.
+	AccessMount string
+	// AccessRules are extra msb --net-rule values appended after every
+	// allowlist-derived rule: one exact allow@host:tcp:port per access
+	// destination. Ignored when Network is public.
+	AccessRules []string
+	// AccessEnv are extra guest environment entries contributed by the
+	// access profile (currently AI_SANDBOX_SSH_CONFIG), appended after the
+	// agent's own environment.
+	AccessEnv []string
 }
 
 var (
@@ -140,6 +156,18 @@ func Resolve(cfg config.Agent, in Input) (*RuntimePlan, error) {
 		"ai-sandbox.workspace=" + hash,
 	}
 
+	// Merge network and environment contributions without aliasing caller
+	// slices: the plan must be the single owner of its own data.
+	rules := append(append([]string{}, in.Network.Rules...), in.AccessRules...)
+	network := in.Network
+	network.Rules = rules
+	if network.Public {
+		// Public egress makes the per-destination allow rules moot; they
+		// are dropped rather than silently carried.
+		network.Rules = nil
+	}
+	env := append(append([]string{}, cfg.Environment...), in.AccessEnv...)
+
 	return &RuntimePlan{
 		AgentName:      cfg.Name,
 		Image:          image,
@@ -153,11 +181,12 @@ func Resolve(cfg config.Agent, in Input) (*RuntimePlan, error) {
 		SharedState:    in.SharedState,
 		Resources:      resources,
 		Security:       cfg.Security,
-		Network:        in.Network,
-		Environment:    cfg.Environment,
+		Network:        network,
+		Environment:    env,
 		Command:        cfg.Command,
 		AgentArgs:      in.AgentArgs,
 		Labels:         labels,
+		AccessMount:    in.AccessMount,
 	}, nil
 }
 
@@ -214,6 +243,9 @@ func (p *RuntimePlan) MsbArgv() []string {
 	argv = append(argv, "--mount-named", p.HomeMount)
 	if p.SharedState != nil {
 		argv = append(argv, "--mount-named", p.SharedState.Mount)
+	}
+	if p.AccessMount != "" {
+		argv = append(argv, "--mount-dir", p.AccessMount)
 	}
 	argv = append(argv, "--workdir", p.WorkspaceGuest)
 	argv = append(argv, p.Image)
