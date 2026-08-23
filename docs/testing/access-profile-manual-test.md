@@ -147,7 +147,7 @@ regardless of the requested command — proof the server-side restriction holds.
 ### Troubleshooting: destination does not resolve
 
 Access runs pin your Mac's resolvers (`scutil --dns`) as the sandbox's DNS
-upstreams and disable rebind protection, so `home.lan`-style names should
+upstreams and disable rebind protection, so `lan.example`-style names should
 resolve exactly as they do on the host. If `ssh homelab` still fails with
 `Could not resolve hostname`:
 

@@ -99,10 +99,10 @@ define an access profile, both under
    ```json
    {
      "schema_version": 1,
-     "host": "nas.home.lan",
+     "host": "home1.lan.example",
      "port": 22,
      "user": "claude",
-     "host_keys": ["nas.home.lan ssh-ed25519 AAAA..."]
+     "host_keys": ["home1.lan.example ssh-ed25519 AAAA..."]
    }
    ```
 
@@ -120,7 +120,7 @@ define an access profile, both under
 Before each run the control plane rewrites `config` and `known_hosts` inside
 the key directory from the profile; edit the profile, not those files. The
 profile requires pinned `host_keys` lines (from
-`ssh-keyscan nas.home.lan` — verify the fingerprint through an independent
+`ssh-keyscan home1.lan.example` — verify the fingerprint through an independent
 trusted channel before trusting it; the scan itself authenticates nothing),
 and the launcher refuses anything that would defeat them: unknown JSON fields,
 unpinned destinations, malformed or mismatched host-key lines, symlinked key

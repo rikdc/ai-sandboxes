@@ -270,7 +270,7 @@ func TestResolveAccessPlan(t *testing.T) {
 	in := resolveInput("claude", nil)
 	in.AccessMount = "/Users/me/.config/ai-sandboxes/access/keys/homelab:/run/ai-sandbox/ssh:ro"
 	in.AccessConfigMount = "/Users/me/.config/ai-sandboxes/access/keys/homelab/config:/etc/ssh/ssh_config.d/99-ai-sandbox-access.conf:ro"
-	in.AccessRules = []string{"allow@nas.home.lan:tcp:22"}
+	in.AccessRules = []string{"allow@home1.lan.example:tcp:22"}
 	rulesBefore := append([]string{}, in.Network.Rules...)
 
 	p, err := Resolve(mustConfig(t, "claude"), in)
@@ -283,7 +283,7 @@ func TestResolveAccessPlan(t *testing.T) {
 	if len(p.Environment) != 2 {
 		t.Errorf("environment = %v, want only the agent's own environment (no access env)", p.Environment)
 	}
-	wantRules := append(rulesBefore, "allow@nas.home.lan:tcp:22")
+	wantRules := append(rulesBefore, "allow@home1.lan.example:tcp:22")
 	if !reflect.DeepEqual(p.Network.Rules, wantRules) {
 		t.Errorf("rules = %v, want %v", p.Network.Rules, wantRules)
 	}
@@ -337,7 +337,7 @@ func TestResolveAccessPlan(t *testing.T) {
 	// them silently.
 	in2 := resolveInput("claude", nil)
 	in2.Network = Network{Public: true}
-	in2.AccessRules = []string{"allow@nas.home.lan:tcp:22"}
+	in2.AccessRules = []string{"allow@home1.lan.example:tcp:22"}
 	p2, err := Resolve(mustConfig(t, "claude"), in2)
 	if err != nil {
 		t.Fatal(err)

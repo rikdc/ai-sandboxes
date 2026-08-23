@@ -987,7 +987,7 @@ func TestExecuteRunClaudeSessionComposesWithAccess(t *testing.T) {
 		if !containsArg(launched, "--mount-dir", keyDir+":/run/ai-sandbox/ssh:ro") {
 			t.Errorf("case %d: argv missing read-only access mount: %v", i, launched)
 		}
-		if !containsArg(launched, "--net-rule", "allow@nas.home.lan:tcp:22") {
+		if !containsArg(launched, "--net-rule", "allow@home1.lan.example:tcp:22") {
 			t.Errorf("case %d: argv missing destination net rule: %v", i, launched)
 		}
 	}
@@ -1004,10 +1004,10 @@ func accessFixtures(t *testing.T) (string, string) {
 	os.MkdirAll(profileDir, 0o700)
 	os.WriteFile(filepath.Join(profileDir, "homelab.json"), []byte(`{
 	  "schema_version": 1,
-	  "host": "nas.home.lan",
+	  "host": "home1.lan.example",
 	  "port": 22,
 	  "user": "claude",
-	  "host_keys": ["nas.home.lan ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEqqWmcHasScOzNO2MFtiFY/x1M1WwoTHHS/wb7jISq"]
+	  "host_keys": ["home1.lan.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEqqWmcHasScOzNO2MFtiFY/x1M1WwoTHHS/wb7jISq"]
 	}`), 0o600)
 
 	keyDir := filepath.Join(configDir, "access", "keys", "homelab")
@@ -1050,7 +1050,7 @@ func accessTestEnv(t *testing.T) (execEnv, string) {
 	// entirely, so these tests never touch scutil or the real resolver file.
 	// The file includes lines the parsers must ignore.
 	resolv := filepath.Join(t.TempDir(), "resolv.conf")
-	os.WriteFile(resolv, []byte("# generated\nnameserver 192.0.2.13\nnameserver 192.0.2.9\nsearch home.lan\n"), 0o600)
+	os.WriteFile(resolv, []byte("# generated\nnameserver 192.0.2.13\nnameserver 192.0.2.9\nsearch lan.example\n"), 0o600)
 	e.resolvConfPath = resolv
 	return withConfigDir(e, configDir), resolved
 }
@@ -1071,7 +1071,7 @@ func TestExecuteRunAccessProfile(t *testing.T) {
 	if !containsArg(launched, "--mount-file", keyDir+"/config:/etc/ssh/ssh_config.d/99-ai-sandbox-access.conf:ro") {
 		t.Errorf("argv missing system-wide ssh_config include mount: %v", launched)
 	}
-	if !containsArg(launched, "--net-rule", "allow@nas.home.lan:tcp:22") {
+	if !containsArg(launched, "--net-rule", "allow@home1.lan.example:tcp:22") {
 		t.Errorf("argv missing exact destination rule: %v", launched)
 	}
 	// Pinned resolvers must be reachable under deny-by-default egress.
@@ -1097,13 +1097,13 @@ func TestExecuteRunAccessProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run did not materialize the ssh config: %v", err)
 	}
-	for _, want := range []string{"IdentitiesOnly yes", "Host homelab", "HostName nas.home.lan"} {
+	for _, want := range []string{"IdentitiesOnly yes", "Host homelab", "HostName home1.lan.example"} {
 		if !strings.Contains(string(cfg), want) {
 			t.Errorf("materialized config missing %q:\n%s", want, cfg)
 		}
 	}
 	kh, err := os.ReadFile(filepath.Join(keyDir, "known_hosts"))
-	if err != nil || !strings.Contains(string(kh), "nas.home.lan ssh-ed25519 AAAA") {
+	if err != nil || !strings.Contains(string(kh), "home1.lan.example ssh-ed25519 AAAA") {
 		t.Errorf("materialized known_hosts wrong (err %v): %s", err, kh)
 	}
 }
@@ -1134,7 +1134,7 @@ func TestExecuteRunAccessProfilePublicEgressPinsDNS(t *testing.T) {
 	if !containsArg(launched, "--no-dns-rebind-protection") {
 		t.Errorf("public-egress argv missing rebind-protection opt-out: %v", launched)
 	}
-	if containsArg(launched, "--net-rule", "allow@nas.home.lan:tcp:22") ||
+	if containsArg(launched, "--net-rule", "allow@home1.lan.example:tcp:22") ||
 		containsArg(launched, "--net-rule", "allow@192.0.2.13:udp:53") {
 		t.Errorf("public-egress argv must drop per-destination and DNS rules: %v", launched)
 	}
@@ -1147,7 +1147,7 @@ func TestExecutePlanAccessProfileDoesNotWrite(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d: %s", code, errb.String())
 	}
-	if !strings.Contains(out.String(), "allow@nas.home.lan:tcp:22") {
+	if !strings.Contains(out.String(), "allow@home1.lan.example:tcp:22") {
 		t.Errorf("plan output missing destination rule:\n%s", out.String())
 	}
 	if _, err := os.Stat(filepath.Join(keyDir, "config")); err == nil {
