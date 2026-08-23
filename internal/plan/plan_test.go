@@ -272,7 +272,7 @@ func TestResolveAccessPlan(t *testing.T) {
 	in.AccessConfigMount = "/Users/me/.config/ai-sandboxes/access/keys/homelab/config:/etc/ssh/ssh_config.d/99-ai-sandbox-access.conf:ro"
 	in.AccessRules = []string{"allow@nas.home.lan:tcp:22"}
 	in.AccessEnv = []string{"AI_SANDBOX_SSH_CONFIG=/run/ai-sandbox/ssh/config"}
-	in.DnsArgs = []string{"--dns-nameserver", "192.168.88.13", "--no-dns-rebind-protection"}
+	in.DnsArgs = []string{"--dns-nameserver", "192.0.2.1", "--no-dns-rebind-protection"}
 	rulesBefore := append([]string{}, in.Network.Rules...)
 
 	p, err := Resolve(mustConfig(t, "claude"), in)
@@ -294,7 +294,7 @@ func TestResolveAccessPlan(t *testing.T) {
 	if !reflect.DeepEqual(p.Network.Rules, wantRules) {
 		t.Errorf("rules = %v, want %v", p.Network.Rules, wantRules)
 	}
-	wantDNS := []string{"--dns-nameserver", "192.168.88.13", "--no-dns-rebind-protection"}
+	wantDNS := []string{"--dns-nameserver", "192.0.2.1", "--no-dns-rebind-protection"}
 	if !reflect.DeepEqual(p.DnsArgs, wantDNS) {
 		t.Errorf("dns args = %v, want %v", p.DnsArgs, wantDNS)
 	}
@@ -307,7 +307,7 @@ func TestResolveAccessPlan(t *testing.T) {
 	wantMounts := [][2]string{
 		{"--mount-dir", in.AccessMount},
 		{"--mount-file", in.AccessConfigMount},
-		{"--dns-nameserver", "192.168.88.13"},
+		{"--dns-nameserver", "192.0.2.1"},
 	}
 	for _, want := range wantMounts {
 		found := false

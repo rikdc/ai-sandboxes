@@ -981,7 +981,7 @@ func accessTestEnv(t *testing.T) (execEnv, string) {
 	// scutil path needs e.run, which these tests leave nil) plus a garbage
 	// line the parsers must ignore.
 	resolv := filepath.Join(t.TempDir(), "resolv.conf")
-	os.WriteFile(resolv, []byte("# generated\nnameserver 192.168.88.13\nnameserver 192.168.88.9\nsearch home.lan\n"), 0o600)
+	os.WriteFile(resolv, []byte("# generated\nnameserver 192.0.2.1\nnameserver 192.0.2.2\nsearch home.lan\n"), 0o600)
 
 	base := e.getenv
 	e.getenv = func(k string) string {
@@ -1016,8 +1016,8 @@ func TestExecuteRunAccessProfile(t *testing.T) {
 	if !containsArg(launched, "AI_SANDBOX_SSH_CONFIG=/run/ai-sandbox/ssh/config") {
 		t.Errorf("argv missing ssh-config environment variable: %v", launched)
 	}
-	if !containsArg(launched, "--dns-nameserver", "192.168.88.13") ||
-		!containsArg(launched, "--dns-nameserver", "192.168.88.9") {
+	if !containsArg(launched, "--dns-nameserver", "192.0.2.1") ||
+		!containsArg(launched, "--dns-nameserver", "192.0.2.2") {
 		t.Errorf("argv missing pinned host DNS resolvers: %v", launched)
 	}
 	if !containsArg(launched, "--no-dns-rebind-protection") {
