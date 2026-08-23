@@ -70,6 +70,7 @@ trusted_dir="$fake_home/.config/ai-sandboxes/trusted"
 
 test -f "$fish_functions_dir/claude.fish" || exit 1
 test -f "$fish_functions_dir/codex.fish" || exit 1
+test -f "$fish_functions_dir/opencode.fish" || exit 1
 test -f "$fish_functions_dir/claude-session.fish" || exit 1
 test -f "$trusted_dir/guard.fish" || exit 1
 
