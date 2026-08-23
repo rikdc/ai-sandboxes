@@ -194,7 +194,13 @@ fi
 ssh -G nasalt > /tmp/ssh-G-alt.txt 2>&1 || { cat /tmp/ssh-G-alt.txt; exit 1; }
 grep -Eiq "^port 2222$" /tmp/ssh-G-alt.txt || { echo "ALT CONFIG MISSING PORT 2222"; cat /tmp/ssh-G-alt.txt; exit 1; }
 ssh-keygen -q -t ed25519 -N '' -f /tmp/wrongkey || { echo "NO GUEST SSH-KEYGEN"; exit 1; }
-if ssh -o BatchMode=yes -i /tmp/wrongkey -o IdentitiesOnly=yes nas true 2>/tmp/ssh-bad.err; then
+# Bypass the generated config entirely: a plain "-i /tmp/wrongkey" only
+# appends to its IdentityFile list, so ssh would silently fall back to the
+# pinned key. -F /dev/null forces the wrong identity to be the only one.
+if ssh -o BatchMode=yes -F /dev/null \
+    -o UserKnownHostsFile=/run/ai-sandbox/ssh/known_hosts \
+    -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -i /tmp/wrongkey \
+    -p 22 claude@%s true 2>/tmp/ssh-bad.err; then
   echo "WRONG KEY ACCEPTED"; exit 1
 fi
 grep -q "Permission denied" /tmp/ssh-bad.err || { echo "UNEXPECTED WRONG-KEY ERROR"; cat /tmp/ssh-bad.err; exit 1; }
@@ -211,7 +217,7 @@ if curl -sS --connect-timeout 5 http://%s:8080/ >/dev/null 2>&1; then
   echo "UNLISTED PORT REACHABLE"; exit 1
 fi
 echo SSH-LEG-OK
-`, serverIP, serverIP)
+`, serverIP, serverIP, serverIP)
 }
 
 // startSSHServerVM launches the detached stand-in server VM, installs and

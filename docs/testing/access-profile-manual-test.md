@@ -44,8 +44,7 @@ guest can copy the private key).
 ```sh
 # on the server
 sudo useradd -m -s /bin/bash sandbox-ssh
-sudo mkdir -p /home/sandbox-ssh/.ssh
-sudo chmod 700 /home/sandbox-ssh/.ssh
+sudo install -d -m 700 -o sandbox-ssh -g sandbox-ssh /home/sandbox-ssh/.ssh
 ```
 
 ## Create the profile and key pair
@@ -96,11 +95,12 @@ chmod 600 ~/.config/ai-sandboxes/access/homelab.json
 ```
 
 For a server on a non-standard port, scan with `ssh-keyscan -p <port>
-nas.example.internal`; the launcher derives the `[<host>]:<port>` known_hosts
-selector from the destination's `port` field, so leave the selector out of the
-pinned lines. The profile host must resolve inside Microsandbox — the SSH
-connection originates in the guest VM, not on your Mac — or be an IPv4
-literal.
+nas.example.internal`. The launcher derives the known_hosts selector from the
+destination's `port` field — `<host>` for port 22, `[<host>]:<port>`
+otherwise. A pasted three-field line must carry that exact selector; you can
+also drop the selector and pin just `<algo> <key>`. The profile host must
+resolve inside Microsandbox — the SSH connection originates in the guest VM,
+not on your Mac — or be an IPv4 literal.
 
 `ssh-keyscan` does not authenticate the key it returns: anything between you
 and the server can hand you its own key. Verify the fingerprint against an
@@ -114,12 +114,12 @@ cd some-project
 ai-sandbox plan claude --access homelab
 ```
 
-Expect: an `allow@nas.example.internal:tcp:22` net rule, a read-only
-`--mount-dir ...:/run/ai-sandbox/ssh:ro` mount, a read-only
-`--mount-file ...:/etc/ssh/ssh_config.d/99-ai-sandbox-access.conf:ro` mount,
-and `AI_SANDBOX_SSH_CONFIG` among the injected variables. `plan` must not
-create or modify anything under
-`~/.config/ai-sandboxes/access/keys/homelab`.
+Expect in the printed plan: a `  rule: allow@nas.example.internal:tcp:22`
+line under `network`, `access mount: <keydir>:/run/ai-sandbox/ssh:ro`,
+`access config mount: <keydir>/config:/etc/ssh/ssh_config.d/99-ai-sandbox-access.conf:ro`,
+and `environment: AI_SANDBOX_SSH_CONFIG=/run/ai-sandbox/ssh/config` (the full
+`msb run argv:` block shows the same values as flags). `plan` must not create
+or modify anything under `~/.config/ai-sandboxes/access/keys/homelab`.
 
 ## Run and verify the round trip
 
@@ -137,18 +137,31 @@ echo "$AI_SANDBOX_SSH_CONFIG"                     # /run/ai-sandbox/ssh/config
 ls -la /run/ai-sandbox/ssh                        # config, known_hosts, keys
 touch /run/ai-sandbox/ssh/probe                   # must fail: read-only
 cat /etc/ssh/ssh_config.d/99-ai-sandbox-access.conf  # same hardened config
-ssh -o BatchMode=yes nas                          # interactive check
+ssh -o BatchMode=yes nas                          # runs; prints ok under a command= pin
 ```
 
 Expected results:
 
 | Check | Expected |
 | --- | --- |
-| `ssh nas` | Authenticates with the profile key, no host-key prompt (pinned) |
-| Wrong key forced: `ssh -o IdentitiesOnly=yes -i /tmp/other nas` | Permission denied |
+| `ssh -o BatchMode=yes nas true` | Authenticates with the profile key, no host-key prompt (pinned) |
+| Wrong key forced (commands below) | Permission denied — and **not** a silent success via the pinned key |
 | Host key mismatch (change a byte in the pinned key body in profile `host_keys`, re-run) | `Host key verification failed` — connection refused, no prompt |
 | Unapproved destination: `curl -m5 https://example.com` | Times out (deny-by-default egress) |
-| Approved host, unlisted port: `nc -z nas.example.internal 2222` | Refused/times out |
+| Approved host, unlisted port: `curl -m5 http://nas.example.internal:2222/` | Times out — the rule blocks even the TCP handshake |
+
+The wrong-key check must bypass the generated config. A plain
+`ssh -i /tmp/other nas` does **not** work: command-line `-i` is appended to
+the config's `IdentityFile` list, so ssh would silently fall back to the
+pinned key and authenticate. Force the wrong identity to be the only one:
+
+```sh
+ssh-keygen -q -t ed25519 -N '' -f /tmp/other
+ssh -o BatchMode=yes -F /dev/null \
+    -o UserKnownHostsFile=/run/ai-sandbox/ssh/known_hosts \
+    -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -i /tmp/other \
+    sandbox-ssh@nas.example.internal true   # expect: Permission denied
+```
 
 If the authorized entry uses `command=`, `ssh nas echo hi` prints `ok`
 regardless of the requested command — proof the server-side restriction holds.
