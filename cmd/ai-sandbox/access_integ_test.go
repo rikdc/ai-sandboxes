@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -23,9 +24,12 @@ import (
 // configuration, and stays inside the deny-by-default network boundary.
 //
 // When AI_SANDBOX_ACCESS_INTEG_SSH=1 is also set, a second VM running sshd
-// stands in for the remote server and the test proves the full SSH leg:
-// key auth succeeds, a different key is rejected, and unlisted ports stay
-// unreachable.
+// stands in for the remote server and the test additionally proves the full
+// SSH leg through the pinned credential path: key auth succeeds, a different
+// key is rejected, and ports outside the profile's exact allow@host:tcp:port
+// rule stay unreachable. The profile's destination Host is pointed at the
+// stand-in VM's real address with its real ssh-ed25519 host key, so the leg
+// exercises the same materialization path production runs use.
 //
 // Skipped unless AI_SANDBOX_MSB_INTEG=1 and msb/docker are usable, matching
 // tunnel_integ_test.go.
@@ -36,6 +40,12 @@ func TestAccessProfileEndToEnd(t *testing.T) {
 	for _, tool := range []string{"msb", "docker", "ssh-keygen"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("%s not on PATH", tool)
+		}
+	}
+	sshLeg := os.Getenv("AI_SANDBOX_ACCESS_INTEG_SSH") == "1"
+	if sshLeg {
+		if _, err := exec.LookPath("ssh-keyscan"); err != nil {
+			t.Skip("ssh-keyscan not on PATH")
 		}
 	}
 
@@ -58,7 +68,23 @@ func TestAccessProfileEndToEnd(t *testing.T) {
 	}
 	genKey(t, filepath.Join(keyDir, "id_ed25519"))
 
-	writeProfile(t, filepath.Join(configDir, "access", "homelab.json"), "nas.test", 22)
+	// The SSH leg needs a live destination: the stand-in VM must exist (and
+	// have contributed its address and host key to the profile) before
+	// executeRun materializes config and known_hosts from the profile.
+	var (
+		serverName string
+		serverIP   string
+		hostKeys   []string
+	)
+	if sshLeg {
+		serverName, serverIP, hostKeys = startSSHServerVM(t, filepath.Join(keyDir, "id_ed25519.pub"))
+	}
+
+	profileHost := "nas.test"
+	if sshLeg {
+		profileHost = serverIP
+	}
+	writeProfile(t, filepath.Join(configDir, "access", "homelab.json"), profileHost, 22, hostKeys)
 
 	home := tempDirUnderHome(t)
 	egressDir := filepath.Join(home, ".config", "microvms")
@@ -112,12 +138,19 @@ func TestAccessProfileEndToEnd(t *testing.T) {
 		t.Errorf("access plan missing --no-dns-rebind-protection: %v", argv)
 	}
 	sandbox := fmt.Sprintf("ai-sandbox-access-integ-%d", time.Now().Unix())
-	launchAccessSandbox(t, sandbox, p, accessProbeScript())
+	probe := accessProbeScript()
+	if sshLeg {
+		probe += "\n" + sshLegProbeScript(serverIP)
+	}
+	launchAccessSandbox(t, sandbox, p, probe)
 
 	// The probe runs as the sandbox's main process (the only place the
 	// injected environment exists; `msb exec` sessions do not inherit it)
 	// and reports through the shared workspace.
 	waitForProbeLog(t, workspaceHostPath(t, p), "PROBE-OK", time.Minute)
+	if serverName != "" {
+		t.Logf("ssh stand-in server %s at %s stayed up for the whole probe", serverName, serverIP)
+	}
 }
 
 // accessProbeScript runs inside the guest and asserts every property the
@@ -144,6 +177,105 @@ if curl -sS --connect-timeout 5 https://example.com/ >/dev/null 2>&1; then
 fi
 echo PROBE-OK
 `
+}
+
+// sshLegProbeScript extends the guest probe with the live SSH assertions:
+// the pinned key authenticates, a throwaway key is rejected, and a port the
+// profile does not allow-list is unreachable on the destination host. The
+// blocked-port check uses curl because /dev/tcp is a bashism and the probe
+// runs under /bin/sh.
+func sshLegProbeScript(serverIP string) string {
+	return fmt.Sprintf(`
+if ! ssh -o BatchMode=yes nas true 2>/tmp/ssh-ok.err; then
+  echo "SSH KEY AUTH FAILED"; cat /tmp/ssh-ok.err; exit 1
+fi
+ssh-keygen -q -t ed25519 -N '' -f /tmp/wrongkey || { echo "NO GUEST SSH-KEYGEN"; exit 1; }
+if ssh -o BatchMode=yes -i /tmp/wrongkey -o IdentitiesOnly=yes nas true 2>/tmp/ssh-bad.err; then
+  echo "WRONG KEY ACCEPTED"; exit 1
+fi
+grep -q "Permission denied" /tmp/ssh-bad.err || { echo "UNEXPECTED WRONG-KEY ERROR"; cat /tmp/ssh-bad.err; exit 1; }
+if curl -sS --connect-timeout 5 http://%s:8080/ >/dev/null 2>&1; then
+  echo "UNLISTED PORT REACHABLE"; exit 1
+fi
+echo SSH-LEG-OK
+`, serverIP)
+}
+
+// startSSHServerVM launches the detached stand-in server VM, installs and
+// starts sshd with the test's public key as claude's only login path, starts
+// a decoy listener on an unlisted port (8080), waits for sshd to answer, and
+// returns its name, address, and public host key line. Host-side cleanup is
+// registered for the whole test.
+func startSSHServerVM(t *testing.T, pubKeyPath string) (name, ip string, hostKeys []string) {
+	t.Helper()
+	pub, err := os.ReadFile(pubKeyPath)
+	if err != nil {
+		t.Fatalf("read generated public key: %v", err)
+	}
+	script := fmt.Sprintf(`
+set -eu
+apt-get update -qq
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-server >/dev/null
+useradd -m -s /bin/sh claude
+install -d -m 700 -o claude -g claude /home/claude/.ssh
+printf '%%s\n' %s > /home/claude/.ssh/authorized_keys
+chown claude:claude /home/claude/.ssh/authorized_keys
+chmod 600 /home/claude/.ssh/authorized_keys
+printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPubkeyAuthentication yes\n' \
+  > /etc/ssh/sshd_config.d/99-integ.conf
+mkdir -p /run/sshd
+/usr/sbin/sshd
+nohup node -e "require('net').createServer(s=>s.end()).listen(8080,'0.0.0.0')" >/tmp/decoy.log 2>&1 &
+`, strconv.Quote(strings.TrimSpace(string(pub))))
+
+	name = fmt.Sprintf("ai-sandbox-access-integ-server-%d", time.Now().Unix())
+	msbRun(t, "run", "--detach", "--no-tty",
+		"--name", name,
+		"--label", "ai-sandbox.agent=codex",
+		"--label", "ai-sandbox.workspace=integ",
+		"node:22-bookworm", "--", "/bin/sh", "-c", script)
+	t.Cleanup(func() {
+		_ = exec.Command("msb", "stop", name).Run()
+		_ = exec.Command("msb", "rm", name).Run()
+	})
+
+	// sshd comes up only after apt finishes installing it; poll until then.
+	deadline := time.Now().Add(3 * time.Minute)
+	for {
+		out, err := exec.Command("msb", "exec", name, "--", "/bin/sh", "-c",
+			"pgrep -x sshd >/dev/null && hostname -I").Output()
+		if err == nil {
+			fields := strings.Fields(string(out))
+			if len(fields) == 0 {
+				t.Fatalf("stand-in VM reported no address: %q", string(out))
+			}
+			ip = fields[0]
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("sshd did not start in stand-in VM within 3m: %v\n%s", err, out)
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	keyOut, err := exec.Command("msb", "exec", name, "--", "/bin/sh", "-c",
+		"cat /etc/ssh/ssh_host_ed25519_key.pub").Output()
+	if err != nil {
+		t.Fatalf("read stand-in host key: %v\n%s", err, keyOut)
+	}
+	line := strings.TrimSpace(string(keyOut))
+	if len(strings.Fields(line)) < 2 {
+		t.Fatalf("unexpected stand-in host key output: %q", line)
+	}
+	hostKeys = []string{line}
+
+	// Fail early if the guest would never trust this server: keyscan from
+	// the host proves the key we pinned matches what the server presents.
+	scan, err := exec.Command("ssh-keyscan", "-T", "10", "-t", "ed25519", ip).Output()
+	if err != nil || !strings.Contains(string(scan), strings.Fields(line)[1]) {
+		t.Fatalf("ssh-keyscan of %s did not confirm the pinned host key (err %v):\n%s", ip, err, scan)
+	}
+	return name, ip, hostKeys
 }
 
 // hasFlagValue reports whether argv carries flag followed by any value.
@@ -264,15 +396,20 @@ func genKey(t *testing.T, path string) {
 	}
 }
 
-func writeProfile(t *testing.T, path, host string, port int) {
+func writeProfile(t *testing.T, path, host string, port int, hostKeys []string) {
 	t.Helper()
+	if len(hostKeys) == 0 {
+		// Non-SSH leg: no live server exists, so pin a syntactically valid
+		// placeholder. Only ssh -G output is asserted in that mode.
+		hostKeys = []string{fmt.Sprintf("%s ssh-ed25519 AAAAplaceholder", host)}
+	}
 	doc := fmt.Sprintf(`{
 	  "schema_version": 1,
 	  "destinations": [
 	    {"alias": "nas", "host": "%s", "port": %d, "user": "claude",
 	     "host_keys": [%q]}
 	  ]
-	}`, host, port, fmt.Sprintf("%s ssh-ed25519 AAAAplaceholder", host))
+	}`, host, port, hostKeys[0])
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
