@@ -55,6 +55,7 @@ Edit `~/.config/ai-sandboxes/marketplaces.json`, starting from the shape in
 - Claude entries must be public canonical GitHub URLs, pinned to a full commit SHA. The selected source must contain `.claude-plugin/marketplace.json` at `path`.
 - `plugins` is an optional allowlist. Omit it or use `[]` to register a marketplace without installing plugins. Selected plugins are installed and enabled when a fresh Claude sandbox home starts; an existing user disablement is preserved.
 - Codex entries must be pinned to a commit SHA and point `skills_path` at directories containing native `SKILL.md` files.
+- OpenCode entries use the same pinning rules as Codex. `skills_path` points at directories containing native `SKILL.md` files, and an optional `plugins_path` points at local `.js`/`.ts` plugin files that are installed read-only into the image. npm plugins are not supported: they would need registry egress on first guest start.
 - Do not put credentials in the configuration or repository URLs.
 
 Claude-specific commands, hooks, agents, and MCP settings are not converted into Codex skills.
@@ -160,33 +161,36 @@ credential you suspect was copied.
 
 `BASE_VERSION` is the project's own release line, bumped by hand when cutting
 a release (e.g. `git tag v$BASE_VERSION`). After ARM64 image verification
-succeeds on `main`, a change to `CODEX_VERSION` or `CLAUDE_CODE_VERSION`
+succeeds on `main`, a change to any agent version pin (`CODEX_VERSION`,
+`CLAUDE_CODE_VERSION`, or `OPENCODE_VERSION`)
 creates an immutable GitHub Release riding on top of that same line, tagged
-`v<BASE_VERSION>+codex-<CODEX_VERSION>-claude-<CLAUDE_CODE_VERSION>` and
+`v<BASE_VERSION>+codex-<CODEX_VERSION>-claude-<CLAUDE_CODE_VERSION>-opencode-<OPENCODE_VERSION>` and
 pointing at the verified upstream commit — one linear tag lineage instead of
 a separate namespace for agent-version bumps. The release includes a
 `release.json` asset with this schema:
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "upstream_commit": "40-character lowercase Git commit SHA",
   "base_version": "exact BASE_VERSION value",
   "codex_version": "exact CODEX_VERSION value",
   "claude_code_version": "exact CLAUDE_CODE_VERSION value",
+  "opencode_version": "exact OPENCODE_VERSION value",
   "created_at": "RFC 3339 UTC timestamp"
 }
 ```
 
 The tag and marker are immutable. A workflow rerun reuses an existing release
-only when its downloaded marker exactly matches the commit and all three
+only when its downloaded marker exactly matches the commit and all four
 versions; otherwise it fails instead of changing a release or tag. A
 prerelease `BASE_VERSION` (any value containing `-`, e.g. `0.1.0-alpha`) keeps
 these releases out of GitHub's "Latest" slot automatically, the same as any
 other prerelease.
 
 Every six hours, the **Agent version watch** workflow reads the `latest` npm
-dist-tags for `@openai/codex` and `@anthropic-ai/claude-code`. When either pin
+dist-tags for `@openai/codex`, `@anthropic-ai/claude-code`, and `opencode-ai`.
+When any pin
 has changed, it updates `versions.env` on a single automation pull request.
 Merging that pull request runs the normal ARM64 verification on `main` and then
 publishes the immutable release marker.

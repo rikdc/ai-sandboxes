@@ -21,13 +21,13 @@ Go to build the `ai-sandbox` control plane.
 That preflights the prerequisites (Git, Go, Docker with a reachable daemon
 and buildx, `msb`), then runs the full sequence: build and install the
 control plane binary to `~/.local/libexec/ai-sandboxes/ai-sandbox`, build the
-base/tools/claude/codex images, load them into Microsandbox once, and verify.
+base/tools/claude/codex/opencode images, load them into Microsandbox once, and verify.
 It fails before mutating anything when a prerequisite is missing, fails fast
 when a step fails, and names the individual script to re-run. Each step
 remains available for maintainers: `scripts/install-ai-sandbox`,
 `scripts/build`, `scripts/load-msb`, `scripts/verify`.
 
-Install the Fish launchers (`claude`, `codex`, and `claude-session`) — this
+Install the Fish launchers (`claude`, `codex`, `opencode`, and `claude-session`) — this
 one is host-shell-specific, so it is opt-in rather than part of
 `./scripts/install`. Running it once marks the wrappers as managed;
 `scripts/update` refreshes them only after that first opt-in:
@@ -38,7 +38,7 @@ one is host-shell-specific, so it is opt-in rather than part of
 
 This copies small wrapper functions into `~/.config/fish/functions/` (not
 symlinks) plus a shared guard snippet under `~/.config/ai-sandboxes/trusted/`.
-The `claude` and `codex` wrappers are pass-throughs; after the guard check
+The `claude`, `codex`, and `opencode` wrappers are pass-throughs; after the guard check
 they hand off to `ai-sandbox run`, which resolves the invocation into a
 single runtime plan (image, workspace, network, egress, shared-state handoff)
 and launches it.
@@ -50,17 +50,18 @@ invocation would then run with full host access. The wrapper checks for this
 overlap at startup and refuses to run when it finds one. Re-run
 `./scripts/install-fish-functions` after moving the checkout.
 
-Claude and Codex both use an HTTPS allowlist by default. Create the files
+Claude, Codex, and OpenCode all use an HTTPS allowlist by default. Create the files
 before first run:
 
 ```fish
 mkdir -p ~/.config/microvms
 cp /path/to/ai-sandboxes/config/claude-egress.example ~/.config/microvms/claude-egress
 cp /path/to/ai-sandboxes/config/codex-egress.example ~/.config/microvms/codex-egress
-chmod 600 ~/.config/microvms/claude-egress ~/.config/microvms/codex-egress
+cp /path/to/ai-sandboxes/config/opencode-egress.example ~/.config/microvms/opencode-egress
+chmod 600 ~/.config/microvms/claude-egress ~/.config/microvms/codex-egress ~/.config/microvms/opencode-egress
 ```
 
-From a project directory, run `claude` or `codex`.
+From a project directory, run `claude`, `codex`, or `opencode`.
 
 ## Configure
 
@@ -125,6 +126,19 @@ process reads its auth token at startup and won't pick up the new credential
 until it restarts. Later runs re-use the persisted token from the
 `codex-home` volume, so you pay this once.
 
+**OpenCode account login**: opencode's ChatGPT browser sign-in binds its
+OAuth callback on `127.0.0.1:1455` inside the guest — the same mechanism:
+
+```console
+# terminal 1
+ai-sandbox run opencode
+# terminal 2
+ai-sandbox opencode login
+```
+
+As with codex, exit and re-run `opencode` after sign-in; later runs re-use
+the token persisted in the `opencode-home` volume.
+
 **MCP server login (Codex or Claude Code)**: signs an already-running sandbox
 into an MCP server's own OAuth (Slack, Notion), same tunnel mechanism:
 
@@ -140,7 +154,8 @@ ai-sandbox claude mcp login --callback-port <P> <server-name>
 Each MCP server's registry lives in that CLI's own persisted config;
 `ai-sandbox` never reads or writes it.
 
-Claude and Codex default to an intentionally restricted network. Use
-`CLAUDE_MSB_PUBLIC_EGRESS=1 claude` or `CODEX_MSB_PUBLIC_EGRESS=1 codex` only
+Claude, Codex, and OpenCode default to an intentionally restricted network. Use
+`CLAUDE_MSB_PUBLIC_EGRESS=1 claude`, `CODEX_MSB_PUBLIC_EGRESS=1 codex`, or
+`OPENCODE_MSB_PUBLIC_EGRESS=1 opencode` only
 when a session needs public Internet access. The mounted project is writable,
 so keep secrets out of it and review agent changes with Git.
