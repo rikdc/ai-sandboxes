@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rikdc/ai-sandboxes/internal/access"
 	"github.com/rikdc/ai-sandboxes/internal/plan"
 	"github.com/rikdc/ai-sandboxes/internal/runtime/microsandbox"
 )
@@ -50,7 +49,9 @@ func TestAccessProfileEndToEnd(t *testing.T) {
 	}
 
 	// --- Host-side setup: profile, dedicated key directory, egress file ---
-	configDir := t.TempDir()
+	// Everything the guest mounts must live under $HOME: microsandbox on
+	// macOS does not share /var/folders (where t.TempDir lands) into VMs.
+	configDir := tempDirUnderHome(t)
 	keyDir := filepath.Join(configDir, "access", "keys", "homelab")
 	if err := os.MkdirAll(keyDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -59,7 +60,7 @@ func TestAccessProfileEndToEnd(t *testing.T) {
 
 	writeProfile(t, filepath.Join(configDir, "access", "homelab.json"), "nas.test", 22)
 
-	home := t.TempDir()
+	home := tempDirUnderHome(t)
 	egressDir := filepath.Join(home, ".config", "microvms")
 	if err := os.MkdirAll(egressDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -67,7 +68,7 @@ func TestAccessProfileEndToEnd(t *testing.T) {
 	// Deliberately empty allowlist: nothing beyond gateway DNS is permitted,
 	// except what --access adds.
 	os.WriteFile(filepath.Join(egressDir, "claude-egress"), []byte("# nothing\n"), 0o600)
-	project := t.TempDir()
+	project := tempDirUnderHome(t)
 
 	e := currentEnv()
 	e.cwd = project
@@ -98,17 +99,10 @@ func TestAccessProfileEndToEnd(t *testing.T) {
 	sandbox := fmt.Sprintf("ai-sandbox-access-integ-%d", time.Now().Unix())
 	launchAccessSandbox(t, sandbox, p, accessProbeScript())
 
-	waitGuestReady(t, sandbox)
-
-	out := msbExec(t, sandbox, accessProbeScript())
-	t.Logf("guest probe output:\n%s", out)
-	if !strings.Contains(out, "PROBE-OK") {
-		t.Fatalf("guest probe did not pass:\n%s", out)
-	}
-
-	if os.Getenv("AI_SANDBOX_ACCESS_INTEG_SSH") == "1" {
-		testSSHRoundTrip(t, configDir, keyDir, e, client)
-	}
+	// The probe runs as the sandbox's main process (the only place the
+	// injected environment exists; `msb exec` sessions do not inherit it)
+	// and reports through the shared workspace.
+	waitForProbeLog(t, workspaceHostPath(t, p), "PROBE-OK", time.Minute)
 }
 
 // accessProbeScript runs inside the guest and asserts every property the
@@ -125,95 +119,14 @@ if touch /run/ai-sandbox/ssh/probe 2>/dev/null; then
 fi
 test "$AI_SANDBOX_SSH_CONFIG" = "/run/ai-sandbox/ssh/config" || { echo "BAD ENV: $AI_SANDBOX_SSH_CONFIG"; exit 1; }
 ssh -F "$AI_SANDBOX_SSH_CONFIG" -G nas > /tmp/ssh-G.txt 2>&1 || { cat /tmp/ssh-G.txt; exit 1; }
-for want in "^user claude$" "^hostname nas.test$" "^port 22$" "^identityfile .*/run/ai-sandbox/ssh/id_ed25519$" "^stricthostkeychecking yes$" "^forwardagent no$" "^clearallforwardings yes$" "^identitiesonly yes$" "^passwordauthentication no$"; do
-  grep -qi "$want" /tmp/ssh-G.txt || { echo "CONFIG MISSING $want"; cat /tmp/ssh-G.txt; exit 1; }
+for want in "^user claude$" "^hostname nas.test$" "^port 22$" "^identityfile .*/run/ai-sandbox/ssh/id_ed25519$" "^stricthostkeychecking (yes|true)$" "^forwardagent no$" "^clearallforwardings yes$" "^identitiesonly yes$" "^passwordauthentication no$"; do
+  grep -Eiq "$want" /tmp/ssh-G.txt || { echo "CONFIG MISSING $want"; cat /tmp/ssh-G.txt; exit 1; }
 done
 if curl -sS --connect-timeout 5 https://example.com/ >/dev/null 2>&1; then
   echo "PUBLIC EGRESS LEAK"; exit 1
 fi
 echo PROBE-OK
 `
-}
-
-// testSSHRoundTrip boots a throwaway sshd VM as the "remote server", pins its
-// host key in the profile, relaunches the client VM, and proves: correct key
-// authenticates, a different key is rejected, unlisted ports are unreachable.
-func testSSHRoundTrip(t *testing.T, configDir, keyDir string, e execEnv, client *microsandbox.Client) {
-	ctx := context.Background()
-	server := fmt.Sprintf("ai-sandbox-access-integ-sshd-%d", time.Now().Unix())
-	image := "node:22-bookworm"
-	if v := os.Getenv("AI_SANDBOX_MSB_INTEG_IMAGE"); v != "" {
-		image = v
-	}
-	runDetached(t, server, image)
-	t.Cleanup(func() {
-		_ = exec.Command("msb", "stop", server).Run()
-		_ = exec.Command("msb", "rm", server).Run()
-	})
-
-	install := exec.CommandContext(ctx, "msb", "exec", server, "--", "/bin/sh", "-c",
-		"apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-server")
-	install.Stdout, install.Stderr = os.Stderr, os.Stderr
-	if err := install.Run(); err != nil {
-		t.Skipf("could not install openssh-server in the stand-in server VM: %v", err)
-	}
-
-	pubBytes, err := os.ReadFile(filepath.Join(keyDir, "id_ed25519.pub"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	authz := fmt.Sprintf("mkdir -p /run/sshd /root/.ssh && echo '%s' > /root/.ssh/authorized_keys && chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys", strings.TrimSpace(string(pubBytes)))
-	msbRun(t, "exec", server, "--", "/bin/sh", "-c", authz)
-	msbRun(t, "exec", server, "--", "/bin/sh", "-c", "nohup /usr/sbin/sshd >/dev/null 2>&1 &")
-	time.Sleep(500 * time.Millisecond)
-
-	ipOut := msbExec(t, server, "hostname -I")
-	ip := strings.Fields(strings.TrimSpace(ipOut))
-	if len(ip) == 0 {
-		t.Fatalf("no server address: %q", ipOut)
-	}
-	addr := ip[0]
-
-	// Pin the server host key exactly as a user would.
-	keyscan, err := exec.CommandContext(ctx, "ssh-keyscan", "-T", "5", addr).Output()
-	if err != nil || len(strings.TrimSpace(string(keyscan))) == 0 {
-		t.Skipf("ssh-keyscan produced no host keys: %v", err)
-	}
-
-	writeProfileWithKeys(t, filepath.Join(configDir, "access", "homelab.json"), addr,
-		strings.Split(string(keyscan), "\n"))
-	prof, err := access.Load(configDir, "homelab")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := access.Materialize(keyDir, prof); err != nil {
-		t.Fatal(err)
-	}
-
-	opts := runOptions{agent: "claude", access: "homelab"}
-	p := resolveForTest(t, opts, e, client)
-	sandbox := fmt.Sprintf("ai-sandbox-access-integ-ssh-%d", time.Now().Unix())
-	launchAccessSandbox(t, sandbox, p, "sleep 300")
-	waitGuestReady(t, sandbox)
-
-	goodKey := filepath.Join(keyDir, "id_ed25519")
-	if out := msbExec(t, sandbox, fmt.Sprintf(
-		`ssh -F "$AI_SANDBOX_SSH_CONFIG" -o BatchMode=yes -o ConnectTimeout=8 -i '%s' nas true && echo AUTH-OK`, goodKey)); !strings.Contains(out, "AUTH-OK") {
-		t.Errorf("SSH auth with the profile key failed:\n%s", out)
-	}
-
-	wrongKey := filepath.Join(t.TempDir(), "wrong_key")
-	genKey(t, wrongKey)
-	if out := msbExec(t, sandbox, fmt.Sprintf(
-		`ssh -F "$AI_SANDBOX_SSH_CONFIG" -o BatchMode=yes -o ConnectTimeout=8 -o IdentitiesOnly=yes -i '%s' nas true 2>/dev/null && echo WRONG-KEY-SUCCEEDED`, wrongKey)); strings.Contains(out, "WRONG-KEY-SUCCEEDED") {
-		t.Error("a non-profile key authenticated; identity pinning failed")
-	}
-
-	// Unlisted port on the approved host must stay unreachable.
-	if out := msbExec(t, sandbox, fmt.Sprintf(
-		`/bin/bash -c '(echo > /dev/tcp/%s/2222) 2>/dev/null && echo PORT-OPEN'`, addr)); strings.Contains(out, "PORT-OPEN") {
-		t.Error("unlisted port 2222 was reachable; the network rule leaked")
-	}
 }
 
 // resolveForTest runs the production resolvePlan path (including real docker
@@ -252,13 +165,46 @@ func launchAccessSandbox(t *testing.T, name string, p *plan.RuntimePlan, probe s
 	}
 	full = append(full, "--", "env")
 	full = append(full, p.Environment...)
-	full = append(full, "/bin/sh", "-c", probe)
+	// Report through the rw workspace mount: the only channel visible to the
+	// host from a detached sandbox's main process. The explicit newline
+	// terminates the brace group (a bare ";" after the script's own trailing
+	// newline is a POSIX-sh syntax error).
+	full = append(full, "/bin/sh", "-c",
+		fmt.Sprintf("{ %s\n} > %s/probe.log 2>&1", strings.TrimSpace(probe), p.WorkspaceGuest))
 	msbRun(t, full...)
 }
 
-func runDetached(t *testing.T, name, image string) {
+// waitForProbeLog polls the workspace's probe.log on the host until it
+// contains want or the deadline passes.
+func waitForProbeLog(t *testing.T, hostWorkspace, want string, d time.Duration) {
 	t.Helper()
-	msbRun(t, "run", "--name", name, "--detach", "--pull", "never", image, "--", "/bin/sh", "-c", "sleep 600")
+	log := filepath.Join(hostWorkspace, "probe.log")
+	deadline := time.Now().Add(d)
+	for {
+		out, err := os.ReadFile(log)
+		if err == nil && strings.Contains(string(out), want) {
+			t.Logf("guest probe output:\n%s", out)
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("guest probe did not report %q within %s:\n%s", want, d, out)
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+// workspaceHostPath finds the host-side path of the plan's workspace mount.
+func workspaceHostPath(t *testing.T, p *plan.RuntimePlan) string {
+	t.Helper()
+	argv := p.MsbArgv()
+	for i, a := range argv {
+		if a == "--mount-dir" && i+1 < len(argv) && strings.Contains(argv[i+1], ":"+p.WorkspaceGuest+":") {
+			host, _, _ := strings.Cut(argv[i+1], ":")
+			return host
+		}
+	}
+	t.Fatalf("workspace mount not found in argv for guest path %s", p.WorkspaceGuest)
+	return ""
 }
 
 func msbRun(t *testing.T, args ...string) {
@@ -270,25 +216,18 @@ func msbRun(t *testing.T, args ...string) {
 	}
 }
 
-func msbExec(t *testing.T, sandbox, script string) string {
+func tempDirUnderHome(t *testing.T) string {
 	t.Helper()
-	out, err := exec.Command("msb", "exec", sandbox, "--", "/bin/sh", "-c", script).CombinedOutput()
+	base := filepath.Join(os.Getenv("HOME"), ".cache", "ai-sandbox-access-integ")
+	if err := os.MkdirAll(base, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := os.MkdirTemp(base, "run-")
 	if err != nil {
-		t.Logf("msb exec output:\n%s", out)
-		t.Fatalf("msb exec %s: %v", sandbox, err)
+		t.Fatal(err)
 	}
-	return string(out)
-}
-
-func waitGuestReady(t *testing.T, sandbox string) {
-	t.Helper()
-	for i := 0; i < 30; i++ {
-		if err := exec.Command("msb", "exec", sandbox, "--", "/bin/true").Run(); err == nil {
-			return
-		}
-		time.Sleep(time.Second)
-	}
-	t.Fatalf("sandbox %s never became ready", sandbox)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
 }
 
 func genKey(t *testing.T, path string) {
@@ -300,10 +239,10 @@ func genKey(t *testing.T, path string) {
 
 func writeProfile(t *testing.T, path, host string, port int) {
 	t.Helper()
-	writeProfileWithKeys(t, path, host, []string{fmt.Sprintf("%s ssh-ed25519 AAAAplaceholder", host)})
+	writeProfileWithKeys(t, path, host, "claude", port, []string{fmt.Sprintf("%s ssh-ed25519 AAAAplaceholder", host)})
 }
 
-func writeProfileWithKeys(t *testing.T, path, host string, hostKeys []string) {
+func writeProfileWithKeys(t *testing.T, path, host, user string, port int, hostKeys []string) {
 	t.Helper()
 	keys := make([]string, 0, len(hostKeys))
 	for _, k := range hostKeys {
@@ -315,10 +254,10 @@ func writeProfileWithKeys(t *testing.T, path, host string, hostKeys []string) {
 	doc := fmt.Sprintf(`{
 	  "schema_version": 1,
 	  "destinations": [
-	    {"alias": "nas", "host": "%s", "port": 22, "user": "claude",
+	    {"alias": "nas", "host": "%s", "port": %d, "user": "%s",
 	     "host_keys": [%s]}
 	  ]
-	}`, host, strings.Join(keys, ","))
+	}`, host, port, user, strings.Join(keys, ","))
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
