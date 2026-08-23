@@ -594,72 +594,9 @@ func resolvePlan(ctx context.Context, opts runOptions, e execEnv, stderr io.Writ
 	// read-only credential mount, and the guest ssh-config environment
 	// variable. Validation is read-only; only executeRun materializes the
 	// rendered config and known_hosts, so `plan` performs no writes.
-	var (
-		accessMount       string
-		accessConfigMount string
-		accessRules       []string
-		accessEnv         []string
-		dnsArgs           []string
-	)
-	if opts.access != "" {
-		cfgDir, err := e.userConfigDir()
-		if err != nil {
-			fmt.Fprintf(stderr, "ai-sandbox: %s\n", err)
-			return nil, 2
-		}
-		prof, err := access.Load(cfgDir, opts.access)
-		if err != nil {
-			fmt.Fprintf(stderr, "%s: --access %s: %s\n", opts.agent, opts.access, err)
-			return nil, 2
-		}
-		keyDir, err := access.ResolveKeyDir(cfgDir, opts.access)
-		if err != nil {
-			fmt.Fprintf(stderr, "%s: --access %s: %s\n", opts.agent, opts.access, err)
-			return nil, 2
-		}
-		if err := access.ValidateKeyDir(keyDir); err != nil {
-			fmt.Fprintf(stderr, "%s: --access %s: %s\n", opts.agent, opts.access, err)
-			return nil, 2
-		}
-		// The whitelist already rules out ~/.ssh and everything else outside
-		// the key root; this additionally refuses a workspace that contains
-		// (or is contained in) the mounted key directory.
-		if err := plan.RefuseOverlap(workspace, []string{keyDir}); err != nil {
-			fmt.Fprintf(stderr, "%s: --access %s: %s\n", opts.agent, opts.access, err)
-			return nil, 1
-		}
-		if network.Public {
-			fmt.Fprintf(stderr, "%s: warning: public egress is enabled; --access adds no network restriction while it lasts\n", opts.agent)
-		} else {
-			accessRules = prof.NetRules()
-		}
-		accessEnv = []string{access.SSHConfigEnvVar + "=" + access.GuestDir + "/config"}
-		accessMount = keyDir + ":" + access.GuestDir + ":ro"
-		accessConfigMount = access.ConfigIncludeMount(keyDir)
-		if !network.Public {
-			// LAN destinations only resolve if guest DNS queries reach the
-			// host's own resolvers: internal zones (home.lan, split-horizon
-			// corporate names) exist nowhere else, and msb's macOS upstream
-			// auto-discovery is not reliable on every boot. Pin the discovered
-			// resolvers explicitly. Rebind protection must also go: it drops
-			// answers pointing at private RFC1918 addresses, which is exactly
-			// what every LAN destination resolves to (verified against msb
-			// v0.6.13). Public-egress runs keep msb's defaults.
-			servers := e.hostDNSNameservers(ctx)
-			for _, s := range servers {
-				dnsArgs = append(dnsArgs, "--dns-nameserver", s)
-			}
-			dnsArgs = append(dnsArgs, "--no-dns-rebind-protection")
-			if len(servers) == 0 {
-				fmt.Fprintf(stderr, "%s: warning: could not discover host DNS resolvers; relying on microsandbox auto-discovery\n", opts.agent)
-			}
-		}
-		if writeAccessMaterial {
-			if err := access.Materialize(keyDir, prof); err != nil {
-				fmt.Fprintf(stderr, "%s: --access %s: %s\n", opts.agent, opts.access, err)
-				return nil, 1
-			}
-		}
+	acc, code := e.resolveAccess(ctx, opts.agent, opts.access, network, workspace, writeAccessMaterial, stderr)
+	if code != 0 {
+		return nil, code
 	}
 
 	p, err := plan.Resolve(agentCfg, plan.Input{
@@ -669,17 +606,101 @@ func resolvePlan(ctx context.Context, opts runOptions, e execEnv, stderr io.Writ
 		SharedState:       shared,
 		Network:           network,
 		ImageOverride:     imageOverride,
-		AccessMount:       accessMount,
-		AccessConfigMount: accessConfigMount,
-		AccessRules:       accessRules,
-		AccessEnv:         accessEnv,
-		DnsArgs:           dnsArgs,
+		AccessMount:       acc.mount,
+		AccessConfigMount: acc.configMount,
+		AccessRules:       acc.rules,
+		AccessEnv:         acc.env,
+		DnsArgs:           acc.dnsArgs,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "ai-sandbox: %s\n", err)
 		return nil, 2
 	}
 	return p, 0
+}
+
+// accessResolution is everything an --access profile contributes to the
+// runtime plan: the credential mount, the ssh_config include mount, the
+// per-destination network rules, the guest environment, and the DNS flags.
+type accessResolution struct {
+	mount       string
+	configMount string
+	rules       []string
+	env         []string
+	dnsArgs     []string
+}
+
+// resolveAccess validates the named access profile and derives its
+// contribution to the plan. A zero accessResolution and exit code 0 is
+// returned when name is empty. writeAccessMaterial is true only for `run`: it
+// materializes the rendered ssh config and pinned known_hosts into the
+// profile's key directory before launch; `plan` passes false so printing a
+// plan never writes anything.
+func (e execEnv) resolveAccess(ctx context.Context, agent, name string, network plan.Network, workspace string, writeAccessMaterial bool, stderr io.Writer) (accessResolution, int) {
+	var a accessResolution
+	if name == "" {
+		return a, 0
+	}
+	cfgDir, err := e.userConfigDir()
+	if err != nil {
+		fmt.Fprintf(stderr, "ai-sandbox: %s\n", err)
+		return a, 2
+	}
+	prof, err := access.Load(cfgDir, name)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: --access %s: %s\n", agent, name, err)
+		return a, 2
+	}
+	keyDir, err := access.ResolveKeyDir(cfgDir, name)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: --access %s: %s\n", agent, name, err)
+		return a, 2
+	}
+	if err := access.ValidateKeyDir(keyDir); err != nil {
+		fmt.Fprintf(stderr, "%s: --access %s: %s\n", agent, name, err)
+		return a, 2
+	}
+	// The whitelist already rules out ~/.ssh and everything else outside the
+	// key root; this additionally refuses a workspace that contains (or is
+	// contained in) the mounted key directory.
+	if err := plan.RefuseOverlap(workspace, []string{keyDir}); err != nil {
+		fmt.Fprintf(stderr, "%s: --access %s: %s\n", agent, name, err)
+		return a, 1
+	}
+	if network.Public {
+		fmt.Fprintf(stderr, "%s: warning: public egress is enabled; --access adds no network restriction while it lasts\n", agent)
+	}
+	// plan.Resolve drops these when the network is public, so they are
+	// always computed here rather than duplicating that check.
+	a.rules = prof.NetRules()
+	a.env = []string{access.SSHConfigEnvVar + "=" + access.GuestDir + "/config"}
+	a.mount = keyDir + ":" + access.GuestDir + ":ro"
+	a.configMount = access.ConfigIncludeMount(keyDir)
+	if !network.Public {
+		// LAN destinations only resolve if guest DNS queries reach the host's
+		// own resolvers: internal zones (home.lan, split-horizon corporate
+		// names) exist nowhere else, and msb's macOS upstream auto-discovery
+		// is not reliable on every boot. Pin the discovered resolvers
+		// explicitly. Rebind protection must also go: it drops answers
+		// pointing at private RFC1918 addresses, which is exactly what every
+		// LAN destination resolves to (verified against msb v0.6.13).
+		// Public-egress runs keep msb's defaults.
+		servers := e.hostDNSNameservers(ctx)
+		for _, s := range servers {
+			a.dnsArgs = append(a.dnsArgs, "--dns-nameserver", s)
+		}
+		a.dnsArgs = append(a.dnsArgs, "--no-dns-rebind-protection")
+		if len(servers) == 0 {
+			fmt.Fprintf(stderr, "%s: warning: could not discover host DNS resolvers; relying on microsandbox auto-discovery\n", agent)
+		}
+	}
+	if writeAccessMaterial {
+		if err := access.Materialize(keyDir, prof); err != nil {
+			fmt.Fprintf(stderr, "%s: --access %s: %s\n", agent, name, err)
+			return a, 1
+		}
+	}
+	return a, 0
 }
 
 func (e execEnv) resolveNetwork(cfg config.Agent, home string) (plan.Network, error) {

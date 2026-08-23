@@ -96,13 +96,10 @@ type Input struct {
 	// session images, whose tag is resolved from a profile at run time rather
 	// than baked into the agent policy.
 	ImageOverride string
-	// AccessMount is the full --mount-dir value for the read-only --access
-	// credential directory ("<hostdir>:/run/ai-sandbox/ssh:ro"), empty when
-	// the run carries no access profile.
-	AccessMount string
-	// AccessConfigMount is the full --mount-file value that exposes the same
-	// generated ssh_config as a system-wide include, set together with
-	// AccessMount. See RuntimePlan.AccessConfigMount.
+	// AccessMount and AccessConfigMount carry the --access credential and
+	// ssh_config-include mounts through to RuntimePlan verbatim; see
+	// RuntimePlan.AccessMount and RuntimePlan.AccessConfigMount.
+	AccessMount       string
 	AccessConfigMount string
 	// AccessRules are extra msb --net-rule values appended after every
 	// allowlist-derived rule: one exact allow@host:tcp:port per access

@@ -17,6 +17,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/rikdc/ai-sandboxes/internal/config"
 )
 
 // SchemaVersion is the only supported access-profile schema version.
@@ -70,8 +72,12 @@ type Profile struct {
 	Destinations  []Destination `json:"destinations"`
 }
 
+// nameRE is the same slug pattern config.SharedStateIDRE exports for
+// shared-state ids and internal/plan reuses for its own id validation; access
+// profile names and destination aliases follow the identical contract, so it
+// is reused here rather than redefined.
 var (
-	nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+	nameRE = config.SharedStateIDRE()
 	hostRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]*$`)
 	userRE = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
 )

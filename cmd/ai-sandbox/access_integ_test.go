@@ -266,25 +266,13 @@ func genKey(t *testing.T, path string) {
 
 func writeProfile(t *testing.T, path, host string, port int) {
 	t.Helper()
-	writeProfileWithKeys(t, path, host, "claude", port, []string{fmt.Sprintf("%s ssh-ed25519 AAAAplaceholder", host)})
-}
-
-func writeProfileWithKeys(t *testing.T, path, host, user string, port int, hostKeys []string) {
-	t.Helper()
-	keys := make([]string, 0, len(hostKeys))
-	for _, k := range hostKeys {
-		k = strings.TrimSpace(k)
-		if k != "" && !strings.HasPrefix(k, "#") {
-			keys = append(keys, fmt.Sprintf("%q", k))
-		}
-	}
 	doc := fmt.Sprintf(`{
 	  "schema_version": 1,
 	  "destinations": [
-	    {"alias": "nas", "host": "%s", "port": %d, "user": "%s",
-	     "host_keys": [%s]}
+	    {"alias": "nas", "host": "%s", "port": %d, "user": "claude",
+	     "host_keys": [%q]}
 	  ]
-	}`, host, port, user, strings.Join(keys, ","))
+	}`, host, port, fmt.Sprintf("%s ssh-ed25519 AAAAplaceholder", host))
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
