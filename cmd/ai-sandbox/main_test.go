@@ -1000,6 +1000,9 @@ func TestExecuteRunAccessProfile(t *testing.T) {
 	if !containsArg(launched, wantMount, keyDir+":/run/ai-sandbox/ssh:ro") {
 		t.Errorf("argv missing read-only access mount %q: %v", keyDir, launched)
 	}
+	if !containsArg(launched, "--mount-file", keyDir+"/config:/etc/ssh/ssh_config.d/99-ai-sandbox-access.conf:ro") {
+		t.Errorf("argv missing system-wide ssh_config include mount: %v", launched)
+	}
 	if !containsArg(launched, "--net-rule", "allow@nas.home.lan:tcp:22") {
 		t.Errorf("argv missing exact destination rule: %v", launched)
 	}

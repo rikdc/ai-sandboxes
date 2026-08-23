@@ -30,6 +30,18 @@ const GuestDir = "/run/ai-sandbox/ssh"
 // generated hardened config, so plain `ssh <alias>` uses it by default.
 const SSHConfigEnvVar = "AI_SANDBOX_SSH_CONFIG"
 
+// ConfigIncludePath is the system-wide include location the generated
+// ssh_config is additionally mounted at. Debian's stock /etc/ssh/ssh_config
+// sources /etc/ssh/ssh_config.d/*.conf, so plain `ssh <alias>` resolves
+// without -F even for processes that never see AI_SANDBOX_SSH_CONFIG.
+const ConfigIncludePath = "/etc/ssh/ssh_config.d/99-ai-sandbox-access.conf"
+
+// ConfigIncludeMount returns the read-only --mount-file value that exposes
+// <keyDir>/config at ConfigIncludePath inside the guest.
+func ConfigIncludeMount(keyDir string) string {
+	return filepath.Join(keyDir, "config") + ":" + ConfigIncludePath + ":ro"
+}
+
 // PrivateKeyFile and PublicKeyFile are the file names required inside every
 // key directory.
 const (

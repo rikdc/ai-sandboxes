@@ -82,8 +82,12 @@ Shared state is visible to every image that opts into the same profile. It does 
 `ai-sandbox run claude --access <name>` (and `ai-sandbox plan ... --access
 <name>`) mounts one dedicated, host-owned SSH key directory read-only into the
 guest at `/run/ai-sandbox/ssh`, allows exactly the listed destinations through
-the deny-by-default network, and injects `AI_SANDBOX_SSH_CONFIG` so plain
-`ssh <alias>` inside the session uses a hardened configuration.
+the deny-by-default network, and wires plain `ssh <alias>` inside the session
+to a hardened configuration two ways: the generated config is mounted at
+`/etc/ssh/ssh_config.d/99-ai-sandbox-access.conf` (a stock Debian include
+location, so every ssh invocation picks it up), and
+`AI_SANDBOX_SSH_CONFIG` points at `/run/ai-sandbox/ssh/config` for anything
+that reads it explicitly.
 
 Two files define an access profile, both under
 `${XDG_CONFIG_HOME:-$HOME/.config}/ai-sandboxes/`:

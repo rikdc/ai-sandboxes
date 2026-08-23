@@ -95,8 +95,10 @@ ai-sandbox plan claude --access homelab
 ```
 
 Expect: an `allow@nas.example.internal:tcp:22` net rule, a read-only
-`--mount-dir ...:/run/ai-sandbox/ssh:ro` mount, and `AI_SANDBOX_SSH_CONFIG`
-among the injected variables. `plan` must not create or modify anything under
+`--mount-dir ...:/run/ai-sandbox/ssh:ro` mount, a read-only
+`--mount-file ...:/etc/ssh/ssh_config.d/99-ai-sandbox-access.conf:ro` mount,
+and `AI_SANDBOX_SSH_CONFIG` among the injected variables. `plan` must not
+create or modify anything under
 `~/.config/ai-sandboxes/access/keys/homelab`.
 
 ## Run and verify the round trip
@@ -114,6 +116,7 @@ Once the Claude session is up, ask it to run:
 echo "$AI_SANDBOX_SSH_CONFIG"                     # /run/ai-sandbox/ssh/config
 ls -la /run/ai-sandbox/ssh                        # config, known_hosts, keys
 touch /run/ai-sandbox/ssh/probe                   # must fail: read-only
+cat /etc/ssh/ssh_config.d/99-ai-sandbox-access.conf  # same hardened config
 ssh -o BatchMode=yes nas                          # interactive check
 ```
 
@@ -129,6 +132,17 @@ Expected results:
 
 If the authorized entry uses `command=`, `ssh nas echo hi` prints `ok`
 regardless of the requested command — proof the server-side restriction holds.
+
+### Troubleshooting: destination does not resolve
+
+If `ssh nas` fails with `Could not resolve hostname`, the guest could not
+resolve the profile's `host` value. Sandbox DNS is proxied by Microsandbox
+and may not resolve names your Mac resolves via local DNS/mDNS (`.lan`,
+`.internal`, mDNS-adjacent setups). Check with
+`getent hosts nas.example.internal` inside the guest. Workaround: use the
+raw IP address as the profile `host` — the connection is made from the host
+side, so no guest-side resolution is involved — and re-pin `host_keys` with
+`ssh-keyscan <ip>`.
 
 ## Cleanup
 

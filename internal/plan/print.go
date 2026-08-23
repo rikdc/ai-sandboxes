@@ -24,6 +24,7 @@ func Print(w io.Writer, p *RuntimePlan) {
 	}
 	if p.AccessMount != "" {
 		f("access mount", p.AccessMount)
+		f("access config mount", p.AccessConfigMount)
 	}
 	var resources []string
 	if p.Resources.CPUs > 0 {

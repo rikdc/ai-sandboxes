@@ -118,7 +118,9 @@ if touch /run/ai-sandbox/ssh/probe 2>/dev/null; then
   echo "MOUNT IS WRITABLE"; exit 1
 fi
 test "$AI_SANDBOX_SSH_CONFIG" = "/run/ai-sandbox/ssh/config" || { echo "BAD ENV: $AI_SANDBOX_SSH_CONFIG"; exit 1; }
-ssh -F "$AI_SANDBOX_SSH_CONFIG" -G nas > /tmp/ssh-G.txt 2>&1 || { cat /tmp/ssh-G.txt; exit 1; }
+# The generated config must also be reachable as a system-wide include, so
+# bare "ssh nas" (no -F) resolves the alias with the hardened options.
+ssh -G nas > /tmp/ssh-G.txt 2>&1 || { cat /tmp/ssh-G.txt; exit 1; }
 for want in "^user claude$" "^hostname nas.test$" "^port 22$" "^identityfile .*/run/ai-sandbox/ssh/id_ed25519$" "^stricthostkeychecking (yes|true)$" "^forwardagent no$" "^clearallforwardings yes$" "^identitiesonly yes$" "^passwordauthentication no$"; do
   grep -Eiq "$want" /tmp/ssh-G.txt || { echo "CONFIG MISSING $want"; cat /tmp/ssh-G.txt; exit 1; }
 done

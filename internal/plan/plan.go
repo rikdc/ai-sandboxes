@@ -73,6 +73,12 @@ type RuntimePlan struct {
 	// credential directory ("<hostdir>:/run/ai-sandbox/ssh:ro"), empty when
 	// the run carries no access profile.
 	AccessMount string `json:"access_mount,omitempty"`
+	// AccessConfigMount is the full --mount-file value that exposes the same
+	// generated ssh_config as a system-wide include
+	// ("<hostdir>/config:/etc/ssh/ssh_config.d/99-ai-sandbox-access.conf:ro")
+	// so plain `ssh <alias>` resolves inside the guest without -F. Empty when
+	// the run carries no access profile. Set together with AccessMount.
+	AccessConfigMount string `json:"access_config_mount,omitempty"`
 }
 
 // Input to Resolve. Workspace must already be canonical and validated by the
@@ -91,6 +97,10 @@ type Input struct {
 	// credential directory ("<hostdir>:/run/ai-sandbox/ssh:ro"), empty when
 	// the run carries no access profile.
 	AccessMount string
+	// AccessConfigMount is the full --mount-file value that exposes the same
+	// generated ssh_config as a system-wide include, set together with
+	// AccessMount. See RuntimePlan.AccessConfigMount.
+	AccessConfigMount string
 	// AccessRules are extra msb --net-rule values appended after every
 	// allowlist-derived rule: one exact allow@host:tcp:port per access
 	// destination. Ignored when Network is public.
@@ -169,24 +179,25 @@ func Resolve(cfg config.Agent, in Input) (*RuntimePlan, error) {
 	env := append(append([]string{}, cfg.Environment...), in.AccessEnv...)
 
 	return &RuntimePlan{
-		AgentName:      cfg.Name,
-		Image:          image,
-		User:           cfg.User,
-		TTY:            cfg.TTY,
-		WorkspaceHost:  in.Workspace,
-		WorkspaceGuest: guest,
-		WorkspaceMount: workspaceMount,
-		HomeVolume:     cfg.HomeVolume,
-		HomeMount:      homeMount,
-		SharedState:    in.SharedState,
-		Resources:      resources,
-		Security:       cfg.Security,
-		Network:        network,
-		Environment:    env,
-		Command:        cfg.Command,
-		AgentArgs:      in.AgentArgs,
-		Labels:         labels,
-		AccessMount:    in.AccessMount,
+		AgentName:         cfg.Name,
+		Image:             image,
+		User:              cfg.User,
+		TTY:               cfg.TTY,
+		WorkspaceHost:     in.Workspace,
+		WorkspaceGuest:    guest,
+		WorkspaceMount:    workspaceMount,
+		HomeVolume:        cfg.HomeVolume,
+		HomeMount:         homeMount,
+		SharedState:       in.SharedState,
+		Resources:         resources,
+		Security:          cfg.Security,
+		Network:           network,
+		Environment:       env,
+		Command:           cfg.Command,
+		AgentArgs:         in.AgentArgs,
+		Labels:            labels,
+		AccessMount:       in.AccessMount,
+		AccessConfigMount: in.AccessConfigMount,
 	}, nil
 }
 
@@ -246,6 +257,9 @@ func (p *RuntimePlan) MsbArgv() []string {
 	}
 	if p.AccessMount != "" {
 		argv = append(argv, "--mount-dir", p.AccessMount)
+	}
+	if p.AccessConfigMount != "" {
+		argv = append(argv, "--mount-file", p.AccessConfigMount)
 	}
 	argv = append(argv, "--workdir", p.WorkspaceGuest)
 	argv = append(argv, p.Image)

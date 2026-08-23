@@ -589,9 +589,10 @@ func resolvePlan(ctx context.Context, opts runOptions, e execEnv, stderr io.Writ
 	// variable. Validation is read-only; only executeRun materializes the
 	// rendered config and known_hosts, so `plan` performs no writes.
 	var (
-		accessMount string
-		accessRules []string
-		accessEnv   []string
+		accessMount       string
+		accessConfigMount string
+		accessRules       []string
+		accessEnv         []string
 	)
 	if opts.access != "" {
 		cfgDir, err := e.userConfigDir()
@@ -627,6 +628,7 @@ func resolvePlan(ctx context.Context, opts runOptions, e execEnv, stderr io.Writ
 		}
 		accessEnv = []string{access.SSHConfigEnvVar + "=" + access.GuestDir + "/config"}
 		accessMount = keyDir + ":" + access.GuestDir + ":ro"
+		accessConfigMount = access.ConfigIncludeMount(keyDir)
 		if writeAccessMaterial {
 			if err := access.Materialize(keyDir, prof); err != nil {
 				fmt.Fprintf(stderr, "%s: --access %s: %s\n", opts.agent, opts.access, err)
@@ -636,15 +638,16 @@ func resolvePlan(ctx context.Context, opts runOptions, e execEnv, stderr io.Writ
 	}
 
 	p, err := plan.Resolve(agentCfg, plan.Input{
-		Agent:         opts.agent,
-		AgentArgs:     opts.agentArgs,
-		Workspace:     workspace,
-		SharedState:   shared,
-		Network:       network,
-		ImageOverride: imageOverride,
-		AccessMount:   accessMount,
-		AccessRules:   accessRules,
-		AccessEnv:     accessEnv,
+		Agent:             opts.agent,
+		AgentArgs:         opts.agentArgs,
+		Workspace:         workspace,
+		SharedState:       shared,
+		Network:           network,
+		ImageOverride:     imageOverride,
+		AccessMount:       accessMount,
+		AccessConfigMount: accessConfigMount,
+		AccessRules:       accessRules,
+		AccessEnv:         accessEnv,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "ai-sandbox: %s\n", err)

@@ -269,6 +269,7 @@ func TestSharedStateFromLabels(t *testing.T) {
 func TestResolveAccessPlan(t *testing.T) {
 	in := resolveInput("claude", nil)
 	in.AccessMount = "/Users/me/.config/ai-sandboxes/access/keys/homelab:/run/ai-sandbox/ssh:ro"
+	in.AccessConfigMount = "/Users/me/.config/ai-sandboxes/access/keys/homelab/config:/etc/ssh/ssh_config.d/99-ai-sandbox-access.conf:ro"
 	in.AccessRules = []string{"allow@nas.home.lan:tcp:22"}
 	in.AccessEnv = []string{"AI_SANDBOX_SSH_CONFIG=/run/ai-sandbox/ssh/config"}
 	rulesBefore := append([]string{}, in.Network.Rules...)
@@ -298,16 +299,21 @@ func TestResolveAccessPlan(t *testing.T) {
 	}
 
 	argv := p.MsbArgv()
-	want := []string{"--mount-dir", in.AccessMount}
-	found := false
-	for i := 0; i+1 < len(argv); i++ {
-		if argv[i] == want[0] && argv[i+1] == want[1] {
-			found = true
-			break
-		}
+	wantMounts := [][2]string{
+		{"--mount-dir", in.AccessMount},
+		{"--mount-file", in.AccessConfigMount},
 	}
-	if !found {
-		t.Errorf("msb argv missing read-only access mount: %v", argv)
+	for _, want := range wantMounts {
+		found := false
+		for i := 0; i+1 < len(argv); i++ {
+			if argv[i] == want[0] && argv[i+1] == want[1] {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("msb argv missing %s %s: %v", want[0], want[1], argv)
+		}
 	}
 
 	// Public egress drops the per-destination rules rather than carrying
