@@ -51,6 +51,14 @@ if [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ]; then
     *'deadbeef'*) ;;
     *) fail "binary does not carry the stamped revision: $version" ;;
   esac
+  # Both stamped values must be asserted exactly: the artifact reports the
+  # release it is attached to (BASE_VERSION from versions.env), not a stale
+  # hardcode, alongside the revision.
+  # shellcheck disable=SC1091 # Resolved from the repository root above.
+  . ./versions.env || fail 'could not read versions.env'
+  test -n "$BASE_VERSION" || fail 'versions.env defines no BASE_VERSION'
+  test "$version" = "ai-sandbox $BASE_VERSION (revision deadbeefdeadbeefdeadbeefdeadbeefdeadbeef)" \
+    || fail "binary does not report the stamped release and revision: $version"
 fi
 
 # 2. Wrong argument count is a usage error.

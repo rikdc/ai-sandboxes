@@ -36,6 +36,15 @@ esac
 repo_root=$(cd "$(dirname "$0")/.." && pwd) || die 'could not resolve repository root'
 cd "$repo_root" || die "could not cd to $repo_root"
 
+# The published artifact must report the release it is attached to: stamp
+# BASE_VERSION from versions.env alongside the revision. A stale or missing
+# BASE_VERSION would silently mislabel the binary, so it is required.
+# shellcheck disable=SC1091 # Resolved from the repository root above.
+. ./versions.env || die 'could not read versions.env'
+case ${BASE_VERSION:-} in
+  '' | *$'\n'*) die 'versions.env must define a single-line BASE_VERSION' ;;
+esac
+
 mkdir -p "$out_dir" || die "could not create output directory $out_dir"
 case $out_dir in
   *$'\n'*) die 'OUTPUT_DIR must not contain a newline' ;;
@@ -46,9 +55,9 @@ esac
 tmpdir=$(mktemp -d "$out_dir/.build.XXXXXX") || die 'could not create a staging directory'
 trap 'rm -rf -- "$tmpdir"' EXIT
 
-printf 'building ai-sandbox darwin/arm64 (revision %s)...\n' "$revision"
+printf 'building ai-sandbox %s darwin/arm64 (revision %s)...\n' "$BASE_VERSION" "$revision"
 CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
-  go build -trimpath -ldflags "-X main.revision=$revision" -o "$tmpdir/ai-sandbox" ./cmd/ai-sandbox \
+  go build -trimpath -ldflags "-X main.version=$BASE_VERSION -X main.revision=$revision" -o "$tmpdir/ai-sandbox" ./cmd/ai-sandbox \
   || die 'cross-compiling ./cmd/ai-sandbox for darwin/arm64 failed'
 
 # Validate the freshly built binary before packaging it. A darwin/arm64
@@ -63,10 +72,11 @@ case $binary_magic in
 esac
 if [ "$(uname -s)-$(uname -m)" = Darwin-arm64 ]; then
   built_version=$("$tmpdir/ai-sandbox" version 2>/dev/null) || die 'built binary failed to report its version'
-  case "$built_version" in
-    ai-sandbox\ *) ;;
-    *) die "built binary produced unexpected version output: $built_version" ;;
-  esac
+  # Assert both stamped values exactly: the release and the revision the
+  # artifact claims must be the ones this build injected.
+  expected_version_output="ai-sandbox $BASE_VERSION (revision $revision)"
+  test "$built_version" = "$expected_version_output" \
+    || die "built binary reported '$built_version', want '$expected_version_output'"
 fi
 
 chmod 0755 "$tmpdir/ai-sandbox" || die 'could not set mode on built binary'

@@ -3,16 +3,12 @@ set -o pipefail
 cd "$(dirname "$0")/.." || exit 1
 
 marketplace_test_image=ai-sandboxes-claude-marketplace-test:local
-release_marker_test=$(mktemp)
-release_marker_previous=$(mktemp)
-release_marker_next=$(mktemp)
 # The marketplace test seeds the claude image from the checked-in runtime-test
 # fixture instead of the user's marketplaces.json. Stage it in a scratch
 # directory shaped like a user configuration directory and point Bake's
 # userconfig context at it via the USER_CONFIG_DIR variable override.
 marketplace_config_dir=$(mktemp -d) || exit 1
 cleanup() {
-  rm -f "$release_marker_test" "$release_marker_previous" "$release_marker_next"
   rm -rf "$marketplace_config_dir"
   docker image rm -f "$marketplace_test_image" >/dev/null 2>&1 || true
 }
@@ -60,15 +56,7 @@ if git grep -nE '/Users/[^/]+/' -- ':!README.md' ':!scripts/verify' ':!internal/
   exit 1
 fi
 
-./.github/workflows/release-marker create "$release_marker_test" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0.145.0 2.1.224 2026-08-09T20:00:00Z
-./.github/workflows/release-marker validate "$release_marker_test" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0.145.0 2.1.224
-printf '%s\n' 'CODEX_VERSION=0.144.0' 'CLAUDE_CODE_VERSION=2.1.224' >"$release_marker_previous"
-printf '%s\n' 'CODEX_VERSION=0.145.0' 'CLAUDE_CODE_VERSION=2.1.224' >"$release_marker_next"
-./.github/workflows/release-marker changed "$release_marker_previous" "$release_marker_next"
-if ./.github/workflows/release-marker changed versions.env versions.env; then
-  echo 'release marker reported an unchanged versions.env as changed' >&2
-  exit 1
-fi
+bash scripts/lib/release-marker-check.sh || exit 1
 
 for image in ai-sandboxes-base:local ai-sandboxes-tools:local ai-sandboxes-claude:local ai-sandboxes-codex:local; do docker image inspect "$image" >/dev/null || exit 1; done
 test "$(docker image inspect --format '{{.Architecture}}' ai-sandboxes-base:local)" = arm64 || exit 1

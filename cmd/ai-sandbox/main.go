@@ -23,7 +23,12 @@ import (
 	"github.com/rikdc/ai-sandboxes/internal/session"
 )
 
-const version = "0.1.0"
+// version is the project release (BASE_VERSION from versions.env), injected
+// by scripts/build-release via -ldflags "-X main.version=..." so a published
+// artifact reports the release it is attached to. A build that didn't go
+// through it (e.g. `go build` or `go run` during development) keeps this zero
+// value instead of claiming a release it was not built from.
+var version = "unknown"
 
 // revision is the exact git commit this binary was built from, injected by
 // scripts/install-ai-sandbox via -ldflags "-X main.revision=...". A build
