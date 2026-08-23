@@ -47,15 +47,16 @@ for the supported schema and shared-state behavior.
 
 ## SSH access
 
-`ai-sandbox run --access <name>` gives a session outbound SSH to exact
-destinations: one `allow@host:tcp:<port>` network rule per profile entry, the
-matching key directory mounted read-only at `/run/ai-sandbox/ssh`, and a
-generated ssh configuration that pins `known_hosts`, forbids agent and port
-forwarding, and disables password authentication. Unlisted hosts and ports
-remain unreachable, and `ai-sandbox plan --access <name>` shows the intended
-destinations without touching anything. The SSH connections originate inside
-the guest VM, not on the host — which is why the profile's destinations must
-resolve from within Microsandbox (or be IPv4 literals).
+`ai-sandbox run --access <name>` gives a session outbound SSH to one exact
+destination: an `allow@host:tcp:<port>` network rule, the matching key
+directory mounted read-only at `/run/ai-sandbox/ssh`, and a generated ssh
+configuration that pins `known_hosts`, forbids agent and port forwarding, and
+disables password authentication. Unlisted hosts and ports remain unreachable,
+and `ai-sandbox plan --access <name>` shows the intended destination without
+touching anything. The SSH connections originate inside the guest VM, not on
+the host; access runs pin the host's DNS resolvers (and opt out of rebind
+protection) so internal names resolve from within Microsandbox — see
+[configuration](configuration.md#ssh-access-profiles).
 
 Understand what this design does and does not protect:
 

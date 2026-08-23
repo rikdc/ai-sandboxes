@@ -271,7 +271,6 @@ func TestResolveAccessPlan(t *testing.T) {
 	in.AccessMount = "/Users/me/.config/ai-sandboxes/access/keys/homelab:/run/ai-sandbox/ssh:ro"
 	in.AccessConfigMount = "/Users/me/.config/ai-sandboxes/access/keys/homelab/config:/etc/ssh/ssh_config.d/99-ai-sandbox-access.conf:ro"
 	in.AccessRules = []string{"allow@nas.home.lan:tcp:22"}
-	in.AccessEnv = []string{"AI_SANDBOX_SSH_CONFIG=/run/ai-sandbox/ssh/config"}
 	rulesBefore := append([]string{}, in.Network.Rules...)
 
 	p, err := Resolve(mustConfig(t, "claude"), in)
@@ -281,13 +280,8 @@ func TestResolveAccessPlan(t *testing.T) {
 	if p.AccessMount == "" {
 		t.Error("access mount not set on the plan")
 	}
-	wantEnv := []string{
-		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
-		"ENABLE_CLAUDEAI_MCP_SERVERS=false",
-		"AI_SANDBOX_SSH_CONFIG=/run/ai-sandbox/ssh/config",
-	}
-	if !reflect.DeepEqual(p.Environment, wantEnv) {
-		t.Errorf("environment = %v, want %v", p.Environment, wantEnv)
+	if len(p.Environment) != 2 {
+		t.Errorf("environment = %v, want only the agent's own environment (no access env)", p.Environment)
 	}
 	wantRules := append(rulesBefore, "allow@nas.home.lan:tcp:22")
 	if !reflect.DeepEqual(p.Network.Rules, wantRules) {
@@ -299,11 +293,11 @@ func TestResolveAccessPlan(t *testing.T) {
 	}
 
 	argv := p.MsbArgv()
-	wantMounts := [][2]string{
+	wantFlags := [][2]string{
 		{"--mount-dir", in.AccessMount},
 		{"--mount-file", in.AccessConfigMount},
 	}
-	for _, want := range wantMounts {
+	for _, want := range wantFlags {
 		found := false
 		for i := 0; i+1 < len(argv); i++ {
 			if argv[i] == want[0] && argv[i+1] == want[1] {
@@ -315,11 +309,28 @@ func TestResolveAccessPlan(t *testing.T) {
 			t.Errorf("msb argv missing %s %s: %v", want[0], want[1], argv)
 		}
 	}
-	for _, a := range argv {
-		if a == "--dns-nameserver" || a == "--no-dns-rebind-protection" {
-			t.Errorf("msb argv must not carry DNS flags (removed from v1): %v", argv)
-			break
+
+	// DNS flags are appended after the network flags when provided.
+	in.DnsArgs = []string{"--dns-nameserver", "192.168.88.13", "--no-dns-rebind-protection"}
+	p3, err := Resolve(mustConfig(t, "claude"), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv3 := p3.MsbArgv()
+	dnsStart := -1
+	netEnd := -1
+	for i, a := range argv3 {
+		switch a {
+		case "--dns-nameserver":
+			if dnsStart < 0 {
+				dnsStart = i
+			}
+		case "--net-rule":
+			netEnd = i
 		}
+	}
+	if dnsStart < 0 || dnsStart < netEnd {
+		t.Errorf("DNS flags missing or not after the network flags: %v", argv3)
 	}
 
 	// Public egress drops the per-destination rules rather than carrying

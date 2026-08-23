@@ -81,32 +81,28 @@ Shared state is visible to every image that opts into the same profile. It does 
 
 `ai-sandbox run claude --access <name>` (and `ai-sandbox plan ... --access
 <name>`) mounts one dedicated, host-owned SSH key directory read-only into the
-guest at `/run/ai-sandbox/ssh`, allows exactly the listed destinations through
-the deny-by-default network, and wires plain `ssh <alias>` inside the session
-to a hardened configuration two ways: the generated config is mounted at
-`/etc/ssh/ssh_config.d/99-ai-sandbox-access.conf` (a stock Debian include
-location, so every ssh invocation picks it up), and
-`AI_SANDBOX_SSH_CONFIG` points at `/run/ai-sandbox/ssh/config` for anything
-that reads it explicitly.
+guest at `/run/ai-sandbox/ssh`, allows exactly the profile's destination
+through the deny-by-default network, and wires plain `ssh <name>` inside the
+session to a hardened configuration by mounting the generated config at
+`/etc/ssh/ssh_config.d/99-ai-sandbox-access.conf` — a stock Debian include
+location, so every ssh invocation picks it up.
 
-Two files define an access profile, both under
+A profile pins exactly one destination: one host, one account, one port. To
+reach several machines, create one access profile per machine. Two files
+define an access profile, both under
 `${XDG_CONFIG_HOME:-$HOME/.config}/ai-sandboxes/`:
 
 1. The profile `access/<name>.json` — copy the shape from
-   `config/access.example.json`:
+   `config/access.example.json`. The profile name is the guest-side ssh alias,
+   so this file is reachable as `ssh homelab`:
 
    ```json
    {
      "schema_version": 1,
-     "destinations": [
-       {
-         "alias": "nas",
-         "host": "nas.home.lan",
-         "port": 22,
-         "user": "claude",
-         "host_keys": ["nas.home.lan ssh-ed25519 AAAA..."]
-       }
-     ]
+     "host": "nas.home.lan",
+     "port": 22,
+     "user": "claude",
+     "host_keys": ["nas.home.lan ssh-ed25519 AAAA..."]
    }
    ```
 
@@ -131,14 +127,23 @@ unpinned destinations, malformed or mismatched host-key lines, symlinked key
 directories pointing outside `access/keys/`, loose permissions, or a workspace
 overlapping the key directory.
 
-Destinations must resolve inside Microsandbox, because the SSH connections
-originate in the guest VM. Use a name your guest-side resolver can answer
-(supported by Microsandbox's DNS) or an IPv4 literal; LAN-only names that only
-your host's resolver knows will not resolve. For a server on a non-standard
-port, collect its host key with `ssh-keyscan -p <port> <host>` and set `port`
-in the destination — the launcher renders the known_hosts selector as
-`<host>` for port 22 and `[<host>]:<port>` otherwise, so you never write the
-selector yourself.
+Access runs also adjust guest DNS so internal names resolve. The launcher
+discovers the host's upstream resolvers (System Configuration on macOS,
+`/etc/resolv.conf` elsewhere) and pins them with `--dns-nameserver`, because
+Microsandbox's own auto-discovery is not reliable on every boot and internal
+zones (`.lan`, split-horizon corporate names) exist nowhere else. It also
+passes `--no-dns-rebind-protection`: rebind protection drops answers pointing
+at private RFC1918 addresses, which is what every LAN destination resolves to.
+This changes DNS behavior for the whole session; public-egress runs keep
+Microsandbox's defaults — the trade-off is deliberate and scoped to
+`--access`.
+
+The SSH connection originates in the guest VM. With the pinned resolvers,
+LAN-only names your host resolves should resolve in the guest too; an IPv4
+literal always works as a fallback. For a server on a non-standard port,
+collect its host key with `ssh-keyscan -p <port> <host>` and set `port` in the
+profile — the launcher renders the known_hosts selector as `<host>` for port
+22 and `[<host>]:<port>` otherwise, so you never write the selector yourself.
 
 The remote account must be distinct from your own and restricted on the
 server side — see [the security notes](claude-security.md#ssh-access) for why,

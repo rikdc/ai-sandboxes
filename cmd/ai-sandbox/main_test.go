@@ -1004,10 +1004,10 @@ func accessFixtures(t *testing.T) (string, string) {
 	os.MkdirAll(profileDir, 0o700)
 	os.WriteFile(filepath.Join(profileDir, "homelab.json"), []byte(`{
 	  "schema_version": 1,
-	  "destinations": [
-	    {"alias": "nas", "host": "nas.home.lan", "port": 22, "user": "claude",
-	     "host_keys": ["nas.home.lan ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEqqWmcHasScOzNO2MFtiFY/x1M1WwoTHHS/wb7jISq"]}
-	  ]
+	  "host": "nas.home.lan",
+	  "port": 22,
+	  "user": "claude",
+	  "host_keys": ["nas.home.lan ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEqqWmcHasScOzNO2MFtiFY/x1M1WwoTHHS/wb7jISq"]
 	}`), 0o600)
 
 	keyDir := filepath.Join(configDir, "access", "keys", "homelab")
@@ -1046,6 +1046,12 @@ func accessTestEnv(t *testing.T) (execEnv, string) {
 	t.Helper()
 	e, _ := testEnv(t)
 	configDir, resolved := accessFixtures(t)
+	// Deterministic DNS discovery: a canned fallback resolver file (the
+	// scutil path needs e.run, which these tests leave nil) plus lines the
+	// parsers must ignore.
+	resolv := filepath.Join(t.TempDir(), "resolv.conf")
+	os.WriteFile(resolv, []byte("# generated\nnameserver 192.168.88.13\nnameserver 192.168.88.9\nsearch home.lan\n"), 0o600)
+	e.resolvConfPath = resolv
 	return withConfigDir(e, configDir), resolved
 }
 
@@ -1068,15 +1074,19 @@ func TestExecuteRunAccessProfile(t *testing.T) {
 	if !containsArg(launched, "--net-rule", "allow@nas.home.lan:tcp:22") {
 		t.Errorf("argv missing exact destination rule: %v", launched)
 	}
-	if !containsArg(launched, "AI_SANDBOX_SSH_CONFIG=/run/ai-sandbox/ssh/config") {
-		t.Errorf("argv missing ssh-config environment variable: %v", launched)
+	if !containsArg(launched, "--dns-nameserver", "192.168.88.13") ||
+		!containsArg(launched, "--dns-nameserver", "192.168.88.9") {
+		t.Errorf("argv missing pinned host DNS resolvers: %v", launched)
+	}
+	if !containsArg(launched, "--no-dns-rebind-protection") {
+		t.Errorf("argv missing rebind-protection opt-out for LAN answers: %v", launched)
 	}
 
 	cfg, err := os.ReadFile(filepath.Join(keyDir, "config"))
 	if err != nil {
 		t.Fatalf("run did not materialize the ssh config: %v", err)
 	}
-	for _, want := range []string{"IdentitiesOnly yes", "Host nas", "HostName nas.home.lan"} {
+	for _, want := range []string{"IdentitiesOnly yes", "Host homelab", "HostName nas.home.lan"} {
 		if !strings.Contains(string(cfg), want) {
 			t.Errorf("materialized config missing %q:\n%s", want, cfg)
 		}
@@ -1084,6 +1094,34 @@ func TestExecuteRunAccessProfile(t *testing.T) {
 	kh, err := os.ReadFile(filepath.Join(keyDir, "known_hosts"))
 	if err != nil || !strings.Contains(string(kh), "nas.home.lan ssh-ed25519 AAAA") {
 		t.Errorf("materialized known_hosts wrong (err %v): %s", err, kh)
+	}
+}
+
+// TestExecuteRunAccessProfilePublicEgressKeepsDNSDefaults pins the other half
+// of the DNS contract: resolver pinning exists for LAN destinations under
+// deny-by-default networking, while public-egress runs keep microsandbox's
+// own upstream discovery and default rebind protection.
+func TestExecuteRunAccessProfilePublicEgressKeepsDNSDefaults(t *testing.T) {
+	e, _ := accessTestEnv(t)
+	base := e.getenv
+	e.getenv = func(k string) string {
+		if k == "CLAUDE_MSB_PUBLIC_EGRESS" {
+			return "1"
+		}
+		return base(k)
+	}
+	var launched []string
+	code := executeRun(context.Background(), runOptions{agent: "claude", access: "homelab"}, e, &bytes.Buffer{}, newFakeMsb(),
+		func(argv []string) error { launched = argv; return nil })
+	if code != 0 {
+		t.Fatalf("exit code = %d", code)
+	}
+	for _, banned := range []string{"--dns-nameserver", "--no-dns-rebind-protection"} {
+		for _, a := range launched {
+			if a == banned {
+				t.Errorf("public-egress argv must not carry %s: %v", banned, launched)
+			}
+		}
 	}
 }
 

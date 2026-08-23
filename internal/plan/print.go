@@ -48,6 +48,9 @@ func Print(w io.Writer, p *RuntimePlan) {
 	for _, rule := range p.Network.Rules {
 		f("  rule", rule)
 	}
+	if len(p.DnsArgs) > 0 {
+		f("dns args", strings.Join(p.DnsArgs, " "))
+	}
 	if len(p.Environment) > 0 {
 		f("environment", strings.Join(p.Environment, " "))
 	}

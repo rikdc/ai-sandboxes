@@ -73,30 +73,29 @@ Write the profile. You need the server's host key line:
 
 ```sh
 ssh-keyscan nas.example.internal
-# paste each output line into host_keys below
+# paste the "<algo> <key>" tail into host_keys below (the selector prefix is optional)
 
 cat > ~/.config/ai-sandboxes/access/homelab.json <<'EOF'
 {
   "schema_version": 1,
-  "destinations": [
-    {
-      "alias": "nas",
-      "host": "nas.example.internal",
-      "port": 22,
-      "user": "sandbox-ssh",
-      "host_keys": [
-        "nas.example.internal ssh-ed25519 AAAA...your-keyscan-line"
-      ]
-    }
+  "host": "nas.example.internal",
+  "port": 22,
+  "user": "sandbox-ssh",
+  "host_keys": [
+    "nas.example.internal ssh-ed25519 AAAA...your-keyscan-line"
   ]
 }
 EOF
 chmod 600 ~/.config/ai-sandboxes/access/homelab.json
 ```
 
+The profile name is the guest-side ssh alias: this destination is reachable as
+`ssh homelab`. One profile pins exactly one destination; create one access
+profile per machine.
+
 For a server on a non-standard port, scan with `ssh-keyscan -p <port>
 nas.example.internal`. The launcher derives the known_hosts selector from the
-destination's `port` field — `<host>` for port 22, `[<host>]:<port>`
+profile's `port` field — `<host>` for port 22, `[<host>]:<port>`
 otherwise. A pasted three-field line must carry that exact selector; you can
 also drop the selector and pin just `<algo> <key>`. The profile host must
 resolve inside Microsandbox — the SSH connection originates in the guest VM,
@@ -115,11 +114,12 @@ ai-sandbox plan claude --access homelab
 ```
 
 Expect in the printed plan: a `rule: allow@nas.example.internal:tcp:22`
-line under `network`, `access mount: <keydir>:/run/ai-sandbox/ssh:ro`,
-`access config mount: <keydir>/config:/etc/ssh/ssh_config.d/99-ai-sandbox-access.conf:ro`,
-and `environment: AI_SANDBOX_SSH_CONFIG=/run/ai-sandbox/ssh/config` (the full
-`msb run argv:` block shows the same values as flags). `plan` must not create
-or modify anything under `~/.config/ai-sandboxes/access/keys/homelab`.
+line under `network`, a `dns args:` line with the pinned host resolvers and
+`--no-dns-rebind-protection`, `access mount: <keydir>:/run/ai-sandbox/ssh:ro`,
+and `access config mount: <keydir>/config:/etc/ssh/ssh_config.d/99-ai-sandbox-access.conf:ro`
+(the full `msb run argv:` block shows the same values as flags). `plan` must
+not create or modify anything under
+`~/.config/ai-sandboxes/access/keys/homelab`.
 
 ## Run and verify the round trip
 
@@ -133,52 +133,44 @@ in the key directory — edit the profile, never the generated files.
 Once the Claude session is up, ask it to run:
 
 ```sh
-echo "$AI_SANDBOX_SSH_CONFIG"                     # /run/ai-sandbox/ssh/config
 ls -la /run/ai-sandbox/ssh                        # config, known_hosts, keys
 touch /run/ai-sandbox/ssh/probe                   # must fail: read-only
 cat /etc/ssh/ssh_config.d/99-ai-sandbox-access.conf  # same hardened config
-ssh -o BatchMode=yes nas                          # runs; prints ok under a command= pin
+grep '^nameserver' /etc/resolv.conf               # your Mac's resolver (pinned)
+ssh -o BatchMode=yes homelab                      # runs; prints ok under a command= pin
 ```
 
 Expected results:
 
 | Check | Expected |
 | --- | --- |
-| `ssh -o BatchMode=yes nas true` | Authenticates with the profile key, no host-key prompt (pinned) |
-| Wrong key forced (commands below) | Permission denied — and **not** a silent success via the pinned key |
+| `ssh -o BatchMode=yes homelab true` | Authenticates with the profile key, no host-key prompt (pinned) |
 | Host key mismatch (change a byte in the pinned key body in profile `host_keys`, re-run) | `Host key verification failed` — connection refused, no prompt |
 | Unapproved destination: `curl -m5 https://example.com` | Times out (deny-by-default egress) |
 | Approved host, unlisted port: `curl -m5 http://nas.example.internal:2222/` | Times out — the rule blocks even the TCP handshake |
 
-The wrong-key check must bypass the generated config. A plain
-`ssh -i /tmp/other nas` does **not** work: command-line `-i` is appended to
-the config's `IdentityFile` list, so ssh would silently fall back to the
-pinned key and authenticate. Force the wrong identity to be the only one:
-
-```sh
-ssh-keygen -q -t ed25519 -N '' -f /tmp/other
-ssh -o BatchMode=yes -F /dev/null \
-    -o UserKnownHostsFile=/run/ai-sandbox/ssh/known_hosts \
-    -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -i /tmp/other \
-    sandbox-ssh@nas.example.internal true   # expect: Permission denied
-```
-
-If the authorized entry uses `command=`, `ssh nas echo hi` prints `ok`
+If the authorized entry uses `command=`, `ssh homelab echo hi` prints `ok`
 regardless of the requested command — proof the server-side restriction holds.
 
 ### Troubleshooting: destination does not resolve
 
-The SSH connection originates inside the guest VM, so `ssh nas` resolves
-`nas.example.internal` with Microsandbox's guest-side DNS. If it fails with
+Access runs pin your Mac's resolvers (`scutil --dns`) as the sandbox's DNS
+upstreams and disable rebind protection, so `home.lan`-style names should
+resolve exactly as they do on the host. If `ssh homelab` still fails with
 `Could not resolve hostname`:
 
-1. Inside the guest, run `getent hosts nas.example.internal` to confirm.
-2. Use an IPv4 literal as the profile `host` instead of a name your host's
-   resolver knows but the guest's does not, and re-pin `host_keys` with
-   `ssh-keyscan <ip>` (verify the fingerprint before trusting it).
+1. Check `ai-sandbox plan claude --access homelab --verbose` shows
+   `dns args:      --dns-nameserver <ip> ... --no-dns-rebind-protection`.
+   Missing entries mean resolver discovery failed — check `scutil --dns | head`.
+2. Inside the guest, run `cat /etc/resolv.conf` then
+   `getent hosts nas.example.internal` to confirm.
+3. Fallback workaround: use the raw IPv4 literal as the profile `host` and
+   re-pin `host_keys` with `ssh-keyscan <ip>` (verify the fingerprint before
+   trusting it).
 
-There is no resolver pinning or DNS bypass: v1 requires destinations that
-resolve normally inside Microsandbox.
+Note: a fresh VM answering NXDOMAIN for *everything* (public names included)
+is a known Microsandbox auto-discovery flake; relaunching fixes it. Pinned
+resolvers avoid it entirely.
 
 ## Cleanup
 
@@ -197,5 +189,5 @@ rm -rf ~/.config/ai-sandboxes/access/keys/homelab \
   guest can point its own ssh client elsewhere. The real boundaries are the
   network rules, the dedicated account, and the server-side
   `authorized_keys` restrictions (see docs/claude-security.md).
-- Only one key per profile (`id_ed25519`); additional destinations go in the
-  same profile file.
+- Only one key per profile (`id_ed25519`); one destination per profile —
+  create one access profile per machine.

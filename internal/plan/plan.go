@@ -69,6 +69,9 @@ type RuntimePlan struct {
 	// `msb list --label`. Nil for agents that do not need label-based
 	// discovery.
 	Labels []string `json:"labels,omitempty"`
+	// DnsArgs carries the extra msb DNS flags contributed by an access
+	// profile. See Input.DnsArgs.
+	DnsArgs []string `json:"dns_args,omitempty"`
 	// AccessMount is the full --mount-dir value for the read-only --access
 	// credential directory ("<hostdir>:/run/ai-sandbox/ssh:ro"), empty when
 	// the run carries no access profile.
@@ -76,7 +79,7 @@ type RuntimePlan struct {
 	// AccessConfigMount is the full --mount-file value that exposes the same
 	// generated ssh_config as a system-wide include
 	// ("<hostdir>/config:/etc/ssh/ssh_config.d/99-ai-sandbox-access.conf:ro")
-	// so plain `ssh <alias>` resolves inside the guest without -F. Empty when
+	// so plain `ssh <name>` resolves inside the guest without -F. Empty when
 	// the run carries no access profile. Set together with AccessMount.
 	AccessConfigMount string `json:"access_config_mount,omitempty"`
 }
@@ -99,13 +102,16 @@ type Input struct {
 	AccessMount       string
 	AccessConfigMount string
 	// AccessRules are extra msb --net-rule values appended after every
-	// allowlist-derived rule: one exact allow@host:tcp:port per access
-	// destination. Ignored when Network is public.
+	// allowlist-derived rule: one exact allow@host:tcp:port for the access
+	// profile's destination. Ignored when Network is public.
 	AccessRules []string
-	// AccessEnv are extra guest environment entries contributed by the
-	// access profile (currently AI_SANDBOX_SSH_CONFIG), appended after the
-	// agent's own environment.
-	AccessEnv []string
+	// DnsArgs are extra `msb run` DNS flags (e.g. --dns-nameserver IP,
+	// --no-dns-rebind-protection) appended after the network flags. Access
+	// profiles set them so guest lookups reach the host's LAN resolvers and
+	// private-IP answers survive rebind protection; see the caller in
+	// cmd/ai-sandbox. Empty for plain runs, which keep msb's own upstream
+	// discovery and its default rebind protection.
+	DnsArgs []string
 }
 
 var (
@@ -173,7 +179,8 @@ func Resolve(cfg config.Agent, in Input) (*RuntimePlan, error) {
 		// are dropped rather than silently carried.
 		network.Rules = nil
 	}
-	env := append(append([]string{}, cfg.Environment...), in.AccessEnv...)
+	dnsArgs := append([]string{}, in.DnsArgs...)
+	env := append([]string{}, cfg.Environment...)
 
 	return &RuntimePlan{
 		AgentName:         cfg.Name,
@@ -190,6 +197,7 @@ func Resolve(cfg config.Agent, in Input) (*RuntimePlan, error) {
 		Security:          cfg.Security,
 		Network:           network,
 		Environment:       env,
+		DnsArgs:           dnsArgs,
 		Command:           cfg.Command,
 		AgentArgs:         in.AgentArgs,
 		Labels:            labels,
@@ -247,6 +255,7 @@ func (p *RuntimePlan) MsbArgv() []string {
 	}
 	argv = append(argv, resourceFlags(p.Resources, p.Security)...)
 	argv = append(argv, networkFlags(p.Network)...)
+	argv = append(argv, p.DnsArgs...)
 	argv = append(argv, "--mount-dir", p.WorkspaceMount)
 	argv = append(argv, "--mount-named", p.HomeMount)
 	if p.SharedState != nil {

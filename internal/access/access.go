@@ -1,11 +1,12 @@
 // Package access loads and validates host-owned SSH access profiles for
-// `ai-sandbox run --access <name>`. A profile names exact SSH destinations
-// (host, port, user) with pinned server host keys; its key material lives in
-// one dedicated per-profile directory under the user configuration tree,
-// mounted read-only into the guest at /run/ai-sandbox/ssh. The package is
-// deliberately strict: profiles are JSON with unknown fields rejected, and
-// the key directory whitelist structurally refuses ~/.ssh, workspaces, and
-// every other location on the host.
+// `ai-sandbox run --access <name>`. A profile pins one exact SSH destination
+// (host, port, user) with pinned server host keys, reachable from the guest
+// as `ssh <name>`; its key material lives in one dedicated per-profile
+// directory under the user configuration tree, mounted read-only into the
+// guest at /run/ai-sandbox/ssh. The package is deliberately strict: profiles
+// are JSON with unknown fields rejected, and the key directory whitelist
+// structurally refuses ~/.ssh, workspaces, and every other location on the
+// host.
 package access
 
 import (
@@ -30,14 +31,10 @@ const SchemaVersion = 1
 // inside the guest.
 const GuestDir = "/run/ai-sandbox/ssh"
 
-// SSHConfigEnvVar is the guest environment variable pointing ssh(1) at the
-// generated hardened config, so plain `ssh <alias>` uses it by default.
-const SSHConfigEnvVar = "AI_SANDBOX_SSH_CONFIG"
-
 // ConfigIncludePath is the system-wide include location the generated
-// ssh_config is additionally mounted at. Debian's stock /etc/ssh/ssh_config
-// sources /etc/ssh/ssh_config.d/*.conf, so plain `ssh <alias>` resolves
-// without -F even for processes that never see AI_SANDBOX_SSH_CONFIG.
+// ssh_config is mounted at — the single delivery mechanism. Debian's stock
+// /etc/ssh/ssh_config sources /etc/ssh/ssh_config.d/*.conf, so plain
+// `ssh <name>` resolves inside the guest without -F.
 const ConfigIncludePath = "/etc/ssh/ssh_config.d/99-ai-sandbox-access.conf"
 
 // ConfigIncludeMount returns the read-only --mount-file value that exposes
@@ -53,12 +50,18 @@ const (
 	PublicKeyFile  = "id_ed25519.pub"
 )
 
-// Destination is one exact SSH endpoint the guest may reach.
-type Destination struct {
-	Alias string `json:"alias"`
-	Host  string `json:"host"`
-	Port  int    `json:"port"`
-	User  string `json:"user"`
+// Profile mirrors ~/.config/ai-sandboxes/access/<name>.json. It pins exactly
+// one SSH destination: one host, one account, one port. The profile name is
+// the guest-side ssh alias (`ssh <name>`); multiple destinations are expressed
+// as multiple access profiles.
+type Profile struct {
+	SchemaVersion int `json:"schema_version"`
+	// Host is the exact destination hostname the guest may reach.
+	Host string `json:"host"`
+	// Port is the exact TCP port of the destination.
+	Port int `json:"port"`
+	// User is the remote account ssh authenticates as.
+	User string `json:"user"`
 	// HostKeys are pinned known_hosts lines for Host. At least one is
 	// required, so a guest can never be talked into trusting an unverified
 	// server key. Each line is either the full known_hosts form
@@ -70,16 +73,11 @@ type Destination struct {
 	HostKeys []string `json:"host_keys"`
 }
 
-// Profile mirrors ~/.config/ai-sandboxes/access/<name>.json.
-type Profile struct {
-	SchemaVersion int           `json:"schema_version"`
-	Destinations  []Destination `json:"destinations"`
-}
-
 // nameRE is the same slug pattern config.SharedStateIDRE exports for
 // shared-state ids and internal/plan reuses for its own id validation; access
-// profile names and destination aliases follow the identical contract, so it
-// is reused here rather than redefined.
+// profile names follow the identical contract (they become both the key
+// directory name and the guest ssh alias), so it is reused here rather than
+// redefined.
 var (
 	nameRE = config.SharedStateIDRE()
 	hostRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]*$`)
@@ -151,35 +149,22 @@ func (p *Profile) Validate() error {
 	if p.SchemaVersion != SchemaVersion {
 		return fmt.Errorf("unsupported schema_version %d (want %d)", p.SchemaVersion, SchemaVersion)
 	}
-	if len(p.Destinations) == 0 {
-		return fmt.Errorf("at least one destination is required")
+	if !hostRE.MatchString(p.Host) || strings.Contains(p.Host, "*") {
+		return fmt.Errorf("invalid host %q", p.Host)
 	}
-	seen := map[string]bool{}
-	for i, d := range p.Destinations {
-		if !nameRE.MatchString(d.Alias) {
-			return fmt.Errorf("destination %d: invalid alias %q", i+1, d.Alias)
-		}
-		if seen[d.Alias] {
-			return fmt.Errorf("destination %d: duplicate alias %q", i+1, d.Alias)
-		}
-		seen[d.Alias] = true
-		if !hostRE.MatchString(d.Host) || strings.Contains(d.Host, "*") {
-			return fmt.Errorf("destination %s: invalid host %q", d.Alias, d.Host)
-		}
-		if d.Port < 1 || d.Port > 65535 {
-			return fmt.Errorf("destination %s: port %d out of range", d.Alias, d.Port)
-		}
-		if !userRE.MatchString(d.User) {
-			return fmt.Errorf("destination %s: invalid user %q", d.Alias, d.User)
-		}
-		if len(d.HostKeys) == 0 {
-			return fmt.Errorf("destination %s: at least one pinned host key is required", d.Alias)
-		}
-		selector := KnownHostsSelector(d.Host, d.Port)
-		for j, k := range d.HostKeys {
-			if err := validateHostKey(selector, k); err != nil {
-				return fmt.Errorf("destination %s: host key %d: %w", d.Alias, j+1, err)
-			}
+	if p.Port < 1 || p.Port > 65535 {
+		return fmt.Errorf("port %d out of range", p.Port)
+	}
+	if !userRE.MatchString(p.User) {
+		return fmt.Errorf("invalid user %q", p.User)
+	}
+	if len(p.HostKeys) == 0 {
+		return fmt.Errorf("at least one pinned host key is required")
+	}
+	selector := KnownHostsSelector(p.Host, p.Port)
+	for j, k := range p.HostKeys {
+		if err := validateHostKey(selector, k); err != nil {
+			return fmt.Errorf("host key %d: %w", j+1, err)
 		}
 	}
 	return nil
@@ -247,17 +232,8 @@ func validateHostKey(selector, line string) error {
 }
 
 // NetRule is the msb --net-rule value allowing exactly this destination.
-func (d Destination) NetRule() string {
-	return fmt.Sprintf("allow@%s:tcp:%d", d.Host, d.Port)
-}
-
-// NetRules returns the network allow rules for every destination.
-func (p *Profile) NetRules() []string {
-	rules := make([]string, 0, len(p.Destinations))
-	for _, d := range p.Destinations {
-		rules = append(rules, d.NetRule())
-	}
-	return rules
+func (p *Profile) NetRule() string {
+	return fmt.Sprintf("allow@%s:tcp:%d", p.Host, p.Port)
 }
 
 // ResolveKeyDir canonicalizes the profile's key directory and fails closed if
@@ -319,10 +295,11 @@ func ValidateKeyDir(dir string) error {
 	return nil
 }
 
-// RenderConfig renders the hardened ssh_config served to the guest. Every
-// destination gets a Host block locked to the pinned known_hosts file and the
-// single mounted identity; agent and forwarding are disabled outright.
-func RenderConfig(p *Profile) string {
+// RenderConfig renders the hardened ssh_config served to the guest. name is
+// the profile name and becomes the ssh alias, so `ssh <name>` locks to the
+// pinned host with the single mounted identity; agent and forwarding are
+// disabled outright.
+func RenderConfig(name string, p *Profile) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Generated by ai-sandbox from an access profile; edits are overwritten.\n")
 	fmt.Fprintf(&b, "Host *\n"+
@@ -333,12 +310,10 @@ func RenderConfig(p *Profile) string {
 		"    ForwardAgent no\n"+
 		"    ClearAllForwardings yes\n"+
 		"    PasswordAuthentication no\n\n", GuestDir, PrivateKeyFile, GuestDir)
-	for _, d := range p.Destinations {
-		fmt.Fprintf(&b, "Host %s\n"+
-			"    HostName %s\n"+
-			"    Port %d\n"+
-			"    User %s\n\n", d.Alias, d.Host, d.Port, d.User)
-	}
+	fmt.Fprintf(&b, "Host %s\n"+
+		"    HostName %s\n"+
+		"    Port %d\n"+
+		"    User %s\n\n", name, p.Host, p.Port, p.User)
 	return b.String()
 }
 
@@ -351,15 +326,13 @@ func RenderConfig(p *Profile) string {
 func RenderKnownHosts(p *Profile) string {
 	var b strings.Builder
 	b.WriteString("# Generated by ai-sandbox from an access profile; edits are overwritten.\n")
-	for _, d := range p.Destinations {
-		selector := KnownHostsSelector(d.Host, d.Port)
-		for _, k := range d.HostKeys {
-			fields := strings.Fields(strings.TrimSpace(k))
-			if len(fields) < 2 {
-				continue // unreachable for validated profiles; skip defensively
-			}
-			fmt.Fprintf(&b, "%s %s %s\n", selector, fields[len(fields)-2], fields[len(fields)-1])
+	selector := KnownHostsSelector(p.Host, p.Port)
+	for _, k := range p.HostKeys {
+		fields := strings.Fields(strings.TrimSpace(k))
+		if len(fields) < 2 {
+			continue // unreachable for validated profiles; skip defensively
 		}
+		fmt.Fprintf(&b, "%s %s %s\n", selector, fields[len(fields)-2], fields[len(fields)-1])
 	}
 	return b.String()
 }
@@ -373,10 +346,10 @@ func RenderKnownHosts(p *Profile) string {
 // launches never observe a partially written file and a crash never leaves one
 // behind. A pre-existing target that is not a regular file (a symlink or
 // device) is refused instead of being replaced through.
-func Materialize(dir string, p *Profile) error {
+func Materialize(dir, name string, p *Profile) error {
 	names := []string{"config", "known_hosts"}
 	files := map[string]string{
-		"config":      RenderConfig(p),
+		"config":      RenderConfig(name, p),
 		"known_hosts": RenderKnownHosts(p),
 	}
 	// Deterministic order so two racing materializations converge on the same

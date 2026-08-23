@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 
@@ -127,9 +129,10 @@ func usage(w io.Writer) {
 		"  help                             show this help\n\n"+
 		"Agents: claude, codex. Put agent arguments after `--`; they are\n"+
 		"forwarded verbatim. `run` and `plan` accept --profile PROFILE\n"+
-		"(claude session image) and --access NAME (a runtime SSH access profile:\n"+
-		"exact destinations with pinned host keys, mounted read-only from\n"+
-		"~/.config/ai-sandboxes/access/keys/<name>), in either order. Both are\n"+
+		"(claude session image) and --access NAME (a runtime SSH access\n"+
+		"profile: one exact destination with pinned host keys, reachable in\n"+
+		"the guest as `ssh NAME`, mounted read-only from\n"+
+		"~/.config/ai-sandboxes/access/keys/<NAME>), in either order. Both are\n"+
 		"launcher options; agent arguments start at the explicit -- (or the\n"+
 		"first non-option word after --profile VALUE).\n"+
 		"The installed fish wrappers invoke this binary, so most\n"+
@@ -296,6 +299,10 @@ type execEnv struct {
 	// (scripts/session/resolve-image.sh, load-image.sh, docker, msb) and is
 	// injectable so tests can fake it.
 	run func(ctx context.Context, name string, args ...string) ([]byte, error)
+	// resolvConfPath overrides the fallback resolver file read by
+	// hostDNSNameservers ("/etc/resolv.conf"). Tests set it so DNS discovery
+	// is deterministic and never touches the developer's real configuration.
+	resolvConfPath string
 }
 
 // execCapture runs name with ctx cancellation and returns its stdout. stderr
@@ -601,11 +608,11 @@ func resolvePlan(ctx context.Context, opts runOptions, e execEnv, stderr io.Writ
 		return nil, 1
 	}
 
-	// An access profile contributes exact per-destination network rules, one
-	// read-only credential mount, and the guest ssh-config environment
-	// variable. Validation is read-only; only executeRun materializes the
-	// rendered config and known_hosts, so `plan` performs no writes.
-	acc, code := e.resolveAccess(opts.agent, opts.access, network, workspace, writeAccessMaterial, stderr)
+	// An access profile contributes one exact destination network rule, a
+	// read-only credential mount, and (for non-public networks) pinned host
+	// DNS resolvers. Validation is read-only; only executeRun materializes
+	// the rendered config and known_hosts, so `plan` performs no writes.
+	acc, code := e.resolveAccess(ctx, opts.agent, opts.access, network, workspace, writeAccessMaterial, stderr)
 	if code != 0 {
 		return nil, code
 	}
@@ -620,7 +627,7 @@ func resolvePlan(ctx context.Context, opts runOptions, e execEnv, stderr io.Writ
 		AccessMount:       acc.mount,
 		AccessConfigMount: acc.configMount,
 		AccessRules:       acc.rules,
-		AccessEnv:         acc.env,
+		DnsArgs:           acc.dnsArgs,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "ai-sandbox: %s\n", err)
@@ -631,12 +638,12 @@ func resolvePlan(ctx context.Context, opts runOptions, e execEnv, stderr io.Writ
 
 // accessResolution is everything an --access profile contributes to the
 // runtime plan: the credential mount, the ssh_config include mount, the
-// per-destination network rules, and the guest environment.
+// destination network rule, and the pinned-DNS msb flags.
 type accessResolution struct {
 	mount       string
 	configMount string
 	rules       []string
-	env         []string
+	dnsArgs     []string
 }
 
 // resolveAccess validates the named access profile and derives its
@@ -645,7 +652,7 @@ type accessResolution struct {
 // materializes the rendered ssh config and pinned known_hosts into the
 // profile's key directory before launch; `plan` passes false so printing a
 // plan never writes anything.
-func (e execEnv) resolveAccess(agent, name string, network plan.Network, workspace string, writeAccessMaterial bool, stderr io.Writer) (accessResolution, int) {
+func (e execEnv) resolveAccess(ctx context.Context, agent, name string, network plan.Network, workspace string, writeAccessMaterial bool, stderr io.Writer) (accessResolution, int) {
 	var a accessResolution
 	if name == "" {
 		return a, 0
@@ -678,20 +685,115 @@ func (e execEnv) resolveAccess(agent, name string, network plan.Network, workspa
 	}
 	if network.Public {
 		fmt.Fprintf(stderr, "%s: warning: public egress is enabled; --access adds no network restriction while it lasts\n", agent)
+	} else {
+		// LAN destinations only resolve if guest DNS queries reach the
+		// host's own resolvers: internal zones (.lan, split-horizon names)
+		// exist nowhere else, and msb's macOS upstream auto-discovery is not
+		// reliable on every boot. Pin the discovered resolvers explicitly.
+		// Rebind protection must also go: it drops answers pointing at
+		// private RFC1918 addresses, which is exactly what every LAN
+		// destination resolves to (verified against msb v0.6.13). This
+		// changes DNS policy for the whole session; public-egress runs keep
+		// msb's defaults.
+		servers := e.hostDNSNameservers(ctx)
+		for _, s := range servers {
+			a.dnsArgs = append(a.dnsArgs, "--dns-nameserver", s)
+		}
+		a.dnsArgs = append(a.dnsArgs, "--no-dns-rebind-protection")
+		if len(servers) == 0 {
+			fmt.Fprintf(stderr, "%s: warning: could not discover host DNS resolvers; relying on microsandbox auto-discovery\n", agent)
+		}
 	}
 	// plan.Resolve drops these when the network is public, so they are
 	// always computed here rather than duplicating that check.
-	a.rules = prof.NetRules()
-	a.env = []string{access.SSHConfigEnvVar + "=" + access.GuestDir + "/config"}
+	a.rules = []string{prof.NetRule()}
 	a.mount = keyDir + ":" + access.GuestDir + ":ro"
 	a.configMount = access.ConfigIncludeMount(keyDir)
 	if writeAccessMaterial {
-		if err := access.Materialize(keyDir, prof); err != nil {
+		if err := access.Materialize(keyDir, name, prof); err != nil {
 			fmt.Fprintf(stderr, "%s: --access %s: %s\n", agent, name, err)
 			return a, 1
 		}
 	}
 	return a, 0
+}
+
+// hostDNSNameservers returns the host's upstream resolver addresses in
+// priority order. macOS reads them from the system configuration store via
+// `scutil --dns` (the primary resolver block only); everything else falls back
+// to /etc/resolv.conf. A nil e.run (tests) or any discovery failure returns
+// nil; the caller warns and lets microsandbox auto-discover.
+func (e execEnv) hostDNSNameservers(ctx context.Context) []string {
+	path := e.resolvConfPath
+	if path == "" {
+		path = "/etc/resolv.conf"
+	}
+	if runtime.GOOS == "darwin" && e.run != nil {
+		if out, err := e.run(ctx, "scutil", "--dns"); err == nil {
+			if ns := parseScutilNameservers(out); len(ns) > 0 {
+				return ns
+			}
+		}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	return parseResolvConfNameservers(data)
+}
+
+// parseScutilNameservers extracts the nameserver entries from the first
+// (default) resolver block of `scutil --dns` output. Later blocks cover
+// scoped or special-purpose domains (mDNS, .local, VPN splits) that would
+// resolve nothing useful as blanket upstreams.
+func parseScutilNameservers(out []byte) []string {
+	var ns []string
+	inPrimary := false
+	for _, line := range strings.Split(string(out), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "resolver #") {
+			if inPrimary {
+				break // left the primary block
+			}
+			inPrimary = strings.HasPrefix(trimmed, "resolver #1")
+			continue
+		}
+		name, value, ok := strings.Cut(trimmed, ":")
+		if !ok || !inPrimary || !strings.HasPrefix(name, "nameserver[") {
+			continue
+		}
+		if addr, err := netip.ParseAddr(strings.TrimSpace(value)); err == nil {
+			ns = append(ns, addr.String())
+		}
+	}
+	return dedupe(ns)
+}
+
+// parseResolvConfNameservers extracts every nameserver address from an
+// /etc/resolv.conf-style file.
+func parseResolvConfNameservers(data []byte) []string {
+	var ns []string
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "nameserver" {
+			if addr, err := netip.ParseAddr(fields[1]); err == nil {
+				ns = append(ns, addr.String())
+			}
+		}
+	}
+	return dedupe(ns)
+}
+
+func dedupe(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := in[:0]
+	for _, s := range in {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func (e execEnv) resolveNetwork(cfg config.Agent, home string) (plan.Network, error) {

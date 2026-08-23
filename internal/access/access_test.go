@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -23,10 +22,10 @@ func writeProfile(t *testing.T, configDir, name, content string) {
 
 const validProfile = `{
   "schema_version": 1,
-  "destinations": [
-    {"alias": "nas", "host": "nas.home.lan", "port": 22, "user": "claude",
-     "host_keys": ["nas.home.lan ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEqqWmcHasScOzNO2MFtiFY/x1M1WwoTHHS/wb7jISq"]}
-  ]
+  "host": "nas.home.lan",
+  "port": 22,
+  "user": "claude",
+  "host_keys": ["nas.home.lan ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEqqWmcHasScOzNO2MFtiFY/x1M1WwoTHHS/wb7jISq"]
 }`
 
 func TestLoadValid(t *testing.T) {
@@ -36,38 +35,32 @@ func TestLoadValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.SchemaVersion != 1 || len(p.Destinations) != 1 {
+	if p.SchemaVersion != 1 || p.Host != "nas.home.lan" || p.Port != 22 || p.User != "claude" || len(p.HostKeys) != 1 {
 		t.Fatalf("profile = %+v", p)
 	}
-	d := p.Destinations[0]
-	if d.Alias != "nas" || d.Host != "nas.home.lan" || d.Port != 22 || d.User != "claude" {
-		t.Errorf("destination = %+v", d)
-	}
-	wantRules := []string{"allow@nas.home.lan:tcp:22"}
-	if got := p.NetRules(); !reflect.DeepEqual(got, wantRules) {
-		t.Errorf("NetRules = %v, want %v", got, wantRules)
+	if got, want := p.NetRule(), "allow@nas.home.lan:tcp:22"; got != want {
+		t.Errorf("NetRule = %q, want %q", got, want)
 	}
 }
 
 func TestLoadRejects(t *testing.T) {
+	key := "h ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEqqWmcHasScOzNO2MFtiFY/x1M1WwoTHHS/wb7jISq"
 	cases := []struct {
 		name    string
 		doc     string
 		wantErr string
 	}{
-		{"unknown field", `{"schema_version":1,"destinations":[],"extra":true}`, "unknown field"},
-		{"wrong schema version", `{"schema_version":2,"destinations":[{"alias":"a","host":"h.example","port":22,"user":"u","host_keys":["h ssh-ed25519 AAA"]}]}`, "unsupported schema_version"},
-		{"no destinations", `{"schema_version":1,"destinations":[]}`, "at least one destination"},
-		{"bad host", `{"schema_version":1,"destinations":[{"alias":"a","host":"*.example.com","port":22,"user":"u","host_keys":["a.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEqqWmcHasScOzNO2MFtiFY/x1M1WwoTHHS/wb7jISq"]}]}`, "invalid host"},
-		{"port zero", `{"schema_version":1,"destinations":[{"alias":"a","host":"h.example","port":0,"user":"u","host_keys":["a.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEqqWmcHasScOzNO2MFtiFY/x1M1WwoTHHS/wb7jISq"]}]}`, "out of range"},
-		{"bad user", `{"schema_version":1,"destinations":[{"alias":"a","host":"h.example","port":22,"user":"BAD USER","host_keys":["a.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEqqWmcHasScOzNO2MFtiFY/x1M1WwoTHHS/wb7jISq"]}]}`, "invalid user"},
-		{"no host keys", `{"schema_version":1,"destinations":[{"alias":"a","host":"h.example","port":22,"user":"u","host_keys":[]}]}`, "pinned host key"},
-		{"comment host key", `{"schema_version":1,"destinations":[{"alias":"a","host":"h.example","port":22,"user":"u","host_keys":["# nope"]}]}`, "empty or a comment"},
-		{"garbage host key", `{"schema_version":1,"destinations":[{"alias":"a","host":"h.example","port":22,"user":"u","host_keys":["justoneword"]}]}`, "not a known_hosts line"},
+		{"unknown field", `{"schema_version":1,"host":"h.example","port":22,"user":"u","host_keys":[],"extra":true}`, "unknown field"},
+		{"wrong schema version", fmt.Sprintf(`{"schema_version":2,"host":"h.example","port":22,"user":"u","host_keys":[%q]}`, key), "unsupported schema_version"},
+		{"bad host", `{"schema_version":1,"host":"*.example.com","port":22,"user":"u","host_keys":["ssh-ed25519 AAAA"]}`, "invalid host"},
+		{"port zero", `{"schema_version":1,"host":"h.example","port":0,"user":"u","host_keys":["ssh-ed25519 AAAA"]}`, "out of range"},
+		{"bad user", `{"schema_version":1,"host":"h.example","port":22,"user":"BAD USER","host_keys":["ssh-ed25519 AAAA"]}`, "invalid user"},
+		{"no host keys", `{"schema_version":1,"host":"h.example","port":22,"user":"u","host_keys":[]}`, "pinned host key"},
+		{"comment host key", `{"schema_version":1,"host":"h.example","port":22,"user":"u","host_keys":["# nope"]}`, "empty or a comment"},
+		{"garbage host key", `{"schema_version":1,"host":"h.example","port":22,"user":"u","host_keys":["justoneword"]}`, "not a known_hosts line"},
 		{"trailing garbage", validProfile + "\n{}", "unexpected trailing"},
 		{"top-level array", `[1]`, "must be an object"},
 		{"empty document", "", "empty document"},
-		{"bad alias", `{"schema_version":1,"destinations":[{"alias":"BAD ALIAS","host":"h.example","port":22,"user":"u","host_keys":["a.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEqqWmcHasScOzNO2MFtiFY/x1M1WwoTHHS/wb7jISq"]}]}`, "invalid alias"},
 	}
 	for _, c := range cases {
 		configDir := t.TempDir()
@@ -77,21 +70,6 @@ func TestLoadRejects(t *testing.T) {
 		} else if c.wantErr != "" && !strings.Contains(err.Error(), c.wantErr) {
 			t.Errorf("%s: error %q does not mention %q", c.name, err, c.wantErr)
 		}
-	}
-}
-
-func TestLoadRejectsDuplicateAliases(t *testing.T) {
-	doc := `{
-	  "schema_version": 1,
-	  "destinations": [
-	    {"alias": "nas", "host": "a.example", "port": 22, "user": "u", "host_keys": ["a.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEqqWmcHasScOzNO2MFtiFY/x1M1WwoTHHS/wb7jISq"]},
-	    {"alias": "nas", "host": "b.example", "port": 22, "user": "u", "host_keys": ["a.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEqqWmcHasScOzNO2MFtiFY/x1M1WwoTHHS/wb7jISq"]}
-	  ]
-	}`
-	configDir := t.TempDir()
-	writeProfile(t, configDir, "homelab", doc)
-	if _, err := Load(configDir, "homelab"); err == nil || !strings.Contains(err.Error(), "duplicate alias") {
-		t.Errorf("duplicate aliases: err = %v", err)
 	}
 }
 
@@ -186,12 +164,18 @@ func TestValidateKeyDir(t *testing.T) {
 	}
 }
 
+func testProfile() *Profile {
+	return &Profile{
+		SchemaVersion: 1,
+		Host:          "nas.home.lan",
+		Port:          22,
+		User:          "claude",
+		HostKeys:      []string{"nas.home.lan ssh-ed25519 AAAA"},
+	}
+}
+
 func TestRenderConfig(t *testing.T) {
-	p := &Profile{SchemaVersion: 1, Destinations: []Destination{{
-		Alias: "nas", Host: "nas.home.lan", Port: 22, User: "claude",
-		HostKeys: []string{"nas.home.lan ssh-ed25519 AAAA"},
-	}}}
-	cfg := RenderConfig(p)
+	cfg := RenderConfig("homelab", testProfile())
 	for _, want := range []string{
 		"IdentitiesOnly yes",
 		"IdentityFile /run/ai-sandbox/ssh/id_ed25519",
@@ -200,7 +184,7 @@ func TestRenderConfig(t *testing.T) {
 		"ForwardAgent no",
 		"ClearAllForwardings yes",
 		"PasswordAuthentication no",
-		"Host nas\n    HostName nas.home.lan\n    Port 22\n    User claude",
+		"Host homelab\n    HostName nas.home.lan\n    Port 22\n    User claude",
 	} {
 		if !strings.Contains(cfg, want) {
 			t.Errorf("rendered config missing %q:\n%s", want, cfg)
@@ -212,10 +196,13 @@ func TestRenderKnownHostsBareKeyLine(t *testing.T) {
 	// A bare "<algo> <key>" line (no host prefix) must get the destination's
 	// host prepended: known_hosts matches by the exact name used to connect,
 	// and a bare key line would silently never match.
-	p := &Profile{SchemaVersion: 1, Destinations: []Destination{{
-		Alias: "zazu", Host: "zazu.home.lan", Port: 22, User: "sandbox-ssh",
-		HostKeys: []string{"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEqqWmcHasScOzNO2MFtiFY/x1M1WwoTHHS/wb7jISq"},
-	}}}
+	p := &Profile{
+		SchemaVersion: 1,
+		Host:          "zazu.home.lan",
+		Port:          22,
+		User:          "sandbox-ssh",
+		HostKeys:      []string{"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEqqWmcHasScOzNO2MFtiFY/x1M1WwoTHHS/wb7jISq"},
+	}
 	want := "# Generated by ai-sandbox from an access profile; edits are overwritten.\n" +
 		"zazu.home.lan ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEqqWmcHasScOzNO2MFtiFY/x1M1WwoTHHS/wb7jISq\n"
 	if got := RenderKnownHosts(p); got != want {
@@ -228,10 +215,7 @@ func TestRenderKnownHostsSelector(t *testing.T) {
 	// [host]:port, matching how ssh itself matches known_hosts entries.
 	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEqqWmcHasScOzNO2MFtiFY/x1M1WwoTHHS/wb7jISq"
 	t.Run("port 22 renders the bare host", func(t *testing.T) {
-		p := &Profile{SchemaVersion: 1, Destinations: []Destination{{
-			Alias: "nas", Host: "nas.home.lan", Port: 22, User: "claude",
-			HostKeys: []string{key},
-		}}}
+		p := &Profile{SchemaVersion: 1, Host: "nas.home.lan", Port: 22, User: "claude", HostKeys: []string{key}}
 		want := "# Generated by ai-sandbox from an access profile; edits are overwritten.\n" +
 			"nas.home.lan ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEqqWmcHasScOzNO2MFtiFY/x1M1WwoTHHS/wb7jISq\n"
 		if got := RenderKnownHosts(p); got != want {
@@ -240,10 +224,7 @@ func TestRenderKnownHostsSelector(t *testing.T) {
 	})
 
 	t.Run("port 2222 renders [host]:port", func(t *testing.T) {
-		p := &Profile{SchemaVersion: 1, Destinations: []Destination{{
-			Alias: "nas", Host: "nas.home.lan", Port: 2222, User: "claude",
-			HostKeys: []string{key},
-		}}}
+		p := &Profile{SchemaVersion: 1, Host: "nas.home.lan", Port: 2222, User: "claude", HostKeys: []string{key}}
 		want := "# Generated by ai-sandbox from an access profile; edits are overwritten.\n" +
 			"[nas.home.lan]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEqqWmcHasScOzNO2MFtiFY/x1M1WwoTHHS/wb7jISq\n"
 		if got := RenderKnownHosts(p); got != want {
@@ -272,7 +253,7 @@ func TestLoadRejectsBadHostKeys(t *testing.T) {
 		{"too many fields", "nas.home.lan ssh-ed25519 AAAA extra", 22, "not a known_hosts line"},
 	}
 	for _, c := range cases {
-		doc := fmt.Sprintf(`{"schema_version":1,"destinations":[{"alias":"a","host":"nas.home.lan","port":%d,"user":"u","host_keys":[%q]}]}`, c.port, c.hostKey)
+		doc := fmt.Sprintf(`{"schema_version":1,"host":"nas.home.lan","port":%d,"user":"u","host_keys":[%q]}`, c.port, c.hostKey)
 		configDir := t.TempDir()
 		writeProfile(t, configDir, "homelab", doc)
 		if _, err := Load(configDir, "homelab"); err == nil {
@@ -288,7 +269,7 @@ func TestLoadAcceptsFullAndBareHostKeysOnNonDefaultPort(t *testing.T) {
 		`[nas.home.lan]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEqqWmcHasScOzNO2MFtiFY/x1M1WwoTHHS/wb7jISq`,
 		`ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEqqWmcHasScOzNO2MFtiFY/x1M1WwoTHHS/wb7jISq`,
 	} {
-		doc := fmt.Sprintf(`{"schema_version":1,"destinations":[{"alias":"a","host":"nas.home.lan","port":2222,"user":"u","host_keys":[%q]}]}`, hc)
+		doc := fmt.Sprintf(`{"schema_version":1,"host":"nas.home.lan","port":2222,"user":"u","host_keys":[%q]}`, hc)
 		configDir := t.TempDir()
 		writeProfile(t, configDir, "homelab", doc)
 		if _, err := Load(configDir, "homelab"); err != nil {
@@ -298,17 +279,14 @@ func TestLoadAcceptsFullAndBareHostKeysOnNonDefaultPort(t *testing.T) {
 }
 
 func TestMaterializeRefusesSymlinkTarget(t *testing.T) {
-	p := &Profile{SchemaVersion: 1, Destinations: []Destination{{
-		Alias: "nas", Host: "nas.home.lan", Port: 22, User: "claude",
-		HostKeys: []string{"nas.home.lan ssh-ed25519 AAAA"},
-	}}}
+	p := testProfile()
 	dir := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "victim")
 	os.WriteFile(outside, []byte("original"), 0o600)
 	if err := os.Symlink(outside, filepath.Join(dir, "config")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if err := Materialize(dir, p); err == nil {
+	if err := Materialize(dir, "homelab", p); err == nil {
 		t.Fatal("materializing over a symlinked config should be refused")
 	}
 	got, err := os.ReadFile(outside)
@@ -319,23 +297,20 @@ func TestMaterializeRefusesSymlinkTarget(t *testing.T) {
 	// A directory where a generated file belongs is equally unusable.
 	dir2 := t.TempDir()
 	os.MkdirAll(filepath.Join(dir2, "known_hosts"), 0o700)
-	if err := Materialize(dir2, p); err == nil {
+	if err := Materialize(dir2, "homelab", p); err == nil {
 		t.Fatal("materializing over a directory target should be refused")
 	}
 }
 
 func TestMaterializeLeavesNoTemporaryFiles(t *testing.T) {
-	p := &Profile{SchemaVersion: 1, Destinations: []Destination{{
-		Alias: "nas", Host: "nas.home.lan", Port: 22, User: "claude",
-		HostKeys: []string{"nas.home.lan ssh-ed25519 AAAA"},
-	}}}
+	p := testProfile()
 	dir := t.TempDir()
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := Materialize(dir, p); err != nil {
+			if err := Materialize(dir, "homelab", p); err != nil {
 				t.Errorf("concurrent materialize: %v", err)
 			}
 		}()
@@ -361,19 +336,16 @@ func TestMaterializeLeavesNoTemporaryFiles(t *testing.T) {
 }
 
 func TestMaterialize(t *testing.T) {
-	p := &Profile{SchemaVersion: 1, Destinations: []Destination{{
-		Alias: "nas", Host: "nas.home.lan", Port: 22, User: "claude",
-		HostKeys: []string{"nas.home.lan ssh-ed25519 AAAA"},
-	}}}
+	p := testProfile()
 	dir := t.TempDir()
-	if err := Materialize(dir, p); err != nil {
+	if err := Materialize(dir, "homelab", p); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := os.ReadFile(filepath.Join(dir, "config"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(cfg) != RenderConfig(p) {
+	if string(cfg) != RenderConfig("homelab", p) {
 		t.Error("materialized config drifted from RenderConfig")
 	}
 	kh, err := os.ReadFile(filepath.Join(dir, "known_hosts"))
@@ -392,7 +364,7 @@ func TestMaterialize(t *testing.T) {
 	}
 
 	// Materialize is idempotent.
-	if err := Materialize(dir, p); err != nil {
+	if err := Materialize(dir, "homelab", p); err != nil {
 		t.Fatalf("second materialize: %v", err)
 	}
 }
