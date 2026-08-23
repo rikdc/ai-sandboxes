@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Watch Codex and Claude Code npm releases, update versions.env, and expose the
-# discovered versions for the create-pull-request action step to build a PR.
+# Watch Codex, Claude Code, and OpenCode npm releases, update versions.env,
+# and expose the discovered versions for the create-pull-request action step
+# to build a PR.
 set -o pipefail
 IFS=$'\n\t'
 
@@ -41,12 +42,15 @@ latest_version() {
 
 codex_version=$(latest_version '@openai%2Fcodex') || exit 1
 claude_version=$(latest_version '@anthropic-ai%2Fclaude-code') || exit 1
+opencode_version=$(latest_version 'opencode-ai') || exit 1
 
 existing_codex=$(read_env_value CODEX_VERSION)
 existing_claude=$(read_env_value CLAUDE_CODE_VERSION)
+existing_opencode=$(read_env_value OPENCODE_VERSION)
 
 if [[ "$existing_codex" = "$codex_version" ]] &&
-  [[ "$existing_claude" = "$claude_version" ]]; then
+  [[ "$existing_claude" = "$claude_version" ]] &&
+  [[ "$existing_opencode" = "$opencode_version" ]]; then
   printf '%s\n' 'Agent runtime versions are current.'
   exit 0
 fi
@@ -65,6 +69,13 @@ if [[ -n "$existing_claude" ]] &&
     "($existing_claude -> $claude_version)" >&2
   exit 1
 fi
+if [[ -n "$existing_opencode" ]] &&
+  [[ "$existing_opencode" != "$opencode_version" ]] &&
+  version_le "$opencode_version" "$existing_opencode"; then
+  printf '%s\n' "error: refusing to downgrade OpenCode" \
+    "($existing_opencode -> $opencode_version)" >&2
+  exit 1
+fi
 
 grep -q '^CODEX_VERSION=' versions.env || {
   printf '%s\n' 'error: versions.env lacks a CODEX_VERSION assignment' >&2
@@ -74,16 +85,23 @@ grep -q '^CLAUDE_CODE_VERSION=' versions.env || {
   printf '%s\n' 'error: versions.env lacks a CLAUDE_CODE_VERSION assignment' >&2
   exit 1
 }
+grep -q '^OPENCODE_VERSION=' versions.env || {
+  printf '%s\n' 'error: versions.env lacks an OPENCODE_VERSION assignment' >&2
+  exit 1
+}
 
 sed -i.bak "s/^CODEX_VERSION=.*/CODEX_VERSION=$codex_version/" versions.env
 sed -i.bak \
   "s/^CLAUDE_CODE_VERSION=.*/CLAUDE_CODE_VERSION=$claude_version/" versions.env
+sed -i.bak \
+  "s/^OPENCODE_VERSION=.*/OPENCODE_VERSION=$opencode_version/" versions.env
 rm -f versions.env.bak
 
 if test -n "${GITHUB_ENV:-}"; then
   {
     printf 'CODEX_VERSION=%s\n' "$codex_version"
     printf 'CLAUDE_CODE_VERSION=%s\n' "$claude_version"
+    printf 'OPENCODE_VERSION=%s\n' "$opencode_version"
   } >>"$GITHUB_ENV"
 fi
 
@@ -94,6 +112,9 @@ body_file=$(mktemp)
   fi
   if [[ "$existing_claude" != "$claude_version" ]]; then
     printf 'Updates Claude Code to %s.\n' "$claude_version"
+  fi
+  if [[ "$existing_opencode" != "$opencode_version" ]]; then
+    printf 'Updates OpenCode to %s.\n' "$opencode_version"
   fi
   printf '%s\n' \
     'Merging this pull request runs ARM64 verification and publishes the immutable release marker.'

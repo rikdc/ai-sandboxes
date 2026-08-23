@@ -208,9 +208,10 @@ version_change_summary() {
   git show origin/main:versions.env >"$new_env" 2>/dev/null || : >"$new_env"
   if test -s "$old_env" && test -s "$new_env" \
     && ./.github/workflows/release-marker changed "$old_env" "$new_env" >/dev/null 2>&1; then
-    printf 'version change: Codex %s -> %s, Claude Code %s -> %s' \
+    printf 'version change: Codex %s -> %s, Claude Code %s -> %s, OpenCode %s -> %s' \
       "$(read_value "$old_env" CODEX_VERSION)" "$(read_value "$new_env" CODEX_VERSION)" \
-      "$(read_value "$old_env" CLAUDE_CODE_VERSION)" "$(read_value "$new_env" CLAUDE_CODE_VERSION)"
+      "$(read_value "$old_env" CLAUDE_CODE_VERSION)" "$(read_value "$new_env" CLAUDE_CODE_VERSION)" \
+      "$(read_value "$old_env" OPENCODE_VERSION)" "$(read_value "$new_env" OPENCODE_VERSION)"
   fi
 }
 
@@ -223,7 +224,7 @@ light_verify() {
   # shellcheck disable=SC1091
   . ./versions.env
   set +a
-  local claude_v codex_v
+  local claude_v codex_v opencode_v
   claude_v=$(docker run --rm --user node -e HOME=/home/node ai-sandboxes-claude:local \
     bash -lc 'test "$DISABLE_UPDATES" = 1; claude --version' 2>/dev/null) || true
   test "${claude_v%% *}" = "$CLAUDE_CODE_VERSION" \
@@ -232,6 +233,10 @@ light_verify() {
     codex --version 2>/dev/null) || true
   test "$codex_v" = "$CODEX_VERSION" \
     || printf 'WARNING: built Codex is %s, expected %s\n' "$codex_v" "$CODEX_VERSION" >&2
+  opencode_v=$(docker run --rm --user node -e HOME=/home/node ai-sandboxes-opencode:local \
+    opencode --version 2>/dev/null) || true
+  test "$opencode_v" = "$OPENCODE_VERSION" \
+    || printf 'WARNING: built OpenCode is %s, expected %s\n' "$opencode_v" "$OPENCODE_VERSION" >&2
 }
 
 commits_behind=0

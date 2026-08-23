@@ -118,12 +118,16 @@ MOCK_CODEX_VERSION="$CODEX_VERSION"
 MOCK_SEED_MARKER="$old_head"
 
 cat >"$mockdir/old-changed.env" <<'EOF'
+BASE_VERSION=0.1.0-alpha
 CODEX_VERSION=0.145.0
 CLAUDE_CODE_VERSION=2.1.224
+OPENCODE_VERSION=1.18.20
 EOF
 cat >"$mockdir/new-changed.env" <<COPY
+BASE_VERSION=${BASE_VERSION:-0.1.0-alpha}
 CODEX_VERSION=$CODEX_VERSION
 CLAUDE_CODE_VERSION=$CLAUDE_CODE_VERSION
+OPENCODE_VERSION=$OPENCODE_VERSION
 COPY
 
 MOCK_GIT_OLD_ENV="$mockdir/old-changed.env"
@@ -436,6 +440,7 @@ install-fish-functions
 load-msb
 docker run --rm --user node -e HOME=/home/node ai-sandboxes-claude:local bash -lc test "$DISABLE_UPDATES" = 1; claude --version
 docker run --rm --user node -e HOME=/home/node ai-sandboxes-codex:local codex --version
+docker run --rm --user node -e HOME=/home/node ai-sandboxes-opencode:local opencode --version
 EOF
 cat >"$mockdir/scenario8.git" <<EOF
 git fetch origin main --quiet
@@ -458,6 +463,7 @@ build
 load-msb
 docker run --rm --user node -e HOME=/home/node ai-sandboxes-claude:local bash -lc test "$DISABLE_UPDATES" = 1; claude --version
 docker run --rm --user node -e HOME=/home/node ai-sandboxes-codex:local codex --version
+docker run --rm --user node -e HOME=/home/node ai-sandboxes-opencode:local opencode --version
 EOF
 run_update "$allpath"
 expect_status 0 'default update without shell changes'
@@ -724,6 +730,7 @@ build
 load-msb
 docker run --rm --user node -e HOME=/home/node ai-sandboxes-claude:local bash -lc test "$DISABLE_UPDATES" = 1; claude --version
 docker run --rm --user node -e HOME=/home/node ai-sandboxes-codex:local codex --version
+docker run --rm --user node -e HOME=/home/node ai-sandboxes-opencode:local opencode --version
 EOF
 run_update "$allpath"
 expect_status 0 'config-only reconcile'
