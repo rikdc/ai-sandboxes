@@ -114,7 +114,7 @@ cd some-project
 ai-sandbox plan claude --access homelab
 ```
 
-Expect in the printed plan: a `  rule: allow@nas.example.internal:tcp:22`
+Expect in the printed plan: a `rule: allow@nas.example.internal:tcp:22`
 line under `network`, `access mount: <keydir>:/run/ai-sandbox/ssh:ro`,
 `access config mount: <keydir>/config:/etc/ssh/ssh_config.d/99-ai-sandbox-access.conf:ro`,
 and `environment: AI_SANDBOX_SSH_CONFIG=/run/ai-sandbox/ssh/config` (the full
