@@ -120,12 +120,15 @@ func TestParseAgentArgs(t *testing.T) {
 		// Unlike --profile, --access does not claim the remaining arguments:
 		// agent arguments still require the explicit -- separator.
 		{name: "access then dashed arg needs separator", args: []string{"claude", "--access", "homelab", "-x", "hi"}, wantErr: true},
+		// --access is launcher-level wherever it appears: after --profile it
+		// is still parsed as an option (the claude-session natural order),
+		// never forwarded to the agent.
 		{name: "access before profile", args: []string{"claude", "--access", "homelab", "--profile", "work"}, agent: "claude", access: "homelab", profile: "work"},
+		{name: "access after profile", args: []string{"claude", "--profile", "work", "--access", "homelab"}, agent: "claude", access: "homelab", profile: "work"},
+		{name: "access= after profile", args: []string{"claude", "--profile=work", "--access=homelab"}, agent: "claude", access: "homelab", profile: "work"},
+		{name: "profile then access then agent args via separator", args: []string{"claude", "--profile", "work", "--access", "homelab", "--", "-p", "hi"}, agent: "claude", profile: "work", access: "homelab", agentArgs: []string{"-p", "hi"}},
 		{name: "access missing value", args: []string{"claude", "--access"}, wantErr: true},
-		// --access after --profile would be forwarded to the agent verbatim;
-		// the parser must refuse instead of silently dropping it.
-		{name: "access after profile", args: []string{"claude", "--profile", "work", "--access", "homelab"}, wantErr: true},
-		{name: "access= after profile", args: []string{"claude", "--profile=work", "--access=homelab"}, wantErr: true},
+		{name: "access missing value after profile", args: []string{"claude", "--profile", "work", "--access"}, wantErr: true},
 		{name: "empty agent", args: []string{}, wantErr: true},
 		{name: "unknown flag", args: []string{"claude", "--bogus", "x"}, wantErr: true},
 		{name: "dashed arg needs separator", args: []string{"claude", "--version"}, wantErr: true},
@@ -947,12 +950,54 @@ func TestExecuteRunClaudeSessionProfileNotFound(t *testing.T) {
 	}
 }
 
-// accessTestEnv builds an execEnv whose user configuration directory contains
-// a valid "homelab" access profile and key directory. It returns the env and
-// the canonical key directory path.
-func accessTestEnv(t *testing.T) (execEnv, string) {
+// TestExecuteRunClaudeSessionComposesWithAccess is the wrapper-level
+// regression test for the natural claude-session invocation:
+//
+//	claude-session --profile work --access homelab
+//
+// The fish wrapper forwards those words verbatim to `ai-sandbox run claude`,
+// so the launcher must resolve both the session image and the access profile
+// from a single command line, in either option order.
+func TestExecuteRunClaudeSessionComposesWithAccess(t *testing.T) {
+	e, _ := sessionTestEnv(t)
+	configDir, keyDir := accessFixtures(t)
+	e = withConfigDir(e, configDir)
+	client := newFakeMsb()
+
+	cases := []runOptions{
+		{agent: "claude", profile: "demo", access: "homelab"},
+	}
+	// Both orders must parse identically; exercise the second through the
+	// real parser as the wrapper would deliver it.
+	opts2, err := parseAgentArgs([]string{"claude", "--access", "homelab", "--profile", "demo"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	for i, opts := range append(cases, opts2) {
+		var launched []string
+		code := executeRun(context.Background(), opts, e, &bytes.Buffer{}, client,
+			func(argv []string) error { launched = argv; return nil })
+		if code != 0 {
+			t.Fatalf("case %d: exit code = %d", i, code)
+		}
+		if !containsArg(launched, "ai-sandboxes-claude-session:sha-abc") {
+			t.Errorf("case %d: argv missing session image: %v", i, launched)
+		}
+		if !containsArg(launched, "--mount-dir", keyDir+":/run/ai-sandbox/ssh:ro") {
+			t.Errorf("case %d: argv missing read-only access mount: %v", i, launched)
+		}
+		if !containsArg(launched, "--net-rule", "allow@nas.home.lan:tcp:22") {
+			t.Errorf("case %d: argv missing destination net rule: %v", i, launched)
+		}
+	}
+}
+
+// accessFixtures writes a valid "homelab" access profile and key directory
+// into a fresh configuration directory. It returns the config dir and the
+// canonical key directory path.
+func accessFixtures(t *testing.T) (string, string) {
 	t.Helper()
-	e, _ := testEnv(t)
 	configDir := t.TempDir()
 
 	profileDir := filepath.Join(configDir, "access")
@@ -961,7 +1006,7 @@ func accessTestEnv(t *testing.T) (execEnv, string) {
 	  "schema_version": 1,
 	  "destinations": [
 	    {"alias": "nas", "host": "nas.home.lan", "port": 22, "user": "claude",
-	     "host_keys": ["nas.home.lan ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake"]}
+	     "host_keys": ["nas.home.lan ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPEqqWmcHasScOzNO2MFtiFY/x1M1WwoTHHS/wb7jISq"]}
 	  ]
 	}`), 0o600)
 
@@ -980,13 +1025,10 @@ func accessTestEnv(t *testing.T) (execEnv, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return configDir, resolved
+}
 
-	// Deterministic DNS discovery: a canned fallback resolver file (the
-	// scutil path needs e.run, which these tests leave nil) plus a garbage
-	// line the parsers must ignore.
-	resolv := filepath.Join(t.TempDir(), "resolv.conf")
-	os.WriteFile(resolv, []byte("# generated\nnameserver 192.0.2.1\nnameserver 192.0.2.2\nsearch home.lan\n"), 0o600)
-
+func withConfigDir(e execEnv, configDir string) execEnv {
 	base := e.getenv
 	e.getenv = func(k string) string {
 		if k == "AI_SANDBOX_CONFIG_DIR" {
@@ -994,8 +1036,17 @@ func accessTestEnv(t *testing.T) (execEnv, string) {
 		}
 		return base(k)
 	}
-	e.resolvConfPath = resolv
-	return e, resolved
+	return e
+}
+
+// accessTestEnv builds an execEnv whose user configuration directory contains
+// a valid "homelab" access profile and key directory. It returns the env and
+// the canonical key directory path.
+func accessTestEnv(t *testing.T) (execEnv, string) {
+	t.Helper()
+	e, _ := testEnv(t)
+	configDir, resolved := accessFixtures(t)
+	return withConfigDir(e, configDir), resolved
 }
 
 func TestExecuteRunAccessProfile(t *testing.T) {
@@ -1019,13 +1070,6 @@ func TestExecuteRunAccessProfile(t *testing.T) {
 	}
 	if !containsArg(launched, "AI_SANDBOX_SSH_CONFIG=/run/ai-sandbox/ssh/config") {
 		t.Errorf("argv missing ssh-config environment variable: %v", launched)
-	}
-	if !containsArg(launched, "--dns-nameserver", "192.0.2.1") ||
-		!containsArg(launched, "--dns-nameserver", "192.0.2.2") {
-		t.Errorf("argv missing pinned host DNS resolvers: %v", launched)
-	}
-	if !containsArg(launched, "--no-dns-rebind-protection") {
-		t.Errorf("argv missing rebind-protection opt-out for LAN answers: %v", launched)
 	}
 
 	cfg, err := os.ReadFile(filepath.Join(keyDir, "config"))

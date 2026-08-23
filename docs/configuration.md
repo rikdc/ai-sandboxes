@@ -124,25 +124,26 @@ Two files define an access profile, both under
 Before each run the control plane rewrites `config` and `known_hosts` inside
 the key directory from the profile; edit the profile, not those files. The
 profile requires pinned `host_keys` lines (from
-`ssh-keyscan nas.home.lan`), and the launcher refuses anything that would
-defeat them: unknown JSON fields, unpinned destinations, symlinked key
+`ssh-keyscan nas.home.lan` — verify the fingerprint through an independent
+trusted channel before trusting it; the scan itself authenticates nothing),
+and the launcher refuses anything that would defeat them: unknown JSON fields,
+unpinned destinations, malformed or mismatched host-key lines, symlinked key
 directories pointing outside `access/keys/`, loose permissions, or a workspace
 overlapping the key directory.
 
-Access runs also adjust guest DNS so internal names resolve. The launcher
-discovers the host's upstream resolvers (System Configuration on macOS,
-`/etc/resolv.conf` elsewhere) and pins them with `--dns-nameserver`, because
-Microsandbox's own auto-discovery is not reliable on every boot and internal
-zones (`.lan`, split-horizon corporate names) exist nowhere else. It also
-passes `--no-dns-rebind-protection`: rebind protection drops answers pointing
-at private RFC1918 addresses, which is what every LAN destination resolves to.
-Public-egress runs keep Microsandbox's defaults — the trade-off is deliberate
-and scoped to `--access`.
+Destinations must resolve inside Microsandbox, because the SSH connections
+originate in the guest VM. Use a name your guest-side resolver can answer
+(supported by Microsandbox's DNS) or an IPv4 literal; LAN-only names that only
+your host's resolver knows will not resolve. For a server on a non-standard
+port, collect its host key with `ssh-keyscan -p <port> <host>` and set `port`
+in the destination — the launcher renders the known_hosts selector as
+`<host>` for port 22 and `[<host>]:<port>` otherwise, so you never write the
+selector yourself.
 
 The remote account must be distinct from your own and restricted on the
 server side — see [the security notes](claude-security.md#ssh-access) for why,
-and what this design does not protect against. Short-lived Vault-signed
-certificates replacing the static key are planned as a follow-up.
+what pinned host keys do and do not protect against, and how to revoke a
+credential you suspect was copied.
 
 ## Versions
 

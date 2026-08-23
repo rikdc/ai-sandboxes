@@ -10,12 +10,14 @@ package access
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/rikdc/ai-sandboxes/internal/config"
@@ -58,11 +60,13 @@ type Destination struct {
 	Port  int    `json:"port"`
 	User  string `json:"user"`
 	// HostKeys are pinned known_hosts lines for Host. At least one is
-	// required. Lines may be raw ssh-keyscan output ("<host> <algo> <key>")
-	// or just "<algo> <key>"; in the bare form the destination's Host is
-	// prefixed when the known_hosts file is rendered. At least one is
-	// required so a guest can never be talked into trusting an unverified
-	// server key.
+	// required, so a guest can never be talked into trusting an unverified
+	// server key. Each line is either the full known_hosts form
+	// ("<selector> <algo> <key>") or the bare ssh-keyscan tail
+	// ("<algo> <key>"); in the bare form the destination's selector is
+	// prefixed when the known_hosts file is rendered. Lines are validated
+	// strictly: no wildcards, negations, comma-separated patterns, or
+	// @cert-authority/@revoked markers.
 	HostKeys []string `json:"host_keys"`
 }
 
@@ -171,16 +175,73 @@ func (p *Profile) Validate() error {
 		if len(d.HostKeys) == 0 {
 			return fmt.Errorf("destination %s: at least one pinned host key is required", d.Alias)
 		}
+		selector := KnownHostsSelector(d.Host, d.Port)
 		for j, k := range d.HostKeys {
-			line := strings.TrimSpace(k)
-			if line == "" || strings.HasPrefix(line, "#") {
-				return fmt.Errorf("destination %s: host key %d is empty or a comment", d.Alias, j+1)
-			}
-			fields := strings.Fields(line)
-			if len(fields) < 2 {
-				return fmt.Errorf("destination %s: host key %d is not a known_hosts line", d.Alias, j+1)
+			if err := validateHostKey(selector, k); err != nil {
+				return fmt.Errorf("destination %s: host key %d: %w", d.Alias, j+1, err)
 			}
 		}
+	}
+	return nil
+}
+
+// KnownHostsSelector renders the known_hosts host-pattern field for a
+// destination the way ssh itself matches it: "host" for port 22 and
+// "[host]:port" for any other port. The selector is derived exclusively from
+// the profile's Host and Port so a rendered entry can never match a different
+// endpoint.
+func KnownHostsSelector(host string, port int) string {
+	if port == 22 {
+		return host
+	}
+	return fmt.Sprintf("[%s]:%d", host, port)
+}
+
+// hostKeyAlgoRE matches the algorithm field of a pinned known_hosts entry:
+// the standard SSH public key algorithm names.
+var hostKeyAlgoRE = regexp.MustCompile(
+	`^(ssh-(ed25519|rsa|dss)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com)$`)
+
+// keyBase64RE constrains the key body to standard base64 characters before it
+// is decoded; anything else (spaces, colons, option suffixes) is malformed.
+var keyBase64RE = regexp.MustCompile(`^[A-Za-z0-9+/]+={0,2}$`)
+
+// validateHostKey strictly validates one pinned known_hosts entry against the
+// destination's selector. Accepted forms are exactly "<selector> <algo>
+// <key>" and the bare "<algo> <key>". Everything else — wildcards,
+// negations, comma-separated patterns, @cert-authority/@revoked markers,
+// unknown algorithms, non-base64 keys — is rejected rather than passed
+// through to the guest's known_hosts file.
+func validateHostKey(selector, line string) error {
+	line = strings.TrimSpace(line)
+	if line == "" || strings.HasPrefix(line, "#") {
+		return fmt.Errorf("is empty or a comment")
+	}
+	fields := strings.Fields(line)
+	var algo, key string
+	switch len(fields) {
+	case 2:
+		algo, key = fields[0], fields[1]
+	case 3:
+		pattern := fields[0]
+		if strings.ContainsAny(pattern, "*?!") || strings.HasPrefix(pattern, "@") || strings.Contains(pattern, ",") {
+			return fmt.Errorf("unsupported host pattern %q", pattern)
+		}
+		if pattern != selector {
+			return fmt.Errorf("host pattern %q does not match the destination selector %q", pattern, selector)
+		}
+		algo, key = fields[1], fields[2]
+	default:
+		return fmt.Errorf("not a known_hosts line (want %q <algo> <key> or bare <algo> <key>)", selector)
+	}
+	if !hostKeyAlgoRE.MatchString(algo) {
+		return fmt.Errorf("unsupported key algorithm %q", algo)
+	}
+	if !keyBase64RE.MatchString(key) {
+		return fmt.Errorf("malformed key material")
+	}
+	if _, err := base64.StdEncoding.DecodeString(key); err != nil {
+		return fmt.Errorf("malformed key material: %w", err)
 	}
 	return nil
 }
@@ -281,49 +342,73 @@ func RenderConfig(p *Profile) string {
 	return b.String()
 }
 
-// RenderKnownHosts renders the pinned known_hosts file contents. Bare
-// "<algo> <key>" lines get the destination's Host prefixed, because
-// known_hosts matches entries by the exact name used to connect and a bare
-// key line would silently never match anything.
+// RenderKnownHosts renders the pinned known_hosts file contents. Every entry
+// is rendered with the destination's selector ("host" for port 22,
+// "[host]:port" otherwise), because known_hosts matches entries by the exact
+// host and port used to connect and a bare key line would silently never
+// match anything. Profiles are validated before rendering, so each line is
+// normalized to "<selector> <algo> <key>".
 func RenderKnownHosts(p *Profile) string {
 	var b strings.Builder
 	b.WriteString("# Generated by ai-sandbox from an access profile; edits are overwritten.\n")
 	for _, d := range p.Destinations {
+		selector := KnownHostsSelector(d.Host, d.Port)
 		for _, k := range d.HostKeys {
-			b.WriteString(normalizeHostKey(d.Host, k))
-			b.WriteString("\n")
+			fields := strings.Fields(strings.TrimSpace(k))
+			if len(fields) < 2 {
+				continue // unreachable for validated profiles; skip defensively
+			}
+			fmt.Fprintf(&b, "%s %s %s\n", selector, fields[len(fields)-2], fields[len(fields)-1])
 		}
 	}
 	return b.String()
 }
 
-// hostKeyAlgoRE matches the first field of a bare "<algo> <key>" line: the
-// standard SSH public key algorithm names. Anything else as the leading
-// field means the line already carries its own host pattern.
-var hostKeyAlgoRE = regexp.MustCompile(
-	`^(ssh-(ed25519|rsa|dss)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com)$`)
-
-func normalizeHostKey(host, line string) string {
-	line = strings.TrimSpace(line)
-	fields := strings.Fields(line)
-	if len(fields) == 2 && hostKeyAlgoRE.MatchString(fields[0]) {
-		return host + " " + fields[0] + " " + fields[1]
-	}
-	return line
-}
-
 // Materialize writes config and known_hosts into the key directory. Both are
 // derived state, rewritten idempotently before every run; the profile stays
 // the single source of truth. The files contain no secrets.
+//
+// Each file is written to a unique temporary file in the same directory,
+// forced to mode 0600, then atomically renamed over the target, so concurrent
+// launches never observe a partially written file and a crash never leaves one
+// behind. A pre-existing target that is not a regular file (a symlink or
+// device) is refused instead of being replaced through.
 func Materialize(dir string, p *Profile) error {
+	names := []string{"config", "known_hosts"}
 	files := map[string]string{
 		"config":      RenderConfig(p),
 		"known_hosts": RenderKnownHosts(p),
 	}
-	for name, content := range files {
+	// Deterministic order so two racing materializations converge on the same
+	// final content regardless of map iteration order.
+	sort.Strings(names)
+	for _, name := range names {
 		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
+			return fmt.Errorf("refusing to write %s: not a regular file", path)
+		}
+		tmp, err := os.CreateTemp(dir, "."+name+".tmp-")
+		if err != nil {
+			return fmt.Errorf("could not create temporary file for %s: %w", path, err)
+		}
+		tmpName := tmp.Name()
+		if _, err := tmp.WriteString(files[name]); err != nil {
+			tmp.Close()
+			os.Remove(tmpName)
 			return fmt.Errorf("could not write %s: %w", path, err)
+		}
+		if err := tmp.Chmod(0o600); err != nil {
+			tmp.Close()
+			os.Remove(tmpName)
+			return fmt.Errorf("could not set mode 0600 on %s: %w", path, err)
+		}
+		if err := tmp.Close(); err != nil {
+			os.Remove(tmpName)
+			return fmt.Errorf("could not close %s: %w", path, err)
+		}
+		if err := os.Rename(tmpName, path); err != nil {
+			os.Remove(tmpName)
+			return fmt.Errorf("could not finalize %s: %w", path, err)
 		}
 	}
 	return nil

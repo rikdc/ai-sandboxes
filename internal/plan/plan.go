@@ -73,9 +73,6 @@ type RuntimePlan struct {
 	// credential directory ("<hostdir>:/run/ai-sandbox/ssh:ro"), empty when
 	// the run carries no access profile.
 	AccessMount string `json:"access_mount,omitempty"`
-	// DnsArgs carries the extra msb DNS flags contributed by an access
-	// profile. See Input.DnsArgs.
-	DnsArgs []string `json:"dns_args,omitempty"`
 	// AccessConfigMount is the full --mount-file value that exposes the same
 	// generated ssh_config as a system-wide include
 	// ("<hostdir>/config:/etc/ssh/ssh_config.d/99-ai-sandbox-access.conf:ro")
@@ -109,13 +106,6 @@ type Input struct {
 	// access profile (currently AI_SANDBOX_SSH_CONFIG), appended after the
 	// agent's own environment.
 	AccessEnv []string
-	// DnsArgs are extra `msb run` DNS flags (e.g. --dns-nameserver IP,
-	// --no-dns-rebind-protection) appended after the network flags. Access
-	// profiles set them so guest lookups reach the host's LAN resolvers and
-	// private-IP answers survive rebind protection; see the caller in
-	// cmd/ai-sandbox. Empty for plain runs, which keep msb's own upstream
-	// discovery and its default rebind protection.
-	DnsArgs []string
 }
 
 var (
@@ -184,7 +174,6 @@ func Resolve(cfg config.Agent, in Input) (*RuntimePlan, error) {
 		network.Rules = nil
 	}
 	env := append(append([]string{}, cfg.Environment...), in.AccessEnv...)
-	dnsArgs := append([]string{}, in.DnsArgs...)
 
 	return &RuntimePlan{
 		AgentName:         cfg.Name,
@@ -204,7 +193,6 @@ func Resolve(cfg config.Agent, in Input) (*RuntimePlan, error) {
 		Command:           cfg.Command,
 		AgentArgs:         in.AgentArgs,
 		Labels:            labels,
-		DnsArgs:           dnsArgs,
 		AccessMount:       in.AccessMount,
 		AccessConfigMount: in.AccessConfigMount,
 	}, nil
@@ -259,7 +247,6 @@ func (p *RuntimePlan) MsbArgv() []string {
 	}
 	argv = append(argv, resourceFlags(p.Resources, p.Security)...)
 	argv = append(argv, networkFlags(p.Network)...)
-	argv = append(argv, p.DnsArgs...)
 	argv = append(argv, "--mount-dir", p.WorkspaceMount)
 	argv = append(argv, "--mount-named", p.HomeMount)
 	if p.SharedState != nil {

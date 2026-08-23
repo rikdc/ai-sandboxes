@@ -25,11 +25,19 @@ import (
 //
 // When AI_SANDBOX_ACCESS_INTEG_SSH=1 is also set, a second VM running sshd
 // stands in for the remote server and the test additionally proves the full
-// SSH leg through the pinned credential path: key auth succeeds, a different
-// key is rejected, and ports outside the profile's exact allow@host:tcp:port
-// rule stay unreachable. The profile's destination Host is pointed at the
-// stand-in VM's real address with its real ssh-ed25519 host key, so the leg
-// exercises the same materialization path production runs use.
+// SSH leg through the pinned credential path: the configured key
+// authenticates, a different key is rejected, a modified pinned host key is
+// rejected, the non-default port destination works end to end, and ports
+// outside the profile's exact allow@host:tcp:port rules stay unreachable. The
+// profile's destination Hosts are pointed at the stand-in VM's real address
+// with its real ssh-ed25519 host key, so the leg exercises the same
+// materialization path production runs use.
+//
+// Run with:
+//
+//	AI_SANDBOX_MSB_INTEG=1 go test -tags integration -run TestAccessProfileEndToEnd ./cmd/ai-sandbox
+//	AI_SANDBOX_MSB_INTEG=1 AI_SANDBOX_ACCESS_INTEG_SSH=1 \
+//	  go test -tags integration -run TestAccessProfileEndToEnd ./cmd/ai-sandbox
 //
 // Skipped unless AI_SANDBOX_MSB_INTEG=1 and msb/docker are usable, matching
 // tunnel_integ_test.go.
@@ -84,7 +92,11 @@ func TestAccessProfileEndToEnd(t *testing.T) {
 	if sshLeg {
 		profileHost = serverIP
 	}
-	writeProfile(t, filepath.Join(configDir, "access", "homelab.json"), profileHost, 22, hostKeys)
+	dests := []integDest{{alias: "nas", host: profileHost, port: 22}}
+	if sshLeg {
+		dests = append(dests, integDest{alias: "nasalt", host: serverIP, port: 2222})
+	}
+	writeProfile(t, filepath.Join(configDir, "access", "homelab.json"), dests, hostKeys)
 
 	home := tempDirUnderHome(t)
 	egressDir := filepath.Join(home, ".config", "microvms")
@@ -122,23 +134,8 @@ func TestAccessProfileEndToEnd(t *testing.T) {
 	}
 
 	p := resolveForTest(t, opts, e, client)
-	// Access runs pin the host's discovered resolvers and opt out of rebind
-	// protection so LAN answers (private RFC1918 IPs) survive.
-	argv := p.MsbArgv()
-	if !hasFlagValue(argv, "--dns-nameserver") {
-		t.Errorf("access plan missing --dns-nameserver: %v", argv)
-	}
-	rebindOff := false
-	for _, a := range argv {
-		if a == "--no-dns-rebind-protection" {
-			rebindOff = true
-		}
-	}
-	if !rebindOff {
-		t.Errorf("access plan missing --no-dns-rebind-protection: %v", argv)
-	}
 	sandbox := fmt.Sprintf("ai-sandbox-access-integ-%d", time.Now().Unix())
-	probe := accessProbeScript()
+	probe := accessProbeScript(profileHost)
 	if sshLeg {
 		probe += "\n" + sshLegProbeScript(serverIP)
 	}
@@ -154,9 +151,10 @@ func TestAccessProfileEndToEnd(t *testing.T) {
 }
 
 // accessProbeScript runs inside the guest and asserts every property the
-// --access design promises at runtime.
-func accessProbeScript() string {
-	return `
+// --access design promises at runtime. hostname is the destination Host the
+// profile pins (a test name or the stand-in server's address).
+func accessProbeScript(hostname string) string {
+	return fmt.Sprintf(`
 set -eu
 echo "user=$(id -un)"
 for f in config known_hosts id_ed25519 id_ed25519.pub; do
@@ -169,43 +167,58 @@ test "$AI_SANDBOX_SSH_CONFIG" = "/run/ai-sandbox/ssh/config" || { echo "BAD ENV:
 # The generated config must also be reachable as a system-wide include, so
 # bare "ssh nas" (no -F) resolves the alias with the hardened options.
 ssh -G nas > /tmp/ssh-G.txt 2>&1 || { cat /tmp/ssh-G.txt; exit 1; }
-for want in "^user claude$" "^hostname nas.test$" "^port 22$" "^identityfile .*/run/ai-sandbox/ssh/id_ed25519$" "^stricthostkeychecking (yes|true)$" "^forwardagent no$" "^clearallforwardings yes$" "^identitiesonly yes$" "^passwordauthentication no$"; do
+for want in "^user claude$" "^hostname %s$" "^port 22$" "^identityfile .*/run/ai-sandbox/ssh/id_ed25519$" "^stricthostkeychecking (yes|true)$" "^forwardagent no$" "^clearallforwardings yes$" "^identitiesonly yes$" "^passwordauthentication no$"; do
   grep -Eiq "$want" /tmp/ssh-G.txt || { echo "CONFIG MISSING $want"; cat /tmp/ssh-G.txt; exit 1; }
 done
 if curl -sS --connect-timeout 5 https://example.com/ >/dev/null 2>&1; then
   echo "PUBLIC EGRESS LEAK"; exit 1
 fi
 echo PROBE-OK
-`
+`, hostname)
 }
 
 // sshLegProbeScript extends the guest probe with the live SSH assertions:
-// the pinned key authenticates, a throwaway key is rejected, and a port the
-// profile does not allow-list is unreachable on the destination host. The
-// blocked-port check uses curl because /dev/tcp is a bashism and the probe
-// runs under /bin/sh.
+// the pinned key authenticates on both allowed destinations (default and
+// non-default port), a throwaway key is rejected, a modified pinned host key
+// is rejected, and a port neither allow@host:tcp:port rule covers is
+// unreachable on the destination host. The blocked-port check uses curl
+// because /dev/tcp is a bashism and the probe runs under /bin/sh.
 func sshLegProbeScript(serverIP string) string {
 	return fmt.Sprintf(`
 if ! ssh -o BatchMode=yes nas true 2>/tmp/ssh-ok.err; then
   echo "SSH KEY AUTH FAILED"; cat /tmp/ssh-ok.err; exit 1
 fi
+if ! ssh -o BatchMode=yes nasalt true 2>/tmp/ssh-alt.err; then
+  echo "SSH NON-DEFAULT PORT FAILED"; cat /tmp/ssh-alt.err; exit 1
+fi
+ssh -G nasalt > /tmp/ssh-G-alt.txt 2>&1 || { cat /tmp/ssh-G-alt.txt; exit 1; }
+grep -Eiq "^port 2222$" /tmp/ssh-G-alt.txt || { echo "ALT CONFIG MISSING PORT 2222"; cat /tmp/ssh-G-alt.txt; exit 1; }
 ssh-keygen -q -t ed25519 -N '' -f /tmp/wrongkey || { echo "NO GUEST SSH-KEYGEN"; exit 1; }
 if ssh -o BatchMode=yes -i /tmp/wrongkey -o IdentitiesOnly=yes nas true 2>/tmp/ssh-bad.err; then
   echo "WRONG KEY ACCEPTED"; exit 1
 fi
 grep -q "Permission denied" /tmp/ssh-bad.err || { echo "UNEXPECTED WRONG-KEY ERROR"; cat /tmp/ssh-bad.err; exit 1; }
+cp /run/ai-sandbox/ssh/known_hosts /tmp/tampered_known_hosts
+# Corrupt one character inside the pinned key body, keeping the selector and
+# algorithm intact so ssh finds the entry but must reject the mismatched key.
+sed -i 's/AAAAC3NzaC1lZDI1NTE5AAAAI/AAAAC3NzaC1lZDI1NTE5AAAAB/' /tmp/tampered_known_hosts
+if ssh -o BatchMode=yes -o UserKnownHostsFile=/tmp/tampered_known_hosts \
+    -o StrictHostKeyChecking=yes -p 22 claude@%s true 2>/tmp/ssh-tamper.err; then
+  echo "TAMPERED HOST KEY ACCEPTED"; exit 1
+fi
+grep -qi "host key verification failed" /tmp/ssh-tamper.err || { echo "UNEXPECTED TAMPER ERROR"; cat /tmp/ssh-tamper.err; exit 1; }
 if curl -sS --connect-timeout 5 http://%s:8080/ >/dev/null 2>&1; then
   echo "UNLISTED PORT REACHABLE"; exit 1
 fi
 echo SSH-LEG-OK
-`, serverIP)
+`, serverIP, serverIP)
 }
 
 // startSSHServerVM launches the detached stand-in server VM, installs and
-// starts sshd with the test's public key as claude's only login path, starts
-// a decoy listener on an unlisted port (8080), waits for sshd to answer, and
-// returns its name, address, and public host key line. Host-side cleanup is
-// registered for the whole test.
+// starts sshd listening on ports 22 and 2222 with the test's public key as
+// claude's only login path, starts a decoy listener on an unlisted port
+// (8080), waits for sshd to answer, and returns its name, address, and
+// public host key line. Host-side cleanup is registered for the whole test.
 func startSSHServerVM(t *testing.T, pubKeyPath string) (name, ip string, hostKeys []string) {
 	t.Helper()
 	pub, err := os.ReadFile(pubKeyPath)
@@ -221,7 +234,7 @@ install -d -m 700 -o claude -g claude /home/claude/.ssh
 printf '%%s\n' %s > /home/claude/.ssh/authorized_keys
 chown claude:claude /home/claude/.ssh/authorized_keys
 chmod 600 /home/claude/.ssh/authorized_keys
-printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPubkeyAuthentication yes\n' \
+printf 'Port 22\nPort 2222\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nPubkeyAuthentication yes\n' \
   > /etc/ssh/sshd_config.d/99-integ.conf
 mkdir -p /run/sshd
 /usr/sbin/sshd
@@ -270,22 +283,17 @@ nohup node -e "require('net').createServer(s=>s.end()).listen(8080,'0.0.0.0')" >
 	hostKeys = []string{line}
 
 	// Fail early if the guest would never trust this server: keyscan from
-	// the host proves the key we pinned matches what the server presents.
-	scan, err := exec.Command("ssh-keyscan", "-T", "10", "-t", "ed25519", ip).Output()
-	if err != nil || !strings.Contains(string(scan), strings.Fields(line)[1]) {
-		t.Fatalf("ssh-keyscan of %s did not confirm the pinned host key (err %v):\n%s", ip, err, scan)
-	}
-	return name, ip, hostKeys
-}
-
-// hasFlagValue reports whether argv carries flag followed by any value.
-func hasFlagValue(argv []string, flag string) bool {
-	for i, a := range argv {
-		if a == flag && i+1 < len(argv) {
-			return true
+	// the host proves the key we pinned matches what the server presents on
+	// both allowed ports.
+	for _, port := range []int{22, 2222} {
+		scan, err := exec.Command("ssh-keyscan", "-p", strconv.Itoa(port),
+			"-T", "10", "-t", "ed25519", ip).Output()
+		if err != nil || !strings.Contains(string(scan), strings.Fields(line)[1]) {
+			t.Fatalf("ssh-keyscan -p %d of %s did not confirm the pinned host key (err %v):\n%s",
+				port, ip, err, scan)
 		}
 	}
-	return false
+	return name, ip, hostKeys
 }
 
 // resolveForTest runs the production resolvePlan path (including real docker
@@ -396,24 +404,42 @@ func genKey(t *testing.T, path string) {
 	}
 }
 
-func writeProfile(t *testing.T, path, host string, port int, hostKeys []string) {
+// integDest is one profile destination entry for the integration test.
+type integDest struct {
+	alias string
+	host  string
+	port  int
+}
+
+func writeProfile(t *testing.T, path string, dests []integDest, hostKeys []string) {
 	t.Helper()
-	if len(hostKeys) == 0 {
-		// Non-SSH leg: no live server exists, so pin a syntactically valid
-		// placeholder. Only ssh -G output is asserted in that mode.
-		hostKeys = []string{fmt.Sprintf("%s ssh-ed25519 AAAAplaceholder", host)}
-	}
-	doc := fmt.Sprintf(`{
+	var b strings.Builder
+	b.WriteString(`{
 	  "schema_version": 1,
 	  "destinations": [
-	    {"alias": "nas", "host": "%s", "port": %d, "user": "claude",
-	     "host_keys": [%q]}
-	  ]
-	}`, host, port, hostKeys[0])
+`)
+	for i, d := range dests {
+		comma := ","
+		if i == len(dests)-1 {
+			comma = ""
+		}
+		key := fmt.Sprintf("%s ssh-ed25519 AAAAplaceholder", d.host)
+		if i < len(hostKeys) {
+			// Live server: pin its real "<algo> <key>" line; the renderer
+			// derives the per-port selector.
+			key = hostKeys[i]
+		}
+		fmt.Fprintf(&b,
+			"	    {\"alias\": %q, \"host\": %q, \"port\": %d, \"user\": \"claude\",\n"+
+				"	     \"host_keys\": [%q]}%s\n",
+			d.alias, d.host, d.port, key, comma)
+	}
+	b.WriteString(`	  ]
+	}`)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

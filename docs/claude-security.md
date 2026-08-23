@@ -53,28 +53,47 @@ matching key directory mounted read-only at `/run/ai-sandbox/ssh`, and a
 generated ssh configuration that pins `known_hosts`, forbids agent and port
 forwarding, and disables password authentication. Unlisted hosts and ports
 remain unreachable, and `ai-sandbox plan --access <name>` shows the intended
-destinations without touching anything.
+destinations without touching anything. The SSH connections originate inside
+the guest VM, not on the host — which is why the profile's destinations must
+resolve from within Microsandbox (or be IPv4 literals).
 
 Understand what this design does and does not protect:
 
 - The guest can **read** the private key. Read-only mounting prevents
   modification, not exfiltration. Assume any session with `--access` can copy
   the credential.
-- Because of that, the remote account must be distinct from your own, with a
-  tightly restricted `authorized_keys` entry (`from="...",` `command="..."`,
-  `no-agent-forwarding`, `no-port-forwarding`) or a service account limited to
-  specific operations. Never point an access profile at an account whose shell
-  you could not afford to lose.
-- The server must pin the key: add the profile's public key to that account's
-  `authorized_keys` only — never your own.
-- If the key may have been copied during a session, remove it from
-  `authorized_keys` on the server and delete the key directory.
+- The pinned host-key checking is **not** a host-enforced boundary. The guest
+  runs its own ssh client and can point it at any config or known_hosts file,
+  bypassing the generated ones entirely. What actually constrains the session:
+  - **Microsandbox network rules** — only `allow@host:tcp:<port>` destinations
+    are reachable, enforced below the guest.
+  - **A dedicated remote account** — never your own account.
+  - **Server-side `authorized_keys` restrictions** — `from="..."`,
+    `command="..."`, `no-agent-forwarding`, `no-port-forwarding`, enforced by
+    sshd no matter what the guest does locally.
+  - **Credential revocation** — if a key may have been copied during a
+    session, remove it from `authorized_keys` on the server and delete the key
+    directory. Revocation is your real expiry mechanism.
+- The host-key pinning still has value: it makes the *intended* path strict
+  (no interactive trust prompts, no TOFU) and turns a changed server identity
+  into a loud failure instead of a silent one.
+- When collecting host keys with `ssh-keyscan`, remember that the scan itself
+  does not authenticate anything — an attacker who can intercept the scan
+  hands you their own key. Verify the fingerprint against an independent
+  trusted channel (server console, a colleague, an out-of-band record) before
+  pinning it.
+
+The remote account must be distinct from your own, with a tightly restricted
+`authorized_keys` entry (`from="...",` `command="..."`,
+`no-agent-forwarding`, `no-port-forwarding`) or a service account limited to
+specific operations. Never point an access profile at an account whose shell
+you could not afford to lose. Add the profile's public key to that account's
+`authorized_keys` only — never your own.
 
 The key directory must live under
 `~/.config/ai-sandboxes/access/keys/<name>/` (mode 0700, key mode 0600); the
 launcher refuses symlinked directories that resolve elsewhere, so `~/.ssh`
-cannot be mounted even by pointing a symlink at it. Short-lived Vault-signed
-certificates are planned as a follow-up so a copied key expires on its own.
+cannot be mounted even by pointing a symlink at it.
 
 ## Working safely
 
