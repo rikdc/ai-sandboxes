@@ -13,3 +13,4 @@ load_image() {
 
 load_image ai-sandboxes-claude:local ai-sandboxes-claude:local || exit 1
 load_image ai-sandboxes-codex:local ai-sandboxes-codex:local || exit 1
+load_image ai-sandboxes-opencode:local ai-sandboxes-opencode:local || exit 1

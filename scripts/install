@@ -131,7 +131,7 @@ preflight || exit $?
 invalidate_prior_state
 
 step install-ai-sandbox 'build and install the ai-sandbox binary'
-step build 'build base/tools/claude/codex docker images'
+step build 'build base/tools/claude/codex/opencode docker images'
 # load-msb runs before verify so exactly one component imports each image per
 # lifecycle: verify's Microsandbox smoke tests consume the loaded images.
 step load-msb 'load the images into Microsandbox'
@@ -140,4 +140,4 @@ step verify 'verify the control plane and images'
 record_state
 
 printf 'installed ai-sandboxes at revision %s\n' "$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
-printf 'fish user? run ./scripts/install-fish-functions to install the claude/codex/claude-session wrappers\n'
+printf 'fish user? run ./scripts/install-fish-functions to install the claude/codex/opencode/claude-session wrappers\n'

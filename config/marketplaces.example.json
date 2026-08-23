@@ -13,5 +13,12 @@
       "ref": "FULL_COMMIT_SHA",
       "skills_path": ".codex/skills"
     }
+  ],
+  "opencode": [
+    {
+      "url": "https://github.com/OWNER/opencode-marketplace.git",
+      "ref": "FULL_COMMIT_SHA",
+      "skills_path": ".opencode/skills"
+    }
   ]
 }
