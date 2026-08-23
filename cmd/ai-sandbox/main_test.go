@@ -122,6 +122,10 @@ func TestParseAgentArgs(t *testing.T) {
 		{name: "access then dashed arg needs separator", args: []string{"claude", "--access", "homelab", "-x", "hi"}, wantErr: true},
 		{name: "access before profile", args: []string{"claude", "--access", "homelab", "--profile", "work"}, agent: "claude", access: "homelab", profile: "work"},
 		{name: "access missing value", args: []string{"claude", "--access"}, wantErr: true},
+		// --access after --profile would be forwarded to the agent verbatim;
+		// the parser must refuse instead of silently dropping it.
+		{name: "access after profile", args: []string{"claude", "--profile", "work", "--access", "homelab"}, wantErr: true},
+		{name: "access= after profile", args: []string{"claude", "--profile=work", "--access=homelab"}, wantErr: true},
 		{name: "empty agent", args: []string{}, wantErr: true},
 		{name: "unknown flag", args: []string{"claude", "--bogus", "x"}, wantErr: true},
 		{name: "dashed arg needs separator", args: []string{"claude", "--version"}, wantErr: true},

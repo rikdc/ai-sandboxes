@@ -131,7 +131,8 @@ func usage(w io.Writer) {
 		"forwarded verbatim. `run` and `plan` accept --profile PROFILE\n"+
 		"(claude session image) and --access NAME (a runtime SSH access profile:\n"+
 		"exact destinations with pinned host keys, mounted read-only from\n"+
-		"~/.config/ai-sandboxes/access/keys/<name>).\n"+
+		"~/.config/ai-sandboxes/access/keys/<name>). Give --access before\n"+
+		"--profile; everything after --profile VALUE belongs to the agent.\n"+
 		"The installed fish wrappers invoke this binary, so most\n"+
 		"users never call it directly.\n")
 }
@@ -164,6 +165,11 @@ func parseAgentArgs(args []string) (runOptions, error) {
 			// The claude-session contract is "profile first, then the agent's
 			// own arguments verbatim": everything after --profile VALUE belongs
 			// to the agent, presented after an explicit -- when present.
+			// --access is launcher-level and must not be silently forwarded to
+			// the agent, so an occurrence here is a usage error, not a flag.
+			if a == "--access" || strings.HasPrefix(a, "--access=") {
+				return opts, errors.New("--access must be given before --profile: everything after --profile VALUE belongs to the agent")
+			}
 			if a == "--" {
 				opts.agentArgs = args[1:]
 				return opts, nil
