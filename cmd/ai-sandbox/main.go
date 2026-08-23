@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 
@@ -279,6 +281,10 @@ type execEnv struct {
 	// (scripts/session/resolve-image.sh, load-image.sh, docker, msb) and is
 	// injectable so tests can fake it.
 	run func(ctx context.Context, name string, args ...string) ([]byte, error)
+	// resolvConfPath overrides the fallback resolver file read by
+	// hostDNSNameservers ("/etc/resolv.conf"). Tests set it so DNS discovery
+	// is deterministic and never touches the developer's real configuration.
+	resolvConfPath string
 }
 
 // execCapture runs name with ctx cancellation and returns its stdout. stderr
@@ -593,6 +599,7 @@ func resolvePlan(ctx context.Context, opts runOptions, e execEnv, stderr io.Writ
 		accessConfigMount string
 		accessRules       []string
 		accessEnv         []string
+		dnsArgs           []string
 	)
 	if opts.access != "" {
 		cfgDir, err := e.userConfigDir()
@@ -629,6 +636,24 @@ func resolvePlan(ctx context.Context, opts runOptions, e execEnv, stderr io.Writ
 		accessEnv = []string{access.SSHConfigEnvVar + "=" + access.GuestDir + "/config"}
 		accessMount = keyDir + ":" + access.GuestDir + ":ro"
 		accessConfigMount = access.ConfigIncludeMount(keyDir)
+		if !network.Public {
+			// LAN destinations only resolve if guest DNS queries reach the
+			// host's own resolvers: internal zones (home.lan, split-horizon
+			// corporate names) exist nowhere else, and msb's macOS upstream
+			// auto-discovery is not reliable on every boot. Pin the discovered
+			// resolvers explicitly. Rebind protection must also go: it drops
+			// answers pointing at private RFC1918 addresses, which is exactly
+			// what every LAN destination resolves to (verified against msb
+			// v0.6.13). Public-egress runs keep msb's defaults.
+			servers := e.hostDNSNameservers(ctx)
+			for _, s := range servers {
+				dnsArgs = append(dnsArgs, "--dns-nameserver", s)
+			}
+			dnsArgs = append(dnsArgs, "--no-dns-rebind-protection")
+			if len(servers) == 0 {
+				fmt.Fprintf(stderr, "%s: warning: could not discover host DNS resolvers; relying on microsandbox auto-discovery\n", opts.agent)
+			}
+		}
 		if writeAccessMaterial {
 			if err := access.Materialize(keyDir, prof); err != nil {
 				fmt.Fprintf(stderr, "%s: --access %s: %s\n", opts.agent, opts.access, err)
@@ -648,6 +673,7 @@ func resolvePlan(ctx context.Context, opts runOptions, e execEnv, stderr io.Writ
 		AccessConfigMount: accessConfigMount,
 		AccessRules:       accessRules,
 		AccessEnv:         accessEnv,
+		DnsArgs:           dnsArgs,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "ai-sandbox: %s\n", err)
@@ -671,6 +697,84 @@ func (e execEnv) resolveNetwork(cfg config.Agent, home string) (plan.Network, er
 	public := e.getenv(overrideVar) == "1"
 	egressFile := filepath.Join(home, ".config", "microvms", cfg.Name+"-egress")
 	return plan.ResolveNetwork(public, egressFile, cfg.BaseNetRules)
+}
+
+// hostDNSNameservers returns the host's upstream resolver addresses in
+// priority order. macOS reads them from the system configuration store via
+// `scutil --dns` (the primary resolver block only); everything else falls back
+// to /etc/resolv.conf. A nil e.run (tests) or any discovery failure returns
+// nil; the caller warns and lets microsandbox auto-discover.
+func (e execEnv) hostDNSNameservers(ctx context.Context) []string {
+	path := e.resolvConfPath
+	if path == "" {
+		path = "/etc/resolv.conf"
+	}
+	if runtime.GOOS == "darwin" && e.run != nil {
+		if out, err := e.run(ctx, "scutil", "--dns"); err == nil {
+			if ns := parseScutilNameservers(out); len(ns) > 0 {
+				return ns
+			}
+		}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	return parseResolvConfNameservers(data)
+}
+
+// parseScutilNameservers extracts the nameserver entries from the first
+// (default) resolver block of `scutil --dns` output. Later blocks cover
+// scoped or special-purpose domains (mDNS, .local, VPN splits) that would
+// resolve nothing useful as blanket upstreams.
+func parseScutilNameservers(out []byte) []string {
+	var ns []string
+	inPrimary := false
+	for _, line := range strings.Split(string(out), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "resolver #") {
+			if inPrimary {
+				break // left the primary block
+			}
+			inPrimary = strings.HasPrefix(trimmed, "resolver #1")
+			continue
+		}
+		name, value, ok := strings.Cut(trimmed, ":")
+		if !ok || !inPrimary || !strings.HasPrefix(name, "nameserver[") {
+			continue
+		}
+		if addr, err := netip.ParseAddr(strings.TrimSpace(value)); err == nil {
+			ns = append(ns, addr.String())
+		}
+	}
+	return dedupe(ns)
+}
+
+// parseResolvConfNameservers extracts every nameserver address from an
+// /etc/resolv.conf-style file.
+func parseResolvConfNameservers(data []byte) []string {
+	var ns []string
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "nameserver" {
+			if addr, err := netip.ParseAddr(fields[1]); err == nil {
+				ns = append(ns, addr.String())
+			}
+		}
+	}
+	return dedupe(ns)
+}
+
+func dedupe(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := in[:0]
+	for _, s := range in {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func executeRun(ctx context.Context, opts runOptions, e execEnv, stderr io.Writer, client msbClient, launch func([]string) error) int {

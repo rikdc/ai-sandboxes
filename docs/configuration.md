@@ -129,6 +129,16 @@ defeat them: unknown JSON fields, unpinned destinations, symlinked key
 directories pointing outside `access/keys/`, loose permissions, or a workspace
 overlapping the key directory.
 
+Access runs also adjust guest DNS so internal names resolve. The launcher
+discovers the host's upstream resolvers (System Configuration on macOS,
+`/etc/resolv.conf` elsewhere) and pins them with `--dns-nameserver`, because
+Microsandbox's own auto-discovery is not reliable on every boot and internal
+zones (`.lan`, split-horizon corporate names) exist nowhere else. It also
+passes `--no-dns-rebind-protection`: rebind protection drops answers pointing
+at private RFC1918 addresses, which is what every LAN destination resolves to.
+Public-egress runs keep Microsandbox's defaults — the trade-off is deliberate
+and scoped to `--access`.
+
 The remote account must be distinct from your own and restricted on the
 server side — see [the security notes](claude-security.md#ssh-access) for why,
 and what this design does not protect against. Short-lived Vault-signed

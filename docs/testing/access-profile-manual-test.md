@@ -135,14 +135,23 @@ regardless of the requested command — proof the server-side restriction holds.
 
 ### Troubleshooting: destination does not resolve
 
-If `ssh nas` fails with `Could not resolve hostname`, the guest could not
-resolve the profile's `host` value. Sandbox DNS is proxied by Microsandbox
-and may not resolve names your Mac resolves via local DNS/mDNS (`.lan`,
-`.internal`, mDNS-adjacent setups). Check with
-`getent hosts nas.example.internal` inside the guest. Workaround: use the
-raw IP address as the profile `host` — the connection is made from the host
-side, so no guest-side resolution is involved — and re-pin `host_keys` with
-`ssh-keyscan <ip>`.
+Access runs pin your Mac's resolvers (`scutil --dns`) as the sandbox's DNS
+upstreams and disable rebind protection, so `home.lan`-style names should
+resolve exactly as they do on the host. If `ssh nas` still fails with
+`Could not resolve hostname`:
+
+1. Check `ai-sandbox plan claude --access homelab --verbose` shows
+   `dns args: --dns-nameserver <ip> ... --no-dns-rebind-protection`. Missing
+   entries mean resolver discovery failed — check `scutil --dns | head`.
+2. Inside the guest, `cat /etc/resolv.conf` then
+   `getent hosts nas.example.internal`.
+3. Fallback workaround: use the raw IP address as the profile `host` — the
+   connection is made from the host side, so no guest-side resolution is
+   involved — and re-pin `host_keys` with `ssh-keyscan <ip>`.
+
+Note: a fresh VM answering NXDOMAIN for *everything* (public names included)
+is a known Microsandbox auto-discovery flake; relaunching fixes it. Pinned
+resolvers avoid it entirely.
 
 ## Cleanup
 

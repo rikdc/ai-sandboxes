@@ -96,6 +96,21 @@ func TestAccessProfileEndToEnd(t *testing.T) {
 	}
 
 	p := resolveForTest(t, opts, e, client)
+	// Access runs pin the host's discovered resolvers and opt out of rebind
+	// protection so LAN answers (private RFC1918 IPs) survive.
+	argv := p.MsbArgv()
+	if !hasFlagValue(argv, "--dns-nameserver") {
+		t.Errorf("access plan missing --dns-nameserver: %v", argv)
+	}
+	rebindOff := false
+	for _, a := range argv {
+		if a == "--no-dns-rebind-protection" {
+			rebindOff = true
+		}
+	}
+	if !rebindOff {
+		t.Errorf("access plan missing --no-dns-rebind-protection: %v", argv)
+	}
 	sandbox := fmt.Sprintf("ai-sandbox-access-integ-%d", time.Now().Unix())
 	launchAccessSandbox(t, sandbox, p, accessProbeScript())
 
@@ -129,6 +144,16 @@ if curl -sS --connect-timeout 5 https://example.com/ >/dev/null 2>&1; then
 fi
 echo PROBE-OK
 `
+}
+
+// hasFlagValue reports whether argv carries flag followed by any value.
+func hasFlagValue(argv []string, flag string) bool {
+	for i, a := range argv {
+		if a == flag && i+1 < len(argv) {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveForTest runs the production resolvePlan path (including real docker

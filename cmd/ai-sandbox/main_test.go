@@ -977,6 +977,12 @@ func accessTestEnv(t *testing.T) (execEnv, string) {
 		t.Fatal(err)
 	}
 
+	// Deterministic DNS discovery: a canned fallback resolver file (the
+	// scutil path needs e.run, which these tests leave nil) plus a garbage
+	// line the parsers must ignore.
+	resolv := filepath.Join(t.TempDir(), "resolv.conf")
+	os.WriteFile(resolv, []byte("# generated\nnameserver 192.168.88.13\nnameserver 192.168.88.9\nsearch home.lan\n"), 0o600)
+
 	base := e.getenv
 	e.getenv = func(k string) string {
 		if k == "AI_SANDBOX_CONFIG_DIR" {
@@ -984,6 +990,7 @@ func accessTestEnv(t *testing.T) (execEnv, string) {
 		}
 		return base(k)
 	}
+	e.resolvConfPath = resolv
 	return e, resolved
 }
 
@@ -1008,6 +1015,13 @@ func TestExecuteRunAccessProfile(t *testing.T) {
 	}
 	if !containsArg(launched, "AI_SANDBOX_SSH_CONFIG=/run/ai-sandbox/ssh/config") {
 		t.Errorf("argv missing ssh-config environment variable: %v", launched)
+	}
+	if !containsArg(launched, "--dns-nameserver", "192.168.88.13") ||
+		!containsArg(launched, "--dns-nameserver", "192.168.88.9") {
+		t.Errorf("argv missing pinned host DNS resolvers: %v", launched)
+	}
+	if !containsArg(launched, "--no-dns-rebind-protection") {
+		t.Errorf("argv missing rebind-protection opt-out for LAN answers: %v", launched)
 	}
 
 	cfg, err := os.ReadFile(filepath.Join(keyDir, "config"))
