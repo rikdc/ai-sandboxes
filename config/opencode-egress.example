@@ -1,0 +1,21 @@
+# One HTTPS hostname per line. This file is a starting policy, not a complete
+# list of every OpenCode feature or development service.
+
+# OpenCode
+opencode.ai
+api.opencode.ai
+console.opencode.ai
+
+# Anthropic
+api.anthropic.com
+
+# OpenAI
+api.openai.com
+auth.openai.com
+chatgpt.com
+api.chatgpt.com
+
+# GitHub
+github.com
+api.github.com
+*.githubusercontent.com

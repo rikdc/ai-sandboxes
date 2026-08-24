@@ -81,6 +81,18 @@ parsed:
 			fmt.Fprintf(stderr, "ai-sandbox codex: unknown subcommand %q\n", args[1])
 			return 2
 		}
+	case "opencode":
+		if len(args) < 2 {
+			fmt.Fprintf(stderr, "ai-sandbox opencode: expected subcommand 'login'\n")
+			return 2
+		}
+		switch args[1] {
+		case "login":
+			return opencodeLoginCommand(args[2:], stdout, stderr)
+		default:
+			fmt.Fprintf(stderr, "ai-sandbox opencode: unknown subcommand %q\n", args[1])
+			return 2
+		}
 	case "claude":
 		if len(args) < 2 {
 			fmt.Fprintf(stderr, "ai-sandbox claude: expected subcommand 'mcp login <name>'\n")
@@ -118,6 +130,8 @@ func usage(w io.Writer) {
 		"  doctor                           validate host prerequisites without mutation\n"+
 		"  codex login [--timeout D]        open scoped tunnel + run browser sign-in\n"+
 		"                                   against a running 'run codex' sandbox\n"+
+		"  opencode login [--timeout D]     open scoped tunnel + run browser sign-in\n"+
+		"                                   against a running 'run opencode' sandbox\n"+
 		"  codex mcp login <server-name>    open scoped tunnel + run MCP OAuth sign-in\n"+
 		"    [--timeout D]                  for the named server against a running codex sandbox\n"+
 		"  claude mcp login --callback-port <P> <server-name>\n"+
@@ -127,7 +141,7 @@ func usage(w io.Writer) {
 		"                                   registering the server (Claude has no login-time port flag).\n"+
 		"  version                          print the version\n"+
 		"  help                             show this help\n\n"+
-		"Agents: claude, codex. Put agent arguments after `--`; they are\n"+
+		"Agents: claude, codex, opencode. Put agent arguments after `--`; they are\n"+
 		"forwarded verbatim. `run` and `plan` accept --profile PROFILE\n"+
 		"(claude session image) and --access NAME (a runtime SSH access\n"+
 		"profile: one exact destination with pinned host keys, reachable in\n"+

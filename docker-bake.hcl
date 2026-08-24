@@ -2,20 +2,21 @@ variable "NODE_IMAGE" {}
 variable "CLAUDE_CODE_VERSION" {}
 variable "CLAUDE_RELEASE_KEY_FINGERPRINT" {}
 variable "CODEX_VERSION" {}
+variable "OPENCODE_VERSION" {}
 variable "TEA_IMAGE" {}
 variable "GH_APT_KEY_FINGERPRINT" {}
 variable "SHARED_STATE_ID" { default = "" }
 variable "SHARED_STATE_QUOTA" { default = "" }
 # USER_CONFIG_DIR is the resolved user configuration directory (see
-# scripts/lib/config-dir.sh). It is exposed to the tools/claude/codex targets
-# as a BuildKit named local context ("userconfig") so user files are consumed
-# directly from outside the repository and never copied into the checkout or
-# swept into the main build context. scripts/build sets it; invoking Bake
-# directly requires setting it too.
+# scripts/lib/config-dir.sh). It is exposed to the tools/claude/codex/opencode
+# targets as a BuildKit named local context ("userconfig") so user files are
+# consumed directly from outside the repository and never copied into the
+# checkout or swept into the main build context. scripts/build sets it;
+# invoking Bake directly requires setting it too.
 # shellcheck disable=SC2034 # Consumed by docker buildx bake.
 variable "USER_CONFIG_DIR" {}
 
-group "default" { targets = ["claude", "codex"] }
+group "default" { targets = ["claude", "codex", "opencode"] }
 
 target "common" {
   platforms = ["linux/arm64"]
@@ -57,4 +58,12 @@ target "codex" {
   contexts = { base = "target:tools", userconfig = USER_CONFIG_DIR }
   args = { CODEX_VERSION = CODEX_VERSION }
   tags = ["ai-sandboxes-codex:local"]
+}
+target "opencode" {
+  inherits = ["common"]
+  context = "."
+  dockerfile = "images/opencode/Dockerfile"
+  contexts = { base = "target:tools", userconfig = USER_CONFIG_DIR }
+  args = { OPENCODE_VERSION = OPENCODE_VERSION }
+  tags = ["ai-sandboxes-opencode:local"]
 }

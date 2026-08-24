@@ -111,6 +111,29 @@ func TestAgentConfig(t *testing.T) {
 	if len(cfg.BaseNetRules) == 0 {
 		t.Errorf("codex should have deny-by-default base net rules: %+v", cfg.BaseNetRules)
 	}
+	cfg, err = AgentConfig("opencode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Image != "ai-sandboxes-opencode:local" || cfg.Command[0] != "opencode" {
+		t.Errorf("unexpected opencode policy: %+v", cfg)
+	}
+	if cfg.Net != "" || cfg.CreateHomeVolume != false {
+		t.Errorf("unexpected opencode policy: %+v", cfg)
+	}
+	if cfg.RootDiskQuota != "20G" || cfg.WorkspaceQuota != "20G" || cfg.HomeQuota != "4G" || cfg.CPUs != 4 || cfg.Memory != "8G" {
+		t.Errorf("unexpected opencode resources: root=%q workspace=%q home=%q cpus=%d memory=%q",
+			cfg.RootDiskQuota, cfg.WorkspaceQuota, cfg.HomeQuota, cfg.CPUs, cfg.Memory)
+	}
+	if cfg.Security != "restricted" {
+		t.Errorf("opencode security = %q, want restricted", cfg.Security)
+	}
+	if cfg.HomeVolume != "opencode-home" {
+		t.Errorf("opencode home volume = %q, want opencode-home", cfg.HomeVolume)
+	}
+	if len(cfg.BaseNetRules) == 0 {
+		t.Errorf("opencode should have deny-by-default base net rules: %+v", cfg.BaseNetRules)
+	}
 	if _, err := AgentConfig("nope"); err == nil {
 		t.Error("unknown agent should error")
 	}

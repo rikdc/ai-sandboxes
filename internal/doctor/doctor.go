@@ -244,7 +244,8 @@ func (e *Env) checkVolumes(add func(Check), volumeNames []string, shared *plan.S
 
 // wrapperContract describes what a correctly generated Fish wrapper for one
 // agent must contain, mirroring scripts/install-fish-functions' two wrapper
-// shapes: pass-through wrappers (claude, codex) append "-- $argv" after a
+// shapes: pass-through wrappers (claude, codex, opencode) append "-- $argv"
+// after a
 // quoted agent name, while claude-session hardcodes an unquoted "claude" and
 // forwards $argv directly (its own argv already starts with --profile).
 type wrapperContract struct {
@@ -256,6 +257,7 @@ type wrapperContract struct {
 var wrapperContracts = []wrapperContract{
 	{file: "claude.fish", agentToken: "claude", hasSeparator: true},
 	{file: "codex.fish", agentToken: "codex", hasSeparator: true},
+	{file: "opencode.fish", agentToken: "opencode", hasSeparator: true},
 	{file: "claude-session.fish", agentToken: "claude", hasSeparator: false},
 }
 
@@ -505,10 +507,10 @@ func (e *Env) checkEgress(add func(Check)) {
 	if e.Home == "" {
 		return
 	}
-	// Claude and Codex both run deny-by-default with per-agent allowlists.
-	// The override env var and file both derive from the agent name so the
-	// two agents share one check body.
-	for _, agent := range []string{"claude", "codex"} {
+	// Claude, Codex, and OpenCode all run deny-by-default with per-agent
+	// allowlists. The override env var and file both derive from the agent
+	// name so the agents share one check body.
+	for _, agent := range []string{"claude", "codex", "opencode"} {
 		e.checkAgentEgress(add, agent)
 	}
 }

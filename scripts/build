@@ -35,7 +35,7 @@ export USER_CONFIG_DIR="$config_dir"
 # bytes that never went into the images. Fail instead of recording a lie.
 config_digest_before=$(ai_sandboxes_config_digest "$config_dir") \
   || { printf 'scripts/build: could not compute the configuration digest for %s\n' "$config_dir" >&2; exit 1; }
-docker buildx bake --allow="fs.read=$config_dir" --load base tools claude codex \
+docker buildx bake --allow="fs.read=$config_dir" --load base tools claude codex opencode \
   || exit 1
 config_digest_after=$(ai_sandboxes_config_digest "$config_dir") \
   || { printf 'scripts/build: could not compute the configuration digest for %s\n' "$config_dir" >&2; exit 1; }

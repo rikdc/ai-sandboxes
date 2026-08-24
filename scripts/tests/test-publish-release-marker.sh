@@ -81,7 +81,7 @@ chmod +x "$mockdir/bin/date"
 
 # Marker an already-published release would have stored.
 cat >"$existing_marker" <<JSON
-{"schema_version":2,"upstream_commit":"$commit","base_version":"$BASE_VERSION","codex_version":"$CODEX_VERSION","claude_code_version":"$CLAUDE_CODE_VERSION","created_at":"2026-08-09T20:00:00Z"}
+{"schema_version":3,"upstream_commit":"$commit","base_version":"$BASE_VERSION","codex_version":"$CODEX_VERSION","claude_code_version":"$CLAUDE_CODE_VERSION","opencode_version":"$OPENCODE_VERSION","created_at":"2026-08-09T20:00:00Z"}
 JSON
 
 publish() {
@@ -109,8 +109,8 @@ test -f "$caught" || {
   echo 'FAIL: publish did not hand a marker file to gh release create' >&2
   exit 1
 }
-jq -e --arg c "$commit" --arg base "$BASE_VERSION" --arg cdx "$CODEX_VERSION" --arg cld "$CLAUDE_CODE_VERSION" \
-  '.upstream_commit == $c and .base_version == $base and .codex_version == $cdx and .claude_code_version == $cld' \
+jq -e --arg c "$commit" --arg base "$BASE_VERSION" --arg cdx "$CODEX_VERSION" --arg cld "$CLAUDE_CODE_VERSION" --arg oc "$OPENCODE_VERSION" \
+  '.upstream_commit == $c and .base_version == $base and .codex_version == $cdx and .claude_code_version == $cld and .opencode_version == $oc' \
   "$caught" >/dev/null || {
   echo 'FAIL: created marker does not match versions.env' >&2
   exit 1

@@ -12,8 +12,8 @@ usage() {
   cat >&2 <<'EOF'
 usage:
   release-marker changed OLD_VERSIONS_ENV NEW_VERSIONS_ENV
-  release-marker create OUTPUT COMMIT BASE_VERSION CODEX_VERSION CLAUDE_CODE_VERSION CREATED_AT
-  release-marker validate FILE COMMIT BASE_VERSION CODEX_VERSION CLAUDE_CODE_VERSION
+  release-marker create OUTPUT COMMIT BASE_VERSION CODEX_VERSION CLAUDE_CODE_VERSION OPENCODE_VERSION CREATED_AT
+  release-marker validate FILE COMMIT BASE_VERSION CODEX_VERSION CLAUDE_CODE_VERSION OPENCODE_VERSION
 EOF
   exit 64
 }
@@ -47,12 +47,12 @@ read_version() {
 }
 
 validate_inputs() {
-  local commit=$1 base_version=$2 codex_version=$3 claude_version=$4
+  local commit=$1 base_version=$2 codex_version=$3 claude_version=$4 opencode_version=$5
   [[ "$commit" =~ $commit_pattern ]] || {
     printf '%s\n' 'error: commit must be a lowercase, 40-character SHA' >&2
     return 1
   }
-  for version in "$base_version" "$codex_version" "$claude_version"; do
+  for version in "$base_version" "$codex_version" "$claude_version" "$opencode_version"; do
     valid_version "$version" || {
       printf '%s\n' 'error: version contains unsupported tag characters' >&2
       return 1
@@ -64,22 +64,28 @@ main() {
   case "${1:-}" in
     changed)
       test "$#" = 3 || usage
+      old_base=$(read_version "$2" BASE_VERSION) || return 2
       old_codex=$(read_version "$2" CODEX_VERSION) || return 2
       old_claude=$(read_version "$2" CLAUDE_CODE_VERSION) || return 2
+      old_opencode=$(read_version "$2" OPENCODE_VERSION) || return 2
+      new_base=$(read_version "$3" BASE_VERSION) || return 2
       new_codex=$(read_version "$3" CODEX_VERSION) || return 2
       new_claude=$(read_version "$3" CLAUDE_CODE_VERSION) || return 2
-      if [[ "$old_codex" != "$new_codex" ]] ||
-        [[ "$old_claude" != "$new_claude" ]]; then
+      new_opencode=$(read_version "$3" OPENCODE_VERSION) || return 2
+      if [[ "$old_base" != "$new_base" ]] ||
+        [[ "$old_codex" != "$new_codex" ]] ||
+        [[ "$old_claude" != "$new_claude" ]] ||
+        [[ "$old_opencode" != "$new_opencode" ]]; then
         return 0
       fi
       return 1
       ;;
     create)
-      test "$#" = 7 || usage
+      test "$#" = 8 || usage
       output=$2
-      validate_inputs "$3" "$4" "$5" "$6" || return 1
-      if ! [[ "$7" =~ $timestamp_pattern ]] ||
-        ! jq --null-input --arg created_at "$7" \
+      validate_inputs "$3" "$4" "$5" "$6" "$7" || return 1
+      if ! [[ "$8" =~ $timestamp_pattern ]] ||
+        ! jq --null-input --arg created_at "$8" \
           '($created_at | fromdateiso8601 != null)' >/dev/null; then
         printf '%s\n' 'error: created_at must be an RFC 3339 UTC timestamp' >&2
         return 1
@@ -89,31 +95,36 @@ main() {
         --arg base "$4" \
         --arg codex "$5" \
         --arg claude "$6" \
-        --arg created_at "$7" \
-        '{schema_version: 2,
+        --arg opencode "$7" \
+        --arg created_at "$8" \
+        '{schema_version: 3,
           upstream_commit: $commit,
           base_version: $base,
           codex_version: $codex,
           claude_code_version: $claude,
+          opencode_version: $opencode,
           created_at: $created_at}' >"$output" || return 1
       ;;
     validate)
-      test "$#" = 6 || usage
-      validate_inputs "$3" "$4" "$5" "$6" || return 1
+      test "$#" = 7 || usage
+      validate_inputs "$3" "$4" "$5" "$6" "$7" || return 1
       jq --exit-status \
         --arg commit "$3" \
         --arg base "$4" \
         --arg codex "$5" \
         --arg claude "$6" \
+        --arg opencode "$7" \
         'type == "object" and
          (keys | sort) == [
            "base_version", "claude_code_version", "codex_version",
-           "created_at", "schema_version", "upstream_commit"] and
-         .schema_version == 2 and
+           "created_at", "opencode_version", "schema_version",
+           "upstream_commit"] and
+         .schema_version == 3 and
          .upstream_commit == $commit and
          .base_version == $base and
          .codex_version == $codex and
          .claude_code_version == $claude and
+         .opencode_version == $opencode and
          (.created_at | type == "string" and
           test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$") and
           (fromdateiso8601 != null))' "$2" >/dev/null || return 1

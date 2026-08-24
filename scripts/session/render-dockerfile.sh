@@ -49,7 +49,7 @@ dockerfile="$context_dir/Dockerfile"
 printf '# syntax=docker/dockerfile:1.7\n' >>"$dockerfile" || die "could not write to $dockerfile"
 
 if test "$marketplace_count" -gt 0; then
-  jq -n --argjson claude "$marketplaces" '{claude: $claude, codex: []}' \
+  jq -n --argjson claude "$marketplaces" '{claude: $claude, codex: [], opencode: []}' \
     >"$context_dir/session-marketplaces.json" || die 'could not write session-marketplaces.json'
   cp -- "$repo_root/scripts/marketplaces/install-claude.sh" "$context_dir/install-claude-marketplaces.sh" \
     || die 'could not copy install-claude.sh into context'

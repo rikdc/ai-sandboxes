@@ -40,7 +40,7 @@ fish_quote() {
   printf "'%s'" "$s"
 }
 
-# claude, codex, and claude-session are single-command pass-throughs: after
+# claude, codex, opencode, and claude-session are single-command pass-throughs: after
 # the guard check, everything hands off to `ai-sandbox run`, which resolves the
 # plan (including, for claude-session, the --profile image), validates the
 # workspace, and execs the Microsandbox. Anything fish-specific (egress args,
@@ -113,6 +113,8 @@ write_pass_through_wrapper claude "$fish_functions_dir/claude.fish" \
   || die 'could not write the claude wrapper'
 write_pass_through_wrapper codex "$fish_functions_dir/codex.fish" \
   || die 'could not write the codex wrapper'
+write_pass_through_wrapper opencode "$fish_functions_dir/opencode.fish" \
+  || die 'could not write the opencode wrapper'
 write_claude_session_wrapper "$fish_functions_dir/claude-session.fish" \
   || die 'could not write the claude-session wrapper'
 

@@ -34,6 +34,7 @@ func fakeEnv(t *testing.T, withMsb, withEgress bool) (*Env, string) {
 		os.MkdirAll(dir, 0o755)
 		os.WriteFile(filepath.Join(dir, "claude-egress"), []byte("api.anthropic.com\ngithub.com\n"), 0o600)
 		os.WriteFile(filepath.Join(dir, "codex-egress"), []byte("api.openai.com\ngithub.com\n"), 0o600)
+		os.WriteFile(filepath.Join(dir, "opencode-egress"), []byte("api.openai.com\ngithub.com\n"), 0o600)
 	}
 
 	imageInspect := `{"config":{"digest":"sha256:abc","Labels":{}}}`
@@ -66,9 +67,9 @@ func fakeEnv(t *testing.T, withMsb, withEgress bool) (*Env, string) {
 			case name == "docker" && len(args) > 0 && args[0] == "image":
 				return []byte(`[{}]`), nil
 			case name == "msb" && len(args) > 1 && args[0] == "image" && args[1] == "list":
-				return []byte("ai-sandboxes-claude:local\nai-sandboxes-codex:local\n"), nil
+				return []byte("ai-sandboxes-claude:local\nai-sandboxes-codex:local\nai-sandboxes-opencode:local\n"), nil
 			case name == "msb" && len(args) > 1 && args[0] == "volume" && args[1] == "list":
-				return []byte("claude-home-hardened\ncodex-home\n"), nil
+				return []byte("claude-home-hardened\ncodex-home\nopencode-home\n"), nil
 			case name == "msb" && len(args) > 1 && args[0] == "image" && args[1] == "inspect":
 				return []byte(imageInspect), nil
 			case name == "git" && len(args) >= 4 && args[0] == "-C" && args[2] == "rev-parse" && args[3] == "HEAD":
@@ -101,6 +102,7 @@ func TestDoctorHealthy(t *testing.T) {
 	bin := installBinary(t, env.InstallDir)
 	installRealWrapper(t, home, "claude", env.Checkout, bin)
 	installRealWrapper(t, home, "codex", env.Checkout, bin)
+	installRealWrapper(t, home, "opencode", env.Checkout, bin)
 	installRealWrapper(t, home, "claude-session", env.Checkout, bin)
 	installTrustGuard(t, home, env.Checkout, "guard contents\n")
 
@@ -121,6 +123,9 @@ func TestDoctorHealthy(t *testing.T) {
 	}
 	if s := checkStatus(checks, "launcher codex"); s != statusOK {
 		t.Errorf("launcher codex = %s", s)
+	}
+	if s := checkStatus(checks, "launcher opencode"); s != statusOK {
+		t.Errorf("launcher opencode = %s", s)
 	}
 	if s := checkStatus(checks, "launcher claude-session"); s != statusOK {
 		t.Errorf("launcher claude-session = %s", s)

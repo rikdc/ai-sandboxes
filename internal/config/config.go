@@ -10,8 +10,9 @@ import "fmt"
 
 // Agent describes one agent's complete Microsandbox runtime policy.
 type Agent struct {
-	// Name is the agent identifier used on the command line ("claude" or
-	// "codex") and, inside the guest, as the primary command name.
+	// Name is the agent identifier used on the command line ("claude",
+	// "codex", or "opencode") and, inside the guest, as the primary command
+	// name.
 	Name string
 
 	// Image is the OCI image tag to launch in Microsandbox.
@@ -125,6 +126,29 @@ var agents = map[string]Agent{
 		WorkspaceHash:      "sha256",
 		Command:            []string{"codex"},
 	},
+	"opencode": {
+		Name:           "opencode",
+		Image:          "ai-sandboxes-opencode:local",
+		User:           "node",
+		TTY:            true,
+		PullNever:      true,
+		CPUs:           4,
+		Memory:         "8G",
+		RootDiskQuota:  "20G",
+		WorkspaceQuota: "20G",
+		HomeQuota:      "4G",
+		Security:       "restricted",
+		// OpenCode is deny-by-default like codex: its network is resolved
+		// from ~/.config/microvms/opencode-egress, with
+		// OPENCODE_MSB_PUBLIC_EGRESS=1 as the escape hatch.
+		BaseNetRules:       []string{"allow@host:udp:53", "allow@host:tcp:53"},
+		HomeVolume:         "opencode-home",
+		HomePath:           "/home/node",
+		HomeMountOpts:      "kind=dir",
+		WorkspaceMountOpts: "rw",
+		WorkspaceHash:      "sha256",
+		Command:            []string{"opencode"},
+	},
 }
 
 // AgentConfig returns a copy of the runtime policy for name, or an error when
@@ -132,12 +156,12 @@ var agents = map[string]Agent{
 func AgentConfig(name string) (Agent, error) {
 	a, ok := agents[name]
 	if !ok {
-		return Agent{}, fmt.Errorf("unknown agent %q (supported: claude, codex)", name)
+		return Agent{}, fmt.Errorf("unknown agent %q (supported: claude, codex, opencode)", name)
 	}
 	return a, nil
 }
 
 // Names returns the supported agent names in a stable order.
 func Names() []string {
-	return []string{"claude", "codex"}
+	return []string{"claude", "codex", "opencode"}
 }
