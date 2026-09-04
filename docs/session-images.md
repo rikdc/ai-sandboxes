@@ -259,8 +259,9 @@ implemented — see Limitations.
 `tools` entries install through the exact chain the base image's
 user-configuration (`~/.config/ai-sandboxes/`) mechanism uses:
 `scripts/tools/install-selected.sh` (phase `runtime`) dispatches to one of
-several adapter installers — currently `install-github-release-tar.sh`,
-`install-https-tar.sh`, and `install-awscli-zip.sh` — all copied
+several adapter installers — currently `install-github-release-tar.sh`
+(accepting a `.tar.gz`, `.tgz`, or `.zip` release asset), `install-https-tar.sh`,
+and `install-awscli-zip.sh` — all copied
 unmodified into the build context alongside a copy of
 `config/tool-catalog.json`. Which adapter a catalog entry uses is fixed
 by the catalog (`adapter` field), never by the profile; a profile can

@@ -40,7 +40,8 @@ final prefix is `chown -R root:root` + `chmod -R a-w`.
 
 **Curated tools carry no install-time third-party code.** A
 github-release-tar install runs no lifecycle hooks and downloads only a
-fixed catalog-pinned URL whose sha256 is verified before extraction.
+fixed catalog-pinned URL whose sha256 is verified before extraction
+(tarball or zip).
 Tools install through the exact chain the base image's runtime tool
 mechanism already uses
 (`scripts/tools/install-selected.sh` + `scripts/tools/install-github-release-tar.sh`,

@@ -70,7 +70,7 @@ install or build creates it and seeds any missing file from the neutral
 defaults checked into `config/`, which are not read at build time.
 
 - Edit `~/.config/ai-sandboxes/marketplaces.json`, starting from `config/marketplaces.example.json`, to add reviewed Claude marketplaces or Codex skills.
-- Choose optional tools in `~/.config/ai-sandboxes/tools.json`; their allowed sources are reviewed in `config/tool-catalog.json`.
+- Choose optional tools in `~/.config/ai-sandboxes/tools.json`; their allowed sources are reviewed in `config/tool-catalog.json`. `ast-grep` ships enabled by default.
 - Configure optional shared state in `~/.config/ai-sandboxes/runtime.json` (see `config/runtime.example.json`).
 - Keep personal or team session configuration in a separate repository as an explicit `session.json`, then run `claude-session --profile /absolute/path/to/session.json` from the project you want Claude to edit. See [session images](docs/session-images.md).
 - `./scripts/update` detects configuration changes by digest and rebuilds and reloads automatically; you can also run `./scripts/install` (or the individual build/verify/load commands) again.
