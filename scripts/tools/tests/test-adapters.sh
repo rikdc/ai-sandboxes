@@ -319,6 +319,95 @@ fi
 grep -q 'refusing to install' "$work/err" || fail "github-release-tar dangling-symlink error message missing"
 pass "github-release-tar refuses existing destination (dangling symlink)"
 
+# ----- github-release-tar: .zip asset happy path -----------------------------
+# Mirrors the real ast-grep release: a flat zip (member at the archive root,
+# not nested under a directory) containing one executable.
+mkdir -p "$work/fx-gh-zip"
+printf '#!/bin/sh\necho hello-zip\n' >"$work/fx-gh-zip/hello"
+chmod +x "$work/fx-gh-zip/hello"
+(cd "$work/fx-gh-zip" && zip -q "$work/hello.zip" hello)
+ghzip_sha=$(sha256_of "$work/hello.zip")
+cat >"$work/gh-zip-catalog.json" <<'EOF'
+{
+  "schema_version": 1,
+  "tools": [
+    {
+      "id": "hello-zip",
+      "adapter": "github-release-tar",
+      "repository": "o/r",
+      "asset": "hello.zip",
+      "archive_member": "hello",
+      "binary": "hello"
+    }
+  ]
+}
+EOF
+cat >"$work/gh-zip-sel.json" <<EOF
+{"tools":[{"id":"hello-zip","version":"v1","sha256":"$ghzip_sha"}]}
+EOF
+
+dest=$(mk_dest)
+run_github_release_tar "$work/hello.zip" "$work/gh-zip-catalog.json" "$work/gh-zip-sel.json" hello-zip "$dest" \
+  || fail "github-release-tar zip happy path failed"
+test -x "$dest/hello" || fail "github-release-tar zip did not install hello"
+pass "github-release-tar zip happy path installs the binary"
+
+# ----- github-release-tar: .zip asset destination collision ------------------
+dest=$(mk_dest)
+touch "$dest/hello"
+if run_github_release_tar "$work/hello.zip" "$work/gh-zip-catalog.json" "$work/gh-zip-sel.json" hello-zip "$dest" 2>"$work/err"; then
+  fail "github-release-tar zip destination collision was accepted"
+fi
+grep -q 'refusing to install' "$work/err" || fail "github-release-tar zip collision error message missing"
+pass "github-release-tar zip refuses existing destination"
+
+# ----- github-release-tar: unsupported asset extension dies clearly ----------
+# Reuses the existing hello.tar.gz fixture/checksum from the block above
+# ($gh_sha) — the extension branch runs before extraction is ever attempted,
+# so the archive's real content does not matter here.
+cat >"$work/gh-bad-ext-catalog.json" <<'EOF'
+{
+  "schema_version": 1,
+  "tools": [
+    {
+      "id": "hello-bad-ext",
+      "adapter": "github-release-tar",
+      "repository": "o/r",
+      "asset": "hello.exe",
+      "archive_member": "hello",
+      "binary": "hello"
+    }
+  ]
+}
+EOF
+cat >"$work/gh-bad-ext-sel.json" <<EOF
+{"tools":[{"id":"hello-bad-ext","version":"v1","sha256":"$gh_sha"}]}
+EOF
+dest=$(mk_dest)
+if run_github_release_tar "$work/hello.tar.gz" "$work/gh-bad-ext-catalog.json" "$work/gh-bad-ext-sel.json" hello-bad-ext "$dest" 2>"$work/err"; then
+  fail "unsupported asset extension was accepted"
+fi
+grep -q 'unsupported asset extension' "$work/err" || fail "unsupported extension error message missing"
+pass "github-release-tar rejects unsupported asset extension"
+
+# ----- validate-selection: github-release-tar asset needs an approved extension --
+cat >"$work/badasset-catalog.json" <<'EOF'
+{
+  "schema_version": 1,
+  "tools": [
+    {"id":"badasset","adapter":"github-release-tar","repository":"o/r","asset":"tool.exe","archive_member":"tool","binary":"tool"}
+  ]
+}
+EOF
+cat >"$work/badasset-sel.json" <<'EOF'
+{"tools":[{"id":"badasset","version":"v1","sha256":"0000000000000000000000000000000000000000000000000000000000000000"}]}
+EOF
+if bash "$repo/scripts/tools/validate-selection.sh" "$work/badasset-catalog.json" "$work/badasset-sel.json" "$runtime_null" 2>"$work/err"; then
+  fail "github-release-tar asset without approved extension was accepted"
+fi
+grep -q 'invalid catalog entry' "$work/err" || fail "bad asset extension error message missing"
+pass "validate-selection rejects github-release-tar asset without an approved extension"
+
 # ----- validate-selection: cross-tool binary collision -----------------------
 cat >"$work/coll-catalog.json" <<'EOF'
 {

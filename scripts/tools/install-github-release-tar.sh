@@ -28,7 +28,17 @@ trap 'rm -rf "$archive" "$extract_dir"' EXIT
 curl -fsSL "https://github.com/${repository}/releases/download/${version}/${asset}" -o "$archive" \
   || die "download failed for $repository $version $asset"
 echo "${checksum}  ${archive}" | sha256sum -c - >/dev/null || die "checksum mismatch for $repository $version $asset"
-tar -xzf "$archive" -C "$extract_dir" "$archive_member" || die "could not extract $archive_member from archive"
+case "$asset" in
+  *.tar.gz | *.tgz)
+    tar -xzf "$archive" -C "$extract_dir" "$archive_member" || die "could not extract $archive_member from archive"
+    ;;
+  *.zip)
+    unzip -o -q "$archive" "$archive_member" -d "$extract_dir" || die "could not extract $archive_member from archive"
+    ;;
+  *)
+    die "unsupported asset extension: $asset"
+    ;;
+esac
 # Refuse rather than overwrite: a catalog entry that happens to name a
 # base-image command (claude, git, curl, ...) must not silently replace it.
 # Every fresh session-image build starts from a base with no curated tools

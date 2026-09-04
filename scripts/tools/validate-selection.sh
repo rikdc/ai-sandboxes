@@ -39,7 +39,7 @@ validate_catalog_entry() {
         (.id | type == "string" and test("^[a-z][a-z0-9-]*$")) and
         (.adapter == "github-release-tar") and
         (.repository | type == "string" and test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$") and (contains("..") | not)) and
-        (.asset | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]*$") and (contains("..") | not)) and
+        (.asset | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]*$") and (contains("..") | not) and (endswith(".tar.gz") or endswith(".tgz") or endswith(".zip"))) and
         (.archive_member | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._/-]*$") and (contains("..") | not)) and
         (.binary | type == "string" and test("^[a-z][a-z0-9-]*$")) and
         ((keys | sort) == ["adapter", "archive_member", "asset", "binary", "id", "repository"] or
