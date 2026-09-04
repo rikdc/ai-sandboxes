@@ -1,4 +1,17 @@
 {
-  "claude": [],
-  "codex": []
+  "claude": [
+    {
+      "url": "https://github.com/ast-grep/agent-skill.git",
+      "ref": "6b668aa526afdc623c1a9ed1d6ae920e04a717ad",
+      "path": ".",
+      "plugins": ["ast-grep"]
+    }
+  ],
+  "codex": [
+    {
+      "url": "https://github.com/ast-grep/agent-skill.git",
+      "ref": "6b668aa526afdc623c1a9ed1d6ae920e04a717ad",
+      "skills_path": "ast-grep/skills"
+    }
+  ]
 }
