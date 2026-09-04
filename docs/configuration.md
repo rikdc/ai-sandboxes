@@ -8,7 +8,7 @@ and never show up as dirty working-tree noise. Set `AI_SANDBOX_CONFIG_DIR` to
 an absolute path when you want per-host or per-purpose configurations.
 
 The first `./scripts/install` or `./scripts/build` creates the directory with
-mode 0700 and seeds any missing file from the checked-in neutral defaults, so
+mode 0700 and seeds any missing file from the checked-in starting defaults, so
 the flow is:
 
 ```console
@@ -31,7 +31,7 @@ files and run `./scripts/update`. You can always rebuild manually:
 ./scripts/load-msb
 ```
 
-The checked-in `config/*.json` files in the repository are neutral defaults
+The checked-in `config/*.json` files in the repository are starting defaults
 that seed your files — they are not read at build time. The one exception is
 `config/tool-catalog.json`, which stays repository policy: it reviews and pins
 every tool that may be installed. For additional Claude-only software or
@@ -56,7 +56,7 @@ Edit `~/.config/ai-sandboxes/marketplaces.json`, starting from the shape in
 - `plugins` is an optional allowlist. Omit it or use `[]` to register a marketplace without installing plugins. Selected plugins are installed and enabled when a fresh Claude sandbox home starts; an existing user disablement is preserved.
 - Codex entries must be pinned to a commit SHA and point `skills_path` at directories containing native `SKILL.md` files.
 - Do not put credentials in the configuration or repository URLs.
-- The default configuration registers the upstream `ast-grep/agent-skill` marketplace for both agents: the `ast-grep` Claude plugin (bundling the `ast-grep` and `outline` skills) and the same two skills natively for Codex. Remove its entry from `~/.config/ai-sandboxes/marketplaces.json` to opt out.
+- The default configuration registers the upstream `ast-grep/agent-skill` marketplace for both agents: the `ast-grep` Claude plugin (bundling the `ast-grep` and `outline` skills) and the same two skills natively for Codex. Remove its entry from `~/.config/ai-sandboxes/marketplaces.json` to opt out. Already have a `marketplaces.json` from before this change? Defaults only seed missing files — add the entry yourself, following `config/marketplaces.example.json`, or delete the file and re-run `./scripts/build` to have it reseeded.
 
 Claude-specific commands, hooks, agents, and MCP settings are not converted into Codex skills.
 
@@ -67,7 +67,10 @@ the structure in `config/tools.example.json`; each selected tool must be
 present in the reviewed `config/tool-catalog.json` and use its required
 version and checksum pins. The default selection installs `ast-grep`
 (structural code search on `PATH` in both images); remove its entry from
-`~/.config/ai-sandboxes/tools.json` to opt out.
+`~/.config/ai-sandboxes/tools.json` to opt out. Already have a `tools.json`
+from before this change? Defaults only seed missing files — add the
+`ast-grep` entry yourself, following `config/tools.example.json`, or delete
+the file and re-run `./scripts/build` to have it reseeded.
 
 ## Shared state
 

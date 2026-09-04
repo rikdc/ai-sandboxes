@@ -10,7 +10,7 @@
 #   3. $HOME/.config/ai-sandboxes
 #
 # The repository checkout is never a source of mutable local state: the
-# checked-in config/*.json files are neutral defaults that seed missing user
+# checked-in config/*.json files are starting defaults that seed missing user
 # files and policy (tool-catalog.json) that stays repository-owned.
 
 # Directory mode and file mode for everything this library creates.
