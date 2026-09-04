@@ -35,6 +35,14 @@
       "adapter": "awscli-zip",
       "url_template": "https://awscli.amazonaws.com/awscli-exe-linux-aarch64-{{version}}.zip",
       "binary": "aws"
+    },
+    {
+      "id": "ast-grep",
+      "adapter": "github-release-tar",
+      "repository": "ast-grep/ast-grep",
+      "asset": "app-aarch64-unknown-linux-gnu.zip",
+      "archive_member": "ast-grep",
+      "binary": "ast-grep"
     }
   ]
 }

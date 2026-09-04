@@ -19,6 +19,11 @@
       "id": "awscli",
       "version": "X.Y.Z",
       "sha256": "LOWERCASE_64_CHARACTER_SHA256"
+    },
+    {
+      "id": "ast-grep",
+      "version": "X.Y.Z",
+      "sha256": "LOWERCASE_64_CHARACTER_SHA256"
     }
   ]
 }
