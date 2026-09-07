@@ -27,16 +27,29 @@ sub=$2
 shift 2
 case "$cmd:$sub" in
   release:view)
-    payload="{\"targetCommitish\":\"$MOCK_VIEW_COMMIT\"}"
+    jsonkey=''
     filter=''
     while test "$#" -gt 0; do
-      if test "$1" = --jq; then
-        filter=$2
-        shift 2
-      else
-        shift
-      fi
+      case "$1" in
+        --jq) filter=$2; shift 2 ;;
+        --json) jsonkey=$2; shift 2 ;;
+        *) shift ;;
+      esac
     done
+    if [ "$jsonkey" = assets ]; then
+      names=${MOCK_VIEW_ASSETS:-}
+      items=''
+      old_ifs=$IFS
+      IFS=','
+      for name in $names; do
+        if [ -n "$items" ]; then items="$items,"; fi
+        items="$items{\"name\":\"$name\"}"
+      done
+      IFS=$old_ifs
+      payload="{\"assets\":[$items]}"
+    else
+      payload="{\"targetCommitish\":\"$MOCK_VIEW_COMMIT\"}"
+    fi
     if test -n "$filter"; then
       printf '%s\n' "$payload" | jq -r "$filter"
     else
@@ -150,6 +163,55 @@ fi
 if env -u GITHUB_REPOSITORY PATH="$mockdir/bin:$PATH" \
   .github/workflows/publish-release-marker "$commit" >/dev/null 2>&1; then
   echo 'FAIL: missing GITHUB_REPOSITORY should fail' >&2
+  exit 1
+fi
+
+# 6. Fresh release with assets: both asset files are handed to gh release
+#    create alongside the marker.
+tarball="$mockdir/ai-sandbox-darwin-arm64.tar.gz"
+checksum="$tarball.sha256"
+printf 'binary' >"$tarball"
+printf 'checksum' >"$checksum"
+: >"$logfile"
+RELEASE_ASSETS="$tarball $checksum" publish MOCK_VIEW_STATUS=1 MOCK_TAG_STATUS=1 || {
+  echo 'FAIL: fresh release with assets should publish' >&2
+  exit 1
+}
+grep -qF "$tarball" "$logfile" || {
+  echo 'FAIL: tarball not passed to gh release create' >&2
+  exit 1
+}
+grep -qF "$checksum" "$logfile" || {
+  echo 'FAIL: checksum not passed to gh release create' >&2
+  exit 1
+}
+
+# 7. Fresh release with a configured asset that does not exist locally: refuse.
+: >"$logfile"
+if RELEASE_ASSETS="$mockdir/missing.tar.gz" publish MOCK_VIEW_STATUS=1 MOCK_TAG_STATUS=1 >/dev/null 2>&1; then
+  echo 'FAIL: missing local asset should fail' >&2
+  exit 1
+fi
+grep -q 'gh release create ' "$logfile" && {
+  echo 'FAIL: nothing should be created when an asset is missing' >&2
+  exit 1
+}
+
+# 8. Existing release on the same commit carrying the expected assets:
+#    idempotent no-op success.
+: >"$logfile"
+MOCK_VIEW_COMMIT="$commit" MOCK_VIEW_ASSETS='release.json,ai-sandbox-darwin-arm64.tar.gz,ai-sandbox-darwin-arm64.tar.gz.sha256' \
+  MOCK_MARKER_FILE="$existing_marker" RELEASE_ASSETS="$tarball $checksum" publish || {
+  echo 'FAIL: existing release with all assets should succeed' >&2
+  exit 1
+}
+
+# 9. Existing release on the same commit missing a configured asset: refuse,
+#    so an interrupted publication cannot validate as complete.
+: >"$logfile"
+if MOCK_VIEW_COMMIT="$commit" MOCK_VIEW_ASSETS='release.json' \
+  MOCK_MARKER_FILE="$existing_marker" RELEASE_ASSETS="$tarball $checksum" publish >/dev/null 2>&1; then
+  echo 'FAIL: existing release missing an asset should fail' >&2
   exit 1
 fi
 

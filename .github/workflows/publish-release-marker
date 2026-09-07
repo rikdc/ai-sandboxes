@@ -49,6 +49,17 @@ case $BASE_VERSION in
   *-*) prerelease_args=(--prerelease) ;;
 esac
 
+# Optional release assets beyond the marker (e.g. the darwin/arm64 control-
+# plane binary tarball built by scripts/build-release). Whitespace-separated;
+# paths containing whitespace are not supported.
+asset_args=()
+while IFS= read -r line; do
+  [ -n "$line" ] || continue
+  asset_args+=("$line")
+done <<EOF
+$(printf '%s' "${RELEASE_ASSETS:-}" | tr ' \t' '\n')
+EOF
+
 .github/workflows/release-marker create "$marker" "$commit" \
   "$BASE_VERSION" "$CODEX_VERSION" "$CLAUDE_CODE_VERSION" "$timestamp" || {
   printf '%s\n' 'error: failed to create release marker' >&2
@@ -66,6 +77,18 @@ if gh release view "$tag" --repo "$repository" >/dev/null 2>&1; then
     --pattern release.json --dir "$download_dir" || exit 1
   .github/workflows/release-marker validate "$download_dir/release.json" \
     "$commit" "$BASE_VERSION" "$CODEX_VERSION" "$CLAUDE_CODE_VERSION" || exit 1
+  # An interrupted publication (release created, assets never attached) must
+  # not validate as complete: every configured asset has to be present.
+  if [ "${#asset_args[@]}" -gt 0 ]; then
+    published_assets=$(gh release view "$tag" --repo "$repository" \
+      --json assets --jq '.assets[].name') || exit 1
+    for asset in "${asset_args[@]}"; do
+      grep -Fxq "$(basename "$asset")" <<<"$published_assets" || {
+        printf '%s\n' "error: existing release is missing asset $(basename "$asset"); delete the release and re-run to republish" >&2
+        exit 1
+      }
+    done
+  fi
   exit 0
 fi
 
@@ -74,11 +97,20 @@ if gh api "repos/$repository/git/ref/tags/$tag" >/dev/null 2>&1; then
   exit 1
 fi
 
+for asset in "${asset_args[@]:-}"; do
+  [ -n "$asset" ] || continue
+  if [ ! -f "$asset" ]; then
+    printf '%s\n' "error: release asset does not exist: $asset" >&2
+    exit 1
+  fi
+done
+
 gh release create "$tag" --repo "$repository" --target "$commit" \
   --title "v${BASE_VERSION} — Codex ${CODEX_VERSION}, Claude Code ${CLAUDE_CODE_VERSION}" \
   --notes "Machine-readable agent runtime release marker for v${BASE_VERSION} at ${commit}." \
   "${prerelease_args[@]}" \
-  "$marker" || {
+  "$marker" \
+  ${asset_args[@]+"${asset_args[@]}"} || {
   printf '%s\n' 'error: failed to publish release marker' >&2
   exit 1
 }
