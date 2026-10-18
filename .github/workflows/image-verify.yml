@@ -2,10 +2,10 @@ name: ARM64 image verification
 
 on:
   pull_request:
-    paths: [images/**, scripts/**, shell/**, config/**, docker-bake.hcl, versions.env, .dockerignore]
+    paths: [images/**, scripts/**, shell/**, config/**, docker-bake.hcl, versions.env, .dockerignore, cmd/**, internal/**, go.mod, go.sum]
   push:
     branches: [main]
-    paths: [images/**, scripts/**, shell/**, config/**, docker-bake.hcl, versions.env, .dockerignore]
+    paths: [images/**, scripts/**, shell/**, config/**, docker-bake.hcl, versions.env, .dockerignore, cmd/**, internal/**, go.mod, go.sum]
   workflow_dispatch:
 
 permissions:
@@ -35,6 +35,42 @@ jobs:
       - name: Run image verification
         run: ./scripts/verify
 
+  # Release contract, enforced per change: control-plane code (cmd/**,
+  # internal/**, go.mod, go.sum) may only move together with a BASE_VERSION
+  # bump — a control-plane release is cut explicitly, never left to ride the
+  # next agent-version bump. Agent-version bumps stay free to publish the
+  # current binary via `release-marker changed`.
+  release-discipline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require BASE_VERSION bump for control-plane changes
+        env:
+          BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          base=${PR_BASE:-$BEFORE}
+          case $base in
+            '' | 0000000000000000000000000000000000000000) exit 0 ;;
+          esac
+          if test -z "$(git diff --name-only "$base" HEAD -- cmd internal go.mod go.sum)"; then
+            exit 0
+          fi
+          old_base=$(git show "$base:versions.env" | sed -n 's/^BASE_VERSION=//p') || old_base=''
+          new_base=$(git show HEAD:versions.env | sed -n 's/^BASE_VERSION=//p') || new_base=''
+          test -n "$old_base" && test -n "$new_base" || {
+            printf '%s\n' 'error: BASE_VERSION missing from versions.env on one side of the diff' >&2
+            exit 1
+          }
+          if test "$old_base" = "$new_base"; then
+            printf '%s\n' 'error: cmd/**, internal/**, go.mod or go.sum changed without bumping BASE_VERSION in versions.env' \
+              'control-plane changes require an explicit base release (see versions.env)' >&2
+            exit 1
+          fi
+
   publish-release-marker:
     needs: verify
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.before != '0000000000000000000000000000000000000000'
@@ -46,7 +82,11 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Detect agent runtime version changes
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Detect release-relevant version changes
         id: versions
         env:
           BEFORE: ${{ github.event.before }}
@@ -59,10 +99,18 @@ jobs:
             test "$status" = 1 || exit "$status"
             echo 'changed=false' >> "$GITHUB_OUTPUT"
           fi
+      # The control-plane binary is cross-compiled on Linux for darwin/arm64
+      # and attached to the release; no Apple Silicon runner is required to
+      # publish it. The complete Apple Silicon smoke test is a manual,
+      # documented step performed on the supported host.
+      - name: Build darwin/arm64 control-plane binary
+        if: steps.versions.outputs.changed == 'true'
+        run: ./scripts/build-release dist "${{ github.sha }}"
       - name: Publish immutable release marker
         if: steps.versions.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           COMMIT: ${{ github.sha }}
+          RELEASE_ASSETS: dist/ai-sandbox-darwin-arm64.tar.gz dist/ai-sandbox-darwin-arm64.tar.gz.sha256
         run: ./.github/workflows/publish-release-marker "$COMMIT"

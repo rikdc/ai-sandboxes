@@ -67,3 +67,9 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test ./...
+      # The control plane targets darwin/arm64 but is built, tested, and
+      # packaged on Linux; prove the portable build stays green per PR.
+      - name: Cross-compile for darwin/arm64
+        run: CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o /dev/null ./cmd/ai-sandbox
+      - name: Test release packaging
+        run: bash scripts/tests/test-build-release.sh

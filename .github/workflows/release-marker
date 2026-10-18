@@ -63,12 +63,19 @@ validate_inputs() {
 main() {
   case "${1:-}" in
     changed)
+      # A release must be cut when any tracked version moves: a BASE_VERSION
+      # bump is a control-plane release, an agent-version bump rides the
+      # current binary along. Only when all three are unchanged is there
+      # nothing to publish.
       test "$#" = 3 || usage
+      old_base=$(read_version "$2" BASE_VERSION) || return 2
       old_codex=$(read_version "$2" CODEX_VERSION) || return 2
       old_claude=$(read_version "$2" CLAUDE_CODE_VERSION) || return 2
+      new_base=$(read_version "$3" BASE_VERSION) || return 2
       new_codex=$(read_version "$3" CODEX_VERSION) || return 2
       new_claude=$(read_version "$3" CLAUDE_CODE_VERSION) || return 2
-      if [[ "$old_codex" != "$new_codex" ]] ||
+      if [[ "$old_base" != "$new_base" ]] ||
+        [[ "$old_codex" != "$new_codex" ]] ||
         [[ "$old_claude" != "$new_claude" ]]; then
         return 0
       fi
